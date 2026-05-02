@@ -1,0 +1,268 @@
+player,position
+49ers,DEF
+Bears,DEF
+Bills,DEF
+Broncos,DEF
+Browns,DEF
+Chargers,DEF
+Chiefs,DEF
+Cowboys,DEF
+Eagles,DEF
+Giants,DEF
+Jaguars,DEF
+Jets,DEF
+Lions,DEF
+Packers,DEF
+Patriots,DEF
+Ravens,DEF
+Saints,DEF
+Seahawks,DEF
+Steelers,DEF
+Texans,DEF
+Titans,DEF
+Vikings,DEF
+Andy Borregales,K
+Brandon Aubrey,K
+Cam Little,K
+Cameron Dicker,K
+Chase McLaughlin,K
+Chris Boswell,K
+Eddy Pineiro,K
+Evan McPherson,K
+Harrison Butker,K
+Harrison Mevis,K
+Jake Bates,K
+Jake Elliott,K
+Joshua Karty,K
+Ka'imi Fairbairn,K
+Matt Prater,K
+Tyler Bass,K
+Tyler Loop,K
+Wil Lutz,K
+Aaron Rodgers,QB
+Baker Mayfield,QB
+Bo Nix,QB
+Brock Purdy,QB
+Bryce Young,QB
+C.J. Stroud,QB
+Caleb Williams,QB
+Cam Ward,QB
+Dak Prescott,QB
+Daniel Jones,QB
+Davis Mills,QB
+Dillon Gabriel,QB
+Drake Maye,QB
+Geno Smith,QB
+J.J. McCarthy,QB
+Jacoby Brissett,QB
+Jalen Hurts,QB
+Jalen Milroe,QB
+Jared Goff,QB
+Jaxson Dart,QB
+Jayden Daniels,QB
+Joe Burrow,QB
+Joe Flacco,QB
+Jordan Love,QB
+Josh Allen,QB
+Justin Fields,QB
+Justin Herbert,QB
+Kirk Cousins,QB
+Kyler Murray,QB
+Lamar Jackson,QB
+Matthew Stafford,QB
+Michael Penix Jr.,QB
+Patrick Mahomes,QB
+Philip Rivers,QB
+Quinn Ewers,QB
+Russell Wilson,QB
+Sam Darnold,QB
+Shedeur Sanders,QB
+Trevor Lawrence,QB
+Tua Tagovailoa,QB
+Tyler Shough,QB
+Aaron Jones Sr.,RB
+Alvin Kamara,RB
+Ashton Jeanty,RB
+Austin Ekeler,RB
+Bam Knight,RB
+Bhayshul Tuten,RB
+Bijan Robinson,RB
+Blake Corum,RB
+Braelon Allen,RB
+Breece Hall,RB
+Brian Robinson Jr.,RB
+Bucky Irving,RB
+Cam Skattebo,RB
+Chase Brown,RB
+Chris Rodriguez Jr.,RB
+Christian McCaffrey,RB
+Chuba Hubbard,RB
+D'Andre Swift,RB
+David Montgomery,RB
+De'Von Achane,RB
+Derrick Henry,RB
+Devin Singletary,RB
+Dylan Sampson,RB
+Emanuel Wilson,RB
+Emari Demercado,RB
+Isaac Guerendo,RB
+Isiah Pacheco,RB
+J.K. Dobbins,RB
+Jacory Croskey-Merritt,RB
+Jahmyr Gibbs,RB
+James Conner,RB
+James Cook III,RB
+Jarquez Hunter,RB
+Javonte Williams,RB
+Jaydon Blue,RB
+Jaylen Warren,RB
+Jerome Ford,RB
+Joe Mixon,RB
+Jonathan Taylor,RB
+Jordan Mason,RB
+Josh Jacobs,RB
+Kaleb Johnson,RB
+Kareem Hunt,RB
+Kenneth Gainwell,RB
+Kenneth Walker III,RB
+Kyle Monangai,RB
+Kyren Williams,RB
+Michael Carter,RB
+Najee Harris,RB
+Nick Chubb,RB
+Ollie Gordon II,RB
+Omarion Hampton,RB
+Quinshon Judkins,RB
+RJ Harvey,RB
+Rachaad White,RB
+Ray Davis,RB
+Rhamondre Stevenson,RB
+Rico Dowdle,RB
+Roschon Johnson,RB
+Saquon Barkley,RB
+Tank Bigsby,RB
+Tony Pollard,RB
+Travis Etienne Jr.,RB
+TreVeyon Henderson,RB
+Trey Benson,RB
+Tyjae Spears,RB
+Tyler Allgeier,RB
+Tyrone Tracy Jr.,RB
+Will Shipley,RB
+Woody Marks,RB
+Zach Charbonnet,RB
+AJ Barner,TE
+Brenton Strange,TE
+Brock Bowers,TE
+Cade Otton,TE
+Chig Okonkwo,TE
+Colston Loveland,TE
+Dallas Goedert,TE
+Dalton Kincaid,TE
+Dalton Schultz,TE
+Darren Waller,TE
+David Njoku,TE
+Elijah Arroyo,TE
+Evan Engram,TE
+George Kittle,TE
+Harold Fannin Jr.,TE
+Hunter Henry,TE
+Jake Ferguson,TE
+Jake Tonges,TE
+Jonnu Smith,TE
+Juwan Johnson,TE
+Kyle Pitts Sr.,TE
+Mark Andrews,TE
+Mason Taylor,TE
+Michael Mayer,TE
+Oronde Gadsden,TE
+Sam LaPorta,TE
+T.J. Hockenson,TE
+Taysom Hill,TE
+Theo Johnson,TE
+Travis Kelce,TE
+Trey McBride,TE
+Tucker Kraft,TE
+Tyler Warren,TE
+Zach Ertz,TE
+A.J. Brown,WR
+Adam Thielen,WR
+Alec Pierce,WR
+Amon-Ra St. Brown,WR
+Brandon Aiyuk,WR
+Brian Thomas Jr.,WR
+Calvin Ridley,WR
+Cedric Tillman,WR
+CeeDee Lamb,WR
+Chimere Dike,WR
+Chris Godwin Jr.,WR
+Chris Olave,WR
+Christian Kirk,WR
+Christian Watson,WR
+Cooper Kupp,WR
+Courtland Sutton,WR
+DJ Moore,WR
+DK Metcalf,WR
+Darius Slayton,WR
+Darnell Mooney,WR
+Davante Adams,WR
+DeMario Douglas,WR
+DeVonta Smith,WR
+Deebo Samuel,WR
+Drake London,WR
+Elic Ayomanor,WR
+Emeka Egbuka,WR
+Garrett Wilson,WR
+George Pickens,WR
+Hollywood Brown,WR
+Ja'Marr Chase,WR
+Jakobi Meyers,WR
+Jalen Coker,WR
+Jameson Williams,WR
+Jauan Jennings,WR
+Jaxon Smith-Njigba,WR
+Jayden Higgins,WR
+Jayden Reed,WR
+Jaylen Waddle,WR
+Jerry Jeudy,WR
+Jordan Addison,WR
+Josh Downs,WR
+Joshua Palmer,WR
+Justin Jefferson,WR
+Keenan Allen,WR
+Keon Coleman,WR
+Khalil Shakir,WR
+Kyle Williams,WR
+Ladd McConkey,WR
+Luther Burden III,WR
+Malik Nabers,WR
+Marvin Harrison Jr.,WR
+Marvin Mims Jr.,WR
+Matthew Golden,WR
+Michael Pittman Jr.,WR
+Michael Wilson,WR
+Mike Evans,WR
+Nico Collins,WR
+Parker Washington,WR
+Puka Nacua,WR
+Quentin Johnston,WR
+Rashee Rice,WR
+Rashid Shaheed,WR
+Rashod Bateman,WR
+Ricky Pearsall,WR
+Rome Odunze,WR
+Romeo Doubs,WR
+Stefon Diggs,WR
+Tee Higgins,WR
+Terry McLaurin,WR
+Tetairoa McMillan,WR
+Tory Horton,WR
+Travis Hunter,WR
+Tre Tucker,WR
+Tre' Harris,WR
+Troy Franklin,WR
+Tyreek Hill,WR
+Wan'Dale Robinson,WR
+Xavier Legette,WR
+Xavier Worthy,WR
+Zay Flowers,WR
