@@ -1,0 +1,31 @@
+.DS_Store
+
+# Environment
+.env
+.env.*
+!.env.example
+!.env*.example
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local tooling
+.coverage
+coverage/
