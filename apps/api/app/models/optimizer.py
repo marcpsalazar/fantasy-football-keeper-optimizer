@@ -45,6 +45,8 @@ class OptimizerSettings(TimestampMixin, table=True):
     ir_status_bonus: float = Field(default=0.5)
     enable_draft_slot_bonus: bool = Field(default=True)
     enable_qb_scarcity_bonus: bool = Field(default=True)
+    enable_elite_player_bonus: bool = Field(default=True)
+    elite_player_max_negative_edge: float = Field(default=12)
 
     league: "League" = Relationship(back_populates="optimizer_settings")
     user: "User" = Relationship(back_populates="optimizer_settings")

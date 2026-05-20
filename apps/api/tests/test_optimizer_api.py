@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import UTC, datetime
 import json
 
 from fastapi.testclient import TestClient
@@ -11,6 +12,7 @@ from app.core.config import Settings
 from app.db.session import get_session
 from app.main import create_app
 from app.services.composite_adp import ProviderFetchResult
+import app.services.news_feed as news_feed
 
 
 @pytest.fixture
@@ -63,6 +65,23 @@ def test_auth_requires_login_after_user_exists(client: TestClient) -> None:
     response = client.get("/api/leagues")
 
     assert response.status_code == 401
+
+
+def test_user_can_update_and_clear_profile_avatar(client: TestClient) -> None:
+    _create_admin_and_login(client)
+    avatar = "data:image/png;base64,aGVsbG8="
+
+    update_response = client.patch("/api/auth/profile", json={"avatar_data_url": avatar})
+    assert update_response.status_code == 200
+    assert update_response.json()["user"]["avatar_data_url"] == avatar
+
+    me_response = client.get("/api/auth/me")
+    assert me_response.status_code == 200
+    assert me_response.json()["user"]["avatar_data_url"] == avatar
+
+    clear_response = client.patch("/api/auth/profile", json={"avatar_data_url": None})
+    assert clear_response.status_code == 200
+    assert clear_response.json()["user"]["avatar_data_url"] is None
 
 
 def test_regular_user_is_blocked_from_admin_endpoints(client: TestClient) -> None:
@@ -665,6 +684,75 @@ def test_optimizer_settings_endpoint_accepts_negative_keeper_value_floor(
     )
     assert settings_response.status_code == 200
     assert settings_response.json()["minimum_keeper_value"] == -5
+
+
+def test_elite_player_bonus_can_override_raw_keeper_value_floor(client: TestClient) -> None:
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "Elite Bonus League",
+            "season_year": 2026,
+            "scoring_format": "superflex",
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+
+    team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "Death Is On The Line", "draft_slot": 1},
+    )
+    assert team_response.status_code == 201
+
+    draft_response = client.post(
+        f"/api/leagues/{league_id}/draft-results/import",
+        content="team,player,position,overall_pick,round\nDeath Is On The Line,Jahmyr Gibbs,RB,1,1\n",
+        headers={"content-type": "text/csv"},
+    )
+    assert draft_response.status_code == 200
+
+    roster_response = client.post(
+        f"/api/leagues/{league_id}/final-rosters/import",
+        content="team,player,position,roster_status\nDeath Is On The Line,Jahmyr Gibbs,RB,Starter\n",
+        headers={"content-type": "text/csv"},
+    )
+    assert roster_response.status_code == 200
+
+    adp_response = client.post(
+        f"/api/leagues/{league_id}/adp/import",
+        content=(
+            "player,position,adp_pick,source,snapshot_date,format,"
+            "floor,consensus_proj,ds_proj,ceiling,3d_value,risk,injury\n"
+            "Jahmyr Gibbs,RB,4,DraftSharks Superflex,2026-05-01,superflex,"
+            "235,280,290,330,96,1,0\n"
+        ),
+        headers={"content-type": "text/csv"},
+    )
+    assert adp_response.status_code == 200
+
+    settings_response = client.patch(
+        f"/api/leagues/{league_id}/optimizer/settings",
+        json={"minimum_keeper_value": 1, "minimum_keeper_score": 0},
+    )
+    assert settings_response.status_code == 200
+
+    run_response = client.post(f"/api/leagues/{league_id}/optimizer/run", json={})
+    assert run_response.status_code == 200
+    gibbs_row = next(row for row in run_response.json()["rows"] if row["player_name"] == "Jahmyr Gibbs")
+    assert gibbs_row["keeper_value"] == -3
+    assert gibbs_row["is_recommended"] is True
+
+    settings_response = client.patch(
+        f"/api/leagues/{league_id}/optimizer/settings",
+        json={"enable_elite_player_bonus": False},
+    )
+    assert settings_response.status_code == 200
+
+    rerun_response = client.post(f"/api/leagues/{league_id}/optimizer/run", json={})
+    assert rerun_response.status_code == 200
+    gibbs_row = next(row for row in rerun_response.json()["rows"] if row["player_name"] == "Jahmyr Gibbs")
+    assert gibbs_row["is_recommended"] is False
+    assert gibbs_row["reason"] == "Keeper value below minimum"
 
 
 def test_draft_impact_uses_team_round_pick_in_snake_draft(client: TestClient) -> None:
@@ -1428,10 +1516,28 @@ def test_fantasy_football_news_endpoint_returns_headlines(
                 "<source>Example Source</source>"
                 "</item>"
                 "<item>"
+                "<title>Brutal fantasy football punishment sends lone astronaut to Kauffman Stadium nosebleeds for Royals game - Offbeat Source</title>"
+                "<link>https://example.com/news-offbeat</link>"
+                "<pubDate>Fri, 16 May 2026 11:00:00 GMT</pubDate>"
+                "<source>Offbeat Source</source>"
+                "</item>"
+                "<item>"
                 "<title>Backfield Battle Shifts Heading Into Camp - Another Source</title>"
                 "<link>https://example.com/news-2</link>"
                 "<pubDate>Fri, 16 May 2026 12:00:00 GMT</pubDate>"
                 "<source>Another Source</source>"
+                "</item>"
+                "<item>"
+                "<title>Pressing fantasy baseball questions: Can Ben Brown be a starter? - The New York Times</title>"
+                "<link>https://example.com/news-baseball</link>"
+                "<pubDate>Fri, 16 May 2026 12:30:00 GMT</pubDate>"
+                "<source>The New York Times</source>"
+                "</item>"
+                "<item>"
+                "<title>Brian Flores subpoenas 25 NFL teams to delay discrimination lawsuit, league alleges - The Athletic</title>"
+                "<link>https://example.com/news-lawsuit</link>"
+                "<pubDate>Fri, 16 May 2026 13:00:00 GMT</pubDate>"
+                "<source>The Athletic</source>"
                 "</item>"
                 "</channel></rss>"
             ).encode("utf-8")
@@ -1446,6 +1552,61 @@ def test_fantasy_football_news_endpoint_returns_headlines(
     assert news_response.status_code == 200
     payload = news_response.json()
     assert payload["count"] == 2
+    assert [row["link"] for row in payload["rows"]] == [
+        "https://example.com/news-1",
+        "https://example.com/news-2",
+    ]
     assert payload["rows"][0]["headline"] == "Fantasy Breakout Candidate Emerges"
     assert payload["rows"][0]["link"] == "https://example.com/news-1"
     assert payload["rows"][0]["source"] == "Example Source"
+
+
+def test_fantasy_football_news_filters_stale_cached_noise(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.news_feed._NEWS_CACHE",
+        news_feed._NewsCache(
+            fetched_at=datetime.now(UTC),
+            items=[
+                news_feed.NewsItem(
+                    headline="Fantasy Breakout Candidate Emerges",
+                    link="https://example.com/news-1",
+                    published_at="2026-05-16T10:00:00+00:00",
+                    source="Example Source",
+                ),
+                news_feed.NewsItem(
+                    headline=(
+                        "Brutal fantasy football punishment sends lone astronaut to "
+                        "Kauffman Stadium nosebleeds for Royals game"
+                    ),
+                    link="https://example.com/news-offbeat",
+                    published_at="2026-05-16T11:00:00+00:00",
+                    source="Offbeat Source",
+                ),
+                news_feed.NewsItem(
+                    headline="Pressing fantasy baseball questions: Can Ben Brown be a starter?",
+                    link="https://example.com/news-baseball",
+                    published_at="2026-05-16T12:30:00+00:00",
+                    source="The New York Times",
+                ),
+                news_feed.NewsItem(
+                    headline=(
+                        "Brian Flores subpoenas 25 NFL teams to delay discrimination "
+                        "lawsuit, league alleges"
+                    ),
+                    link="https://example.com/news-lawsuit",
+                    published_at="2026-05-16T13:00:00+00:00",
+                    source="The Athletic",
+                ),
+            ],
+        ),
+    )
+
+    news_response = client.get("/api/news/fantasy-football")
+
+    assert news_response.status_code == 200
+    payload = news_response.json()
+    assert payload["count"] == 1
+    assert payload["rows"][0]["link"] == "https://example.com/news-1"

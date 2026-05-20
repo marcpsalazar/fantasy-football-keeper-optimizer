@@ -962,6 +962,14 @@ def _adp_entry_rows(session: Session, snapshot: ADPSnapshot) -> list[dict[str, A
                 "adp_pick": entry.adp_pick,
                 "adp_round": entry.adp_round,
                 "source_note": entry.source_note,
+                "sos": entry.sos,
+                "injury": entry.injury,
+                "risk": entry.risk,
+                "floor_projection": entry.floor_projection,
+                "consensus_projection": entry.consensus_projection,
+                "draftsharks_projection": entry.draftsharks_projection,
+                "ceiling_projection": entry.ceiling_projection,
+                "draftsharks_3d_value": entry.draftsharks_3d_value,
             }
         )
     return rows
@@ -1384,6 +1392,8 @@ def _optimizer_settings_copy_fields() -> tuple[str, ...]:
         "ir_status_bonus",
         "enable_draft_slot_bonus",
         "enable_qb_scarcity_bonus",
+        "enable_elite_player_bonus",
+        "elite_player_max_negative_edge",
     )
 
 

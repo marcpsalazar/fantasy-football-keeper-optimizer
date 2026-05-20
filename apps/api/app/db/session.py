@@ -29,11 +29,29 @@ def _apply_lightweight_sqlite_migrations() -> None:
         return
 
     column_additions = {
-        "users": [("password", "VARCHAR(255)")],
+        "users": [("password", "VARCHAR(255)"), ("avatar_data_url", "TEXT")],
         "teams": [("user_id", "CHAR(32)")],
-        "optimizer_settings": [("user_id", "CHAR(32)")],
+        "optimizer_settings": [
+            ("user_id", "CHAR(32)"),
+            ("enable_elite_player_bonus", "BOOLEAN DEFAULT 1"),
+            ("elite_player_max_negative_edge", "FLOAT DEFAULT 12"),
+        ],
         "manual_overrides": [("user_id", "CHAR(32)")],
         "keeper_recommendations": [("user_id", "CHAR(32)")],
+        "app_default_optimizer_settings": [
+            ("enable_elite_player_bonus", "BOOLEAN DEFAULT 1"),
+            ("elite_player_max_negative_edge", "FLOAT DEFAULT 12"),
+        ],
+        "adp_entries": [
+            ("sos", "FLOAT"),
+            ("injury", "FLOAT"),
+            ("risk", "FLOAT"),
+            ("floor_projection", "FLOAT"),
+            ("consensus_projection", "FLOAT"),
+            ("draftsharks_projection", "FLOAT"),
+            ("ceiling_projection", "FLOAT"),
+            ("draftsharks_3d_value", "FLOAT"),
+        ],
     }
     inspector = inspect(engine)
     with engine.begin() as connection:

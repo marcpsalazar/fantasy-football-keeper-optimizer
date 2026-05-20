@@ -28,7 +28,9 @@ import {
   Trash2,
   Trophy,
   Upload,
+  UserCircle,
   Users,
+  X,
 } from "lucide-react";
 import * as React from "react";
 
@@ -81,6 +83,7 @@ import {
   saveOptimizerSettings,
   saveScenarioSelection,
   setManualOverride,
+  updateProfileAvatar,
   updateAdminUser,
   updateTeam,
   type AdminUser,
@@ -105,6 +108,7 @@ type ViewId =
   | "rosters"
   | "admin"
   | "settings"
+  | "profile"
   | "recommendations"
   | "scenarios"
   | "outlooks"
@@ -285,7 +289,7 @@ const glossaryTerms: GlossaryTerm[] = [
   },
   {
     term: "Elite Anchor Bonus",
-    meaning: "Extra credit for very early ADP players who can anchor a lineup, even if they cost a meaningful pick.",
+    meaning: "Extra credit for very early ADP players who can anchor a lineup. When Draft Sharks fields are available, projections, floor, ceiling, 3D Value, injury, and risk inform the bonus.",
   },
   {
     term: "Risk Penalty",
@@ -328,6 +332,7 @@ type DashboardContextValue = {
   refreshData: () => Promise<void>;
   logoutNow: () => Promise<void>;
   resetDisplayAndRefresh: () => Promise<void>;
+  updateProfileAvatarNow: (avatarDataUrl: string | null) => Promise<void>;
   setSelectedScenarioForTeam: (
     teamId: string,
     scenarioName: ScenarioComparison["scenarioName"] | null,
@@ -388,6 +393,7 @@ export function DashboardApp() {
     {},
   );
   const [tableDisplayResetSignal, setTableDisplayResetSignal] = React.useState(0);
+  const [userMenuOpen, setUserMenuOpen] = React.useState(false);
 
   const isAdmin = currentUser?.role === "admin";
   const visibleNavItems = React.useMemo(
@@ -395,6 +401,7 @@ export function DashboardApp() {
     [isAdmin],
   );
   const activeItem = visibleNavItems.find((item) => item.id === activeView) ?? visibleNavItems[0];
+  const activeLabel = activeView === "profile" ? "Profile" : activeItem.label;
   const workspaceData = React.useMemo<WorkspaceData>(() => {
     const baseData = { ...workspace, settings };
     const recommendedScenarioByTeam = recommendScenarioSelections(
@@ -518,6 +525,21 @@ export function DashboardApp() {
       setSettings(mockWorkspaceData.settings);
       setSelectedScenarioByTeam({});
       setStatusMessage("Signed out.");
+    } finally {
+      setIsBusy(false);
+    }
+  }, []);
+
+  const updateProfileAvatarNow = React.useCallback(async (avatarDataUrl: string | null) => {
+    setIsBusy(true);
+    try {
+      const user = await updateProfileAvatar(avatarDataUrl);
+      setCurrentUser(user);
+      setStatusMessage(avatarDataUrl ? "Profile image updated." : "Profile image removed.");
+    } catch (error) {
+      setApiStatus("error");
+      setStatusMessage(error instanceof Error ? error.message : "Updating profile image failed.");
+      throw error;
     } finally {
       setIsBusy(false);
     }
@@ -922,6 +944,7 @@ export function DashboardApp() {
       refreshData,
       logoutNow,
       resetDisplayAndRefresh,
+      updateProfileAvatarNow,
       refreshAdpNow,
       setSelectedScenarioForTeam,
       previewCsvText,
@@ -951,6 +974,7 @@ export function DashboardApp() {
       refreshData,
       refreshAdpNow,
       resetDisplayAndRefresh,
+      updateProfileAvatarNow,
       runOptimizerNow,
       runScenariosNow,
       saveSettings,
@@ -1034,17 +1058,11 @@ export function DashboardApp() {
                 <PanelLeft className="size-5 text-zinc-400 lg:hidden" aria-hidden="true" />
                 <div className="min-w-0">
                   <p className="text-xs font-semibold uppercase text-zinc-500">League workspace</p>
-                  <h1 className="truncate text-xl font-semibold text-zinc-950">{activeItem.label}</h1>
+                  <h1 className="truncate text-xl font-semibold text-zinc-950">{activeLabel}</h1>
                   <p className="mt-0.5 truncate text-xs text-zinc-500">{statusMessage}</p>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {currentUser ? (
-                  <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
-                    <span className="text-sm text-zinc-700">{currentUser.email}</span>
-                    <Badge variant={isAdmin ? "success" : "info"}>{currentUser.role}</Badge>
-                  </div>
-                ) : null}
                 <ConnectionBadge status={apiStatus} />
                 <Button
                   aria-label="Refresh displayed workspace data from the backend without rerunning the optimizer"
@@ -1074,10 +1092,51 @@ export function DashboardApp() {
                   <span className="text-[11px] font-normal text-zinc-300">Recompute recommendations</span>
                 </Button>
                 {currentUser ? (
-                  <Button disabled={isBusy} onClick={logoutNow} variant="outline">
-                    <LogOut className="size-4" aria-hidden="true" />
-                    Logout
-                  </Button>
+                  <div className="relative">
+                    <button
+                      aria-expanded={userMenuOpen}
+                      aria-label="Open user menu"
+                      className="flex size-12 items-center justify-center overflow-hidden rounded-full border border-zinc-300 bg-zinc-50 text-zinc-600 transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+                      disabled={isBusy}
+                      onClick={() => setUserMenuOpen((open) => !open)}
+                      type="button"
+                    >
+                      <AvatarImage user={currentUser} className="size-12" iconClassName="size-7" />
+                    </button>
+                    {userMenuOpen ? (
+                      <div className="absolute right-0 top-14 z-30 w-72 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
+                        <div className="flex items-center gap-3 border-b border-zinc-100 px-2 pb-3 pt-1">
+                          <AvatarImage user={currentUser} className="size-10" iconClassName="size-6" />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-zinc-950">{currentUser.email}</p>
+                            <Badge variant={isAdmin ? "success" : "info"}>{currentUser.role}</Badge>
+                          </div>
+                        </div>
+                        <button
+                          className="mt-2 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
+                          onClick={() => {
+                            setActiveView("profile");
+                            setUserMenuOpen(false);
+                          }}
+                          type="button"
+                        >
+                          <UserCircle className="size-4" aria-hidden="true" />
+                          View Profile
+                        </button>
+                        <button
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
+                          onClick={() => {
+                            setUserMenuOpen(false);
+                            void logoutNow();
+                          }}
+                          type="button"
+                        >
+                          <LogOut className="size-4" aria-hidden="true" />
+                          Logout
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -1102,6 +1161,7 @@ export function DashboardApp() {
             {activeView === "settings" && (
               <OptimizerSettingsPage settings={settings} setSettings={setSettings} />
             )}
+            {activeView === "profile" && <ProfilePage />}
             {activeView === "recommendations" && <KeeperRecommendationsPage />}
             {activeView === "scenarios" && <ScenarioComparisonPage />}
             {activeView === "outlooks" && <TeamOutlooksPage />}
@@ -1184,6 +1244,129 @@ function LoginScreen({
         </CardContent>
       </Card>
     </main>
+  );
+}
+
+function AvatarImage({
+  className,
+  iconClassName = "size-5",
+  user,
+}: {
+  className?: string;
+  iconClassName?: string;
+  user: AuthUser;
+}) {
+  if (user.avatarDataUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        alt=""
+        className={cn("rounded-full object-cover", className)}
+        src={user.avatarDataUrl}
+      />
+    );
+  }
+
+  return (
+    <span
+      className={cn(
+        "flex rounded-full bg-zinc-100 text-zinc-500 ring-1 ring-inset ring-zinc-200",
+        className,
+      )}
+    >
+      <UserCircle className={cn("m-auto", iconClassName)} aria-hidden="true" />
+    </span>
+  );
+}
+
+function ProfilePage() {
+  const { currentUser, isBusy, updateProfileAvatarNow } = useDashboard();
+  const [error, setError] = React.useState("");
+
+  if (!currentUser) {
+    return null;
+  }
+
+  const uploadAvatar = (file: File | undefined) => {
+    if (!file) {
+      return;
+    }
+    setError("");
+    if (!file.type.startsWith("image/")) {
+      setError("Choose an image file.");
+      return;
+    }
+    if (file.size > 1_000_000) {
+      setError("Choose an image smaller than 1 MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        setError("The selected image could not be read.");
+        return;
+      }
+      void updateProfileAvatarNow(reader.result).catch(() => {
+        setError("The profile image could not be saved.");
+      });
+    };
+    reader.onerror = () => setError("The selected image could not be read.");
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Profile</CardTitle>
+          <CardDescription>Manage the image shown in the top-right user menu.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <AvatarImage user={currentUser} className="size-24" iconClassName="size-14" />
+            <div className="min-w-0 space-y-1">
+              <p className="truncate text-base font-semibold text-zinc-950">{currentUser.email}</p>
+              <div>
+                <Badge variant={currentUser.role === "admin" ? "success" : "info"}>
+                  {currentUser.role}
+                </Badge>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div className="space-y-2">
+              <Label htmlFor="avatar-upload">Avatar image</Label>
+              <Input
+                accept="image/*"
+                disabled={isBusy}
+                id="avatar-upload"
+                onChange={(event) => uploadAvatar(event.target.files?.[0])}
+                type="file"
+              />
+            </div>
+            {currentUser.avatarDataUrl ? (
+              <Button
+                disabled={isBusy}
+                onClick={() => {
+                  setError("");
+                  void updateProfileAvatarNow(null).catch(() => {
+                    setError("The profile image could not be removed.");
+                  });
+                }}
+                type="button"
+                variant="outline"
+              >
+                <X className="size-4" aria-hidden="true" />
+                Remove
+              </Button>
+            ) : null}
+          </div>
+          {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -2601,7 +2784,7 @@ function OptimizerSettingsPage({
         </SettingsGroup>
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+      <div className="mt-5 grid gap-3 lg:grid-cols-3">
         <ToggleRow
           checked={settings.superflexBonus}
           description="Adds a tiered bonus to quarterbacks when strong QB scarcity matters in superflex formats."
@@ -2613,6 +2796,12 @@ function OptimizerSettingsPage({
           description="Applies a small score adjustment based on where each team drafts in the order."
           label="Use Draft Slot Bonus"
           onChange={(value) => updateBoolean("draftSlotBonus", value)}
+        />
+        <ToggleRow
+          checked={settings.elitePlayerBonus}
+          description="Adds data-driven bonus value for truly elite players using Draft Sharks metrics when available."
+          label="Use Elite Player Bonus"
+          onChange={(value) => updateBoolean("elitePlayerBonus", value)}
         />
       </div>
 

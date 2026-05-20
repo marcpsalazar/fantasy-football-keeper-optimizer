@@ -31,6 +31,14 @@ class ProviderRow:
     position: str
     adp_pick: float
     nfl_team: str | None = None
+    sos: float | None = None
+    injury: float | None = None
+    risk: float | None = None
+    floor_projection: float | None = None
+    consensus_projection: float | None = None
+    draftsharks_projection: float | None = None
+    ceiling_projection: float | None = None
+    draftsharks_3d_value: float | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +59,14 @@ class CompositeCandidate:
     ffc_ppr_adp: float | None
     existing_adp: float | None
     review_flag: str
+    sos: float | None = None
+    injury: float | None = None
+    risk: float | None = None
+    floor_projection: float | None = None
+    consensus_projection: float | None = None
+    draftsharks_projection: float | None = None
+    ceiling_projection: float | None = None
+    draftsharks_3d_value: float | None = None
 
 
 def build_composite_adp_template_rows(
@@ -224,6 +240,14 @@ def _build_candidate(
         ffc_ppr_adp=None,
         existing_adp=existing_adp,
         review_flag=review_flag,
+        sos=draftsharks_row.sos if draftsharks_row else None,
+        injury=draftsharks_row.injury if draftsharks_row else None,
+        risk=draftsharks_row.risk if draftsharks_row else None,
+        floor_projection=draftsharks_row.floor_projection if draftsharks_row else None,
+        consensus_projection=draftsharks_row.consensus_projection if draftsharks_row else None,
+        draftsharks_projection=draftsharks_row.draftsharks_projection if draftsharks_row else None,
+        ceiling_projection=draftsharks_row.ceiling_projection if draftsharks_row else None,
+        draftsharks_3d_value=draftsharks_row.draftsharks_3d_value if draftsharks_row else None,
     )
 
 
@@ -282,6 +306,14 @@ def _candidate_row(
         "existing_adp": _fmt(candidate.existing_adp),
         "composite_method": candidate.composite_method,
         "review_flag": candidate.review_flag,
+        "sos": _fmt(candidate.sos),
+        "injury": _fmt(candidate.injury),
+        "risk": _fmt(candidate.risk),
+        "floor": _fmt(candidate.floor_projection),
+        "consensus_proj": _fmt(candidate.consensus_projection),
+        "ds_proj": _fmt(candidate.draftsharks_projection),
+        "ceiling": _fmt(candidate.ceiling_projection),
+        "3d_value": _fmt(candidate.draftsharks_3d_value),
     }
 
 
@@ -411,6 +443,14 @@ def _parse_draftsharks_browser_payload(payload: object) -> dict[tuple[str, str],
             position=position,
             adp_pick=adp_pick,
             nfl_team=nfl_team,
+            sos=_coerce_float(row.get("sos")),
+            injury=_coerce_float(row.get("injury")),
+            risk=_coerce_float(row.get("risk")),
+            floor_projection=_coerce_float(row.get("floor_projection")),
+            consensus_projection=_coerce_float(row.get("consensus_projection")),
+            draftsharks_projection=_coerce_float(row.get("draftsharks_projection")),
+            ceiling_projection=_coerce_float(row.get("ceiling_projection")),
+            draftsharks_3d_value=_coerce_float(row.get("draftsharks_3d_value")),
         )
     return rows
 

@@ -34,6 +34,84 @@ _NEWS_CACHE: _NewsCache | None = None
 _NEWS_CACHE_LOCK = Lock()
 _NEWS_CACHE_TTL = timedelta(hours=24)
 
+_FANTASY_STRATEGY_TERMS = (
+    "adp",
+    "backfield",
+    "breakout",
+    "depth chart",
+    "draft",
+    "drafts",
+    "dynasty",
+    "fantasy outlook",
+    "fantasy rankings",
+    "fantasy value",
+    "injury",
+    "injuries",
+    "keeper",
+    "minicamp",
+    "mock draft",
+    "offense",
+    "quarterback",
+    "rankings",
+    "released",
+    "redraft",
+    "roster",
+    "rookie",
+    "running back",
+    "signed",
+    "signs",
+    "sleeper",
+    "start sit",
+    "starter",
+    "suspended",
+    "suspension",
+    "superflex",
+    "target share",
+    "tight end",
+    "trade",
+    "traded",
+    "trade value",
+    "waiver",
+    "wide receiver",
+)
+_FANTASY_CONTEXT_TERMS = (
+    "fantasy",
+    "fantasy football",
+    "footballguys",
+    "nfl",
+    "rotoballer",
+    "rotowire",
+)
+_NON_STRATEGY_TERMS = (
+    "alleges",
+    "arrest",
+    "court",
+    "discrimination lawsuit",
+    "lawsuit",
+    "legal",
+    "nosebleeds",
+    "punishment",
+    "royals game",
+    "subpoena",
+    "trial",
+)
+_OTHER_SPORT_TERMS = (
+    "baseball",
+    "basketball",
+    "fantasy baseball",
+    "fantasy basketball",
+    "fantasy hockey",
+    "hockey",
+    "mlb",
+    "nba",
+    "nhl",
+)
+_FOOTBALL_CONTEXT_TERMS = (
+    "fantasy football",
+    "football",
+    "nfl",
+)
+
 
 def fetch_fantasy_news(settings: Settings, limit: int = 8) -> list[NewsItem]:
     global _NEWS_CACHE
@@ -41,9 +119,13 @@ def fetch_fantasy_news(settings: Settings, limit: int = 8) -> list[NewsItem]:
     with _NEWS_CACHE_LOCK:
         now = datetime.now(UTC)
         if _NEWS_CACHE and now - _NEWS_CACHE.fetched_at < _NEWS_CACHE_TTL:
-            return _NEWS_CACHE.items[:limit]
+            cached_items = _filter_fantasy_strategy_items(_NEWS_CACHE.items)
+            if cached_items:
+                if len(cached_items) != len(_NEWS_CACHE.items):
+                    _NEWS_CACHE = _NewsCache(fetched_at=_NEWS_CACHE.fetched_at, items=cached_items)
+                return cached_items[:limit]
 
-        items = _load_google_news_rss(settings, limit=max(limit, 12))
+        items = _load_google_news_rss(settings, limit=max(limit * 4, 24))
         _NEWS_CACHE = _NewsCache(fetched_at=now, items=items)
         return items[:limit]
 
@@ -88,11 +170,14 @@ def _load_google_news_rss(settings: Settings, limit: int) -> list[NewsItem]:
         link = _entry_text(entry, "link")
         if not headline or not link:
             continue
-        published_at = _published_iso(_entry_text(entry, "pubDate"))
+        clean_headline = _strip_source_suffix(headline)
         source = _entry_text(entry, "source") or _extract_source_from_title(headline)
+        if not _is_fantasy_strategy_relevant(clean_headline, source):
+            continue
+        published_at = _published_iso(_entry_text(entry, "pubDate"))
         items.append(
             NewsItem(
-                headline=_strip_source_suffix(headline),
+                headline=clean_headline,
                 link=link,
                 published_at=published_at,
                 source=source,
@@ -130,3 +215,22 @@ def _extract_source_from_title(title: str) -> str:
 def _strip_source_suffix(title: str) -> str:
     parts = title.rsplit(" - ", 1)
     return parts[0].strip() if len(parts) == 2 else title
+
+
+def _is_fantasy_strategy_relevant(headline: str, source: str) -> bool:
+    text = f"{headline} {source}".casefold()
+    if any(term in text for term in _OTHER_SPORT_TERMS) and not any(
+        term in text for term in _FOOTBALL_CONTEXT_TERMS
+    ):
+        return False
+    has_strategy_signal = any(term in text for term in _FANTASY_STRATEGY_TERMS)
+    if not has_strategy_signal:
+        return False
+    has_non_strategy_signal = any(term in text for term in _NON_STRATEGY_TERMS)
+    if has_non_strategy_signal:
+        return any(term in text for term in ("injury", "injuries", "suspension", "suspended"))
+    return any(term in text for term in _FANTASY_CONTEXT_TERMS) or has_strategy_signal
+
+
+def _filter_fantasy_strategy_items(items: list[NewsItem]) -> list[NewsItem]:
+    return [item for item in items if _is_fantasy_strategy_relevant(item.headline, item.source)]

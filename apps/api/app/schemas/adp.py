@@ -43,6 +43,14 @@ class ADPEntryBase(BaseModel):
     adp_pick: float
     adp_round: float | None = None
     source_note: str | None = None
+    sos: float | None = None
+    injury: float | None = None
+    risk: float | None = None
+    floor_projection: float | None = None
+    consensus_projection: float | None = None
+    draftsharks_projection: float | None = None
+    ceiling_projection: float | None = None
+    draftsharks_3d_value: float | None = None
 
 
 class ADPEntryCreate(ADPEntryBase):
@@ -56,6 +64,14 @@ class ADPEntryUpdate(BaseModel):
     adp_pick: float | None = None
     adp_round: float | None = None
     source_note: str | None = None
+    sos: float | None = None
+    injury: float | None = None
+    risk: float | None = None
+    floor_projection: float | None = None
+    consensus_projection: float | None = None
+    draftsharks_projection: float | None = None
+    ceiling_projection: float | None = None
+    draftsharks_3d_value: float | None = None
 
 
 class ADPEntryRead(ADPEntryBase):

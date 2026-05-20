@@ -26,6 +26,7 @@ class User(TimestampMixin, table=True):
     password: str | None = Field(default=None, max_length=255)
     role: str = Field(default="user", index=True, max_length=40)
     is_active: bool = Field(default=True, index=True)
+    avatar_data_url: str | None = Field(default=None)
 
     optimizer_settings: list["OptimizerSettings"] = Relationship(back_populates="user")
     manual_overrides: list["ManualOverride"] = Relationship(back_populates="user")
@@ -62,3 +63,5 @@ class AppDefaultOptimizerSettings(TimestampMixin, table=True):
     ir_status_bonus: float = Field(default=0.5)
     enable_draft_slot_bonus: bool = Field(default=True)
     enable_qb_scarcity_bonus: bool = Field(default=True)
+    enable_elite_player_bonus: bool = Field(default=True)
+    elite_player_max_negative_edge: float = Field(default=12)

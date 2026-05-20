@@ -38,6 +38,7 @@ export type AuthUser = {
   email: string;
   role: "admin" | "user";
   isActive: boolean;
+  avatarDataUrl: string | null;
 };
 
 export type AdminUser = AuthUser & {
@@ -114,6 +115,7 @@ export type OptimizerSettingsForm = {
   teWeight: number;
   superflexBonus: boolean;
   draftSlotBonus: boolean;
+  elitePlayerBonus: boolean;
 };
 
 export type DraftImpactPick = {
@@ -163,6 +165,7 @@ export const defaultSettings: OptimizerSettingsForm = {
   teWeight: 1.1,
   superflexBonus: true,
   draftSlotBonus: true,
+  elitePlayerBonus: true,
 };
 
 export const mockWorkspaceData: WorkspaceData = {
@@ -289,6 +292,15 @@ export async function logout(): Promise<void> {
     headers: { "content-type": "application/json" },
     method: "POST",
   });
+}
+
+export async function updateProfileAvatar(avatarDataUrl: string | null): Promise<AuthUser> {
+  const payload = await fetchJson<{ user: ApiRow }>("/api/auth/profile", {
+    body: JSON.stringify({ avatar_data_url: avatarDataUrl }),
+    headers: { "content-type": "application/json" },
+    method: "PATCH",
+  });
+  return mapAuthUser(payload.user);
 }
 
 export async function listAdminUsers(): Promise<AdminUser[]> {
@@ -458,6 +470,7 @@ export async function saveOptimizerSettings(
       te_weight: settings.teWeight,
       enable_qb_scarcity_bonus: settings.superflexBonus,
       enable_draft_slot_bonus: settings.draftSlotBonus,
+      enable_elite_player_bonus: settings.elitePlayerBonus,
     }),
     headers: { "content-type": "application/json" },
     method: "PATCH",
@@ -565,6 +578,7 @@ function mapAuthUser(row: ApiRow): AuthUser {
     email: text(row.email),
     role: text(row.role) === "admin" ? "admin" : "user",
     isActive: Boolean(row.is_active),
+    avatarDataUrl: text(row.avatar_data_url) || null,
   };
 }
 
@@ -711,6 +725,7 @@ function mapSettings(row: ApiRow): OptimizerSettingsForm {
     teWeight: number(row.te_weight, defaultSettings.teWeight),
     superflexBonus: boolean(row.enable_qb_scarcity_bonus, defaultSettings.superflexBonus),
     draftSlotBonus: boolean(row.enable_draft_slot_bonus, defaultSettings.draftSlotBonus),
+    elitePlayerBonus: boolean(row.enable_elite_player_bonus, defaultSettings.elitePlayerBonus),
   };
 }
 

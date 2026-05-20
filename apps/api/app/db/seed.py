@@ -378,6 +378,7 @@ def _seed_optimizer_settings(
         "def_weight": 0.10,
         "elite_qb_cutoff": 24,
         "elite_qb_max_negative_edge": 12,
+        "elite_player_max_negative_edge": 12,
         "talent_anchor": 180,
         "talent_divisor": 15,
         "starter_status_bonus": 3,
@@ -420,6 +421,10 @@ def _seed_optimizer_settings(
         settings.enable_qb_scarcity_bonus = _bool(
             _first(row, "enable_qb_scarcity_bonus"),
             settings.enable_qb_scarcity_bonus,
+        )
+        settings.enable_elite_player_bonus = _bool(
+            _first(row, "enable_elite_player_bonus"),
+            settings.enable_elite_player_bonus,
         )
         stats["optimizer_settings"] += 1
 

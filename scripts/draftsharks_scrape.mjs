@@ -74,7 +74,20 @@ function normalizeRow(row) {
     position,
     nfl_team: nflTeam || null,
     adp_pick: adp,
+    sos: finiteNumber(row.sos),
+    injury: finiteNumber(row.injury),
+    risk: finiteNumber(row.risk),
+    floor_projection: finiteNumber(row.floor_projection),
+    consensus_projection: finiteNumber(row.consensus_projection),
+    draftsharks_projection: finiteNumber(row.draftsharks_projection),
+    ceiling_projection: finiteNumber(row.ceiling_projection),
+    draftsharks_3d_value: finiteNumber(row.draftsharks_3d_value),
   };
+}
+
+function finiteNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 async function extractVisibleRows(page) {
@@ -117,6 +130,17 @@ async function extractVisibleRows(page) {
       );
     }
 
+    function parseMetric(row, selectors) {
+      for (const selector of selectors) {
+        const cell = row.querySelector(selector);
+        if (!cell) continue;
+        const raw = cell.getAttribute("data-value") || cell.textContent || "";
+        const value = Number.parseFloat(clean(raw).replace("%", ""));
+        if (Number.isFinite(value)) return value;
+      }
+      return null;
+    }
+
     const rowNodes = [
       ...document.querySelectorAll("tbody tr[data-player-row], tr[data-player-row], tr.player-row"),
     ];
@@ -126,6 +150,40 @@ async function extractVisibleRows(page) {
         position: clean(parsePosition(row)).toUpperCase(),
         nfl_team: clean(parseTeam(row)).toUpperCase(),
         adp_pick: parseAdp(row),
+        sos: parseMetric(row, ["td.sos", "[data-stat='sos']", "[data-column='sos']"]),
+        injury: parseMetric(row, ["td.injury", "[data-stat='injury']", "[data-column='injury']"]),
+        risk: parseMetric(row, ["td.risk", "[data-stat='risk']", "[data-column='risk']"]),
+        floor_projection: parseMetric(row, [
+          "td.floor",
+          "[data-stat='floor']",
+          "[data-column='floor']",
+        ]),
+        consensus_projection: parseMetric(row, [
+          "td.consensus",
+          "td.consensus-proj",
+          "[data-stat='consensus']",
+          "[data-stat='consensus_proj']",
+          "[data-column='consensus']",
+        ]),
+        draftsharks_projection: parseMetric(row, [
+          "td.ds-proj",
+          "td.ds_proj",
+          "[data-stat='ds_proj']",
+          "[data-stat='draftsharks_projection']",
+          "[data-column='ds_proj']",
+        ]),
+        ceiling_projection: parseMetric(row, [
+          "td.ceiling",
+          "[data-stat='ceiling']",
+          "[data-column='ceiling']",
+        ]),
+        draftsharks_3d_value: parseMetric(row, [
+          "td.value-3d",
+          "td.three-d-value",
+          "[data-stat='3d_value']",
+          "[data-stat='draftsharks_3d_value']",
+          "[data-column='3d_value']",
+        ]),
       }))
       .filter((row) => row.player && row.position && row.adp_pick !== null);
   });

@@ -30,6 +30,8 @@ class OptimizerSettingsBase(BaseModel):
     ir_status_bonus: float = 0.5
     enable_draft_slot_bonus: bool = True
     enable_qb_scarcity_bonus: bool = True
+    enable_elite_player_bonus: bool = True
+    elite_player_max_negative_edge: float = 12
 
 
 class OptimizerSettingsCreate(OptimizerSettingsBase):
@@ -61,6 +63,8 @@ class OptimizerSettingsUpdate(BaseModel):
     ir_status_bonus: float | None = None
     enable_draft_slot_bonus: bool | None = None
     enable_qb_scarcity_bonus: bool | None = None
+    enable_elite_player_bonus: bool | None = None
+    elite_player_max_negative_edge: float | None = None
 
 
 class OptimizerSettingsRead(OptimizerSettingsBase):

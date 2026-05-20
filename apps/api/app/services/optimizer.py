@@ -139,6 +139,8 @@ _SETTINGS_COPY_FIELDS = (
     "ir_status_bonus",
     "enable_draft_slot_bonus",
     "enable_qb_scarcity_bonus",
+    "enable_elite_player_bonus",
+    "elite_player_max_negative_edge",
 )
 
 
@@ -416,6 +418,7 @@ def calculate_keeper_score(
     adp_pick: float,
     roster_status: str,
     team_count: int,
+    adp_entry: ADPEntry | None = None,
 ) -> CandidateScore:
     position = _normalize_position(player.position)
     return CandidateScore(
@@ -425,7 +428,7 @@ def calculate_keeper_score(
         status_bonus=status_bonus(settings, roster_status),
         draft_slot_bonus=draft_slot_bonus(settings, team, team_count),
         qb_scarcity_bonus=qb_scarcity_bonus(settings, league, position, adp_pick),
-        elite_anchor_bonus=elite_anchor_bonus(adp_pick),
+        elite_anchor_bonus=elite_anchor_bonus(settings, adp_pick, position, adp_entry),
         risk_penalty=risk_penalty(roster_status),
     )
 
@@ -493,12 +496,109 @@ def qb_scarcity_bonus(
     return 0
 
 
-def elite_anchor_bonus(adp_pick: float) -> float:
+def elite_anchor_bonus(
+    settings: OptimizerSettings,
+    adp_pick: float,
+    position: str,
+    adp_entry: ADPEntry | None = None,
+) -> float:
+    if not settings.enable_elite_player_bonus:
+        return 0
+
+    metric_bonus = _draftsharks_elite_metric_bonus(position, adp_entry)
+    if metric_bonus is not None:
+        return metric_bonus
+
     if adp_pick <= 12:
         return 15
     if adp_pick <= 24:
         return 8
     return 0
+
+
+def _draftsharks_elite_metric_bonus(position: str, adp_entry: ADPEntry | None) -> float | None:
+    if adp_entry is None:
+        return None
+
+    has_metric = any(
+        value is not None
+        for value in (
+            adp_entry.draftsharks_3d_value,
+            adp_entry.draftsharks_projection,
+            adp_entry.consensus_projection,
+            adp_entry.floor_projection,
+            adp_entry.ceiling_projection,
+        )
+    )
+    if not has_metric:
+        return None
+
+    bonus = 0.0
+    if adp_entry.draftsharks_3d_value is not None:
+        bonus += min(12.0, max(0.0, adp_entry.draftsharks_3d_value / 8.0))
+
+    projection = _best_projection(adp_entry)
+    if projection is not None:
+        bonus += _projection_elite_bonus(position, projection)
+
+    if (
+        projection is not None
+        and adp_entry.ceiling_projection is not None
+        and adp_entry.ceiling_projection > projection
+    ):
+        bonus += min(4.0, (adp_entry.ceiling_projection - projection) / 15.0)
+
+    if adp_entry.floor_projection is not None and projection is not None and projection > 0:
+        floor_ratio = adp_entry.floor_projection / projection
+        if floor_ratio >= 0.85:
+            bonus += 3.0
+        elif floor_ratio >= 0.75:
+            bonus += 1.5
+
+    bonus -= _metric_risk_discount(adp_entry.risk)
+    bonus -= _metric_risk_discount(adp_entry.injury)
+    return max(0.0, min(20.0, bonus))
+
+
+def _best_projection(adp_entry: ADPEntry) -> float | None:
+    return max(
+        (
+            value
+            for value in (
+                adp_entry.draftsharks_projection,
+                adp_entry.consensus_projection,
+            )
+            if value is not None
+        ),
+        default=None,
+    )
+
+
+def _projection_elite_bonus(position: str, projection: float) -> float:
+    thresholds = {
+        "QB": (360, 330, 300),
+        "RB": (285, 250, 220),
+        "WR": (285, 250, 220),
+        "TE": (220, 190, 165),
+    }
+    high, mid, low = thresholds.get(_normalize_position(position), (140, 110, 90))
+    if projection >= high:
+        return 6
+    if projection >= mid:
+        return 4
+    if projection >= low:
+        return 2
+    return 0
+
+
+def _metric_risk_discount(value: float | None) -> float:
+    if value is None:
+        return 0
+    if value <= 1:
+        return value * 4
+    if value <= 10:
+        return value * 0.4
+    return min(6.0, value / 15.0)
 
 
 def risk_penalty(roster_status: str) -> float:
@@ -579,6 +679,7 @@ def _build_candidate(
         adp_pick=adp_pick,
         roster_status=roster_entry.roster_status,
         team_count=team_count,
+        adp_entry=adp_entry,
     )
     recommendation.keeper_value = round(keeper_value, 3)
     recommendation.keeper_score = round(score.total, 3)
@@ -592,7 +693,14 @@ def _build_candidate(
         recommendation.reason = "Manual override forced keeper"
         return KeeperCandidate(recommendation, roster_entry, player, override_type, selection_priority=1)
 
-    is_eligible, reason = _calculate_eligibility(settings, player, adp_pick, keeper_value, score.total)
+    is_eligible, reason = _calculate_eligibility(
+        settings,
+        player,
+        adp_pick,
+        keeper_value,
+        score.total,
+        score.elite_anchor_bonus,
+    )
     recommendation.is_eligible = is_eligible
     recommendation.reason = reason
     return KeeperCandidate(recommendation, roster_entry, player, override_type)
@@ -688,6 +796,7 @@ def _calculate_eligibility(
     adp_pick: float,
     keeper_value: float,
     keeper_score: float,
+    elite_anchor_bonus: float,
 ) -> tuple[bool, str]:
     if settings.max_adp_cap is not None and adp_pick > settings.max_adp_cap:
         return False, "ADP exceeds cap"
@@ -699,7 +808,12 @@ def _calculate_eligibility(
     ):
         return False, "QB ADP exceeds cap"
 
-    if keeper_value < settings.minimum_keeper_value:
+    has_elite_floor_exception = (
+        settings.enable_elite_player_bonus
+        and elite_anchor_bonus >= 12
+        and keeper_value >= -abs(settings.elite_player_max_negative_edge)
+    )
+    if keeper_value < settings.minimum_keeper_value and not has_elite_floor_exception:
         return False, "Keeper value below minimum"
 
     if keeper_score < settings.minimum_keeper_score:

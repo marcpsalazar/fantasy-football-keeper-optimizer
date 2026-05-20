@@ -182,6 +182,20 @@ def import_adp_csv(session: Session, league_id: uuid.UUID, csv_text: str) -> Imp
                 adp_pick=adp_pick,
                 adp_round=adp_round,
                 source_note=_first(row, "source_note", "note") or None,
+                sos=_optional_float(_first(row, "sos")),
+                injury=_optional_float(_first(row, "injury")),
+                risk=_optional_float(_first(row, "risk")),
+                floor_projection=_optional_float(_first(row, "floor", "floor_projection")),
+                consensus_projection=_optional_float(
+                    _first(row, "consensus_proj", "consensus_projection")
+                ),
+                draftsharks_projection=_optional_float(
+                    _first(row, "ds_proj", "draftsharks_projection", "draft_sharks_projection")
+                ),
+                ceiling_projection=_optional_float(_first(row, "ceiling", "ceiling_projection")),
+                draftsharks_3d_value=_optional_float(
+                    _first(row, "3d_value", "draftsharks_3d_value", "draft_sharks_3d_value")
+                ),
             )
             session.add(adp_entry)
         else:
@@ -189,6 +203,20 @@ def import_adp_csv(session: Session, league_id: uuid.UUID, csv_text: str) -> Imp
             adp_entry.adp_pick = adp_pick
             adp_entry.adp_round = adp_round
             adp_entry.source_note = _first(row, "source_note", "note") or None
+            adp_entry.sos = _optional_float(_first(row, "sos"))
+            adp_entry.injury = _optional_float(_first(row, "injury"))
+            adp_entry.risk = _optional_float(_first(row, "risk"))
+            adp_entry.floor_projection = _optional_float(_first(row, "floor", "floor_projection"))
+            adp_entry.consensus_projection = _optional_float(
+                _first(row, "consensus_proj", "consensus_projection")
+            )
+            adp_entry.draftsharks_projection = _optional_float(
+                _first(row, "ds_proj", "draftsharks_projection", "draft_sharks_projection")
+            )
+            adp_entry.ceiling_projection = _optional_float(_first(row, "ceiling", "ceiling_projection"))
+            adp_entry.draftsharks_3d_value = _optional_float(
+                _first(row, "3d_value", "draftsharks_3d_value", "draft_sharks_3d_value")
+            )
 
         session.flush()
         rows.append(
@@ -206,6 +234,14 @@ def import_adp_csv(session: Session, league_id: uuid.UUID, csv_text: str) -> Imp
                 "adp_pick": adp_entry.adp_pick,
                 "adp_round": adp_entry.adp_round,
                 "source_note": adp_entry.source_note,
+                "sos": adp_entry.sos,
+                "injury": adp_entry.injury,
+                "risk": adp_entry.risk,
+                "floor_projection": adp_entry.floor_projection,
+                "consensus_projection": adp_entry.consensus_projection,
+                "draftsharks_projection": adp_entry.draftsharks_projection,
+                "ceiling_projection": adp_entry.ceiling_projection,
+                "draftsharks_3d_value": adp_entry.draftsharks_3d_value,
             }
         )
 
@@ -368,6 +404,15 @@ def _float(value: str | int | float | None, default: float | None = None) -> flo
         return float(value)
     except ValueError as exc:
         raise CSVImportError(f"Invalid numeric value: {value}") from exc
+
+
+def _optional_float(value: str | int | float | None) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def _date(value: str | None, default: date) -> date:

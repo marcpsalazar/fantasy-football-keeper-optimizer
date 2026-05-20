@@ -529,6 +529,8 @@ def _write_settings(workbook: Workbook, context: dict[str, object]) -> None:
                 ("IR Status Bonus", settings.ir_status_bonus),
                 ("Draft Slot Bonus Enabled", settings.enable_draft_slot_bonus),
                 ("QB Scarcity Bonus Enabled", settings.enable_qb_scarcity_bonus),
+                ("Elite Player Bonus Enabled", settings.enable_elite_player_bonus),
+                ("Elite Player Max Negative Edge", settings.elite_player_max_negative_edge),
             ]
         )
     _write_rows(sheet, 3, 1, ["Setting", "Value"], rows)

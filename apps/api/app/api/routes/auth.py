@@ -48,6 +48,7 @@ class UserRead(BaseModel):
     email: str
     role: str
     is_active: bool
+    avatar_data_url: str | None = None
 
 
 class UserUpdateRequest(BaseModel):
@@ -62,6 +63,10 @@ class PasswordResetRequest(BaseModel):
     password: str
 
 
+class ProfileUpdateRequest(BaseModel):
+    avatar_data_url: str | None = None
+
+
 def user_payload(user: User | None) -> dict[str, Any] | None:
     if user is None:
         return None
@@ -70,6 +75,7 @@ def user_payload(user: User | None) -> dict[str, Any] | None:
         "email": user.email,
         "role": user.role,
         "is_active": user.is_active,
+        "avatar_data_url": user.avatar_data_url,
     }
 
 
@@ -108,6 +114,24 @@ def logout(response: Response) -> dict[str, str]:
 
 @router.get("/auth/me")
 def me(user: User | None = Depends(require_current_user)) -> dict[str, Any]:
+    return {"user": user_payload(user)}
+
+
+@router.patch("/auth/profile")
+def update_profile(
+    payload: ProfileUpdateRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    avatar_data_url = payload.avatar_data_url
+    if avatar_data_url:
+        _validate_avatar_data_url(avatar_data_url)
+    user.avatar_data_url = avatar_data_url
+    session.add(user)
+    session.commit()
+    session.refresh(user)
     return {"user": user_payload(user)}
 
 
@@ -229,6 +253,19 @@ def _require_user(session: Session, user_id: str) -> User:
     return user
 
 
+def _validate_avatar_data_url(value: str) -> None:
+    if len(value) > 1_500_000:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Avatar image is too large",
+        )
+    if not value.startswith("data:image/") or ";base64," not in value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Avatar must be a base64 image data URL",
+        )
+
+
 def _assign_user_to_team(session: Session, user: User, team_id: str | None) -> None:
     for assigned_team in session.exec(select(Team).where(Team.user_id == user.id)).all():
         assigned_team.user_id = None
@@ -310,6 +347,8 @@ def _default_settings_payload(settings: AppDefaultOptimizerSettings) -> dict[str
         "ir_status_bonus": settings.ir_status_bonus,
         "enable_draft_slot_bonus": settings.enable_draft_slot_bonus,
         "enable_qb_scarcity_bonus": settings.enable_qb_scarcity_bonus,
+        "enable_elite_player_bonus": settings.enable_elite_player_bonus,
+        "elite_player_max_negative_edge": settings.elite_player_max_negative_edge,
         "created_at": settings.created_at.isoformat(),
         "updated_at": settings.updated_at.isoformat(),
     }
