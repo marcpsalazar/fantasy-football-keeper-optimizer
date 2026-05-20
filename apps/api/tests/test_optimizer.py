@@ -180,6 +180,97 @@ def test_optimizer_selects_zero_to_four_keepers(
     assert 0 <= len(selected) <= 4
 
 
+def test_default_settings_do_not_select_neutral_value_keepers(session: Session) -> None:
+    league = League(name="Default Value Floor", season_year=2026, scoring_format="superflex")
+    session.add(league)
+    session.flush()
+    team = add_team(session, league, "Neutral Team", 1)
+    snapshot = ADPSnapshot(
+        league_id=league.id,
+        season_year=league.season_year,
+        name="Test ADP",
+        source="Test",
+        format_type="superflex",
+        snapshot_date=date(2026, 5, 1),
+    )
+    session.add(snapshot)
+    session.flush()
+
+    for index, position in enumerate(["QB", "RB", "WR", "TE"]):
+        adp_pick = 20 + index
+        add_candidate(
+            session,
+            league=league,
+            team=team,
+            snapshot=snapshot,
+            name=f"Neutral Player {index}",
+            position=position,
+            adp_pick=adp_pick,
+            cost_pick=adp_pick,
+            drafted_team=team,
+        )
+
+    recommendations = run_optimizer(session, league.id, persist=False)
+    selected = [recommendation for recommendation in recommendations if recommendation.is_recommended]
+
+    assert selected == []
+    assert {recommendation.reason for recommendation in recommendations} == {
+        "Keeper value below minimum"
+    }
+
+
+def test_optimizer_can_use_lower_keeper_value_thresholds_when_configured(
+    session: Session,
+) -> None:
+    league, _, snapshot = make_context(
+        session,
+        minimum_keeper_value=-5,
+        minimum_keeper_score=-100,
+    )
+    team = add_team(session, league, "Floor Team", 1)
+
+    positive = add_candidate(
+        session,
+        league=league,
+        team=team,
+        snapshot=snapshot,
+        name="Positive Value",
+        position="WR",
+        adp_pick=30,
+        keeper_value=5,
+        drafted_team=team,
+    )
+    neutral = add_candidate(
+        session,
+        league=league,
+        team=team,
+        snapshot=snapshot,
+        name="Neutral Value",
+        position="RB",
+        adp_pick=40,
+        keeper_value=0,
+        drafted_team=team,
+    )
+    negative = add_candidate(
+        session,
+        league=league,
+        team=team,
+        snapshot=snapshot,
+        name="Negative Value",
+        position="TE",
+        adp_pick=50,
+        keeper_value=-4,
+        drafted_team=team,
+    )
+
+    recommendations = run_optimizer(session, league.id, persist=False)
+    by_player_id = {recommendation.player_id: recommendation for recommendation in recommendations}
+
+    assert by_player_id[positive.id].is_recommended is True
+    assert by_player_id[neutral.id].is_recommended is True
+    assert by_player_id[negative.id].is_recommended is True
+
+
 def test_optimizer_respects_position_and_qb_caps(session: Session) -> None:
     league, _, snapshot = make_context(session)
     team = add_team(session, league, "Cap Test", 1)
@@ -443,6 +534,21 @@ def test_scenario_comparison_returns_presets_team_scores_and_forfeited_picks(
         "Win Now",
         "Rebuild",
     ]
+    expected_by_scenario = {
+        "Pure Value": ["Value Receiver"],
+        "Balanced": ["Value Receiver"],
+        "Superflex Heavy": ["Market QB", "Value Receiver"],
+        "Win Now": ["Market QB", "Value Receiver"],
+        "Rebuild": ["Value Receiver"],
+    }
+    for comparison in comparisons:
+        team_result = next(
+            result for result in comparison.teams if result.team_name == "Scenario Team"
+        )
+        assert [keeper.player_name for keeper in team_result.selected_keepers] == expected_by_scenario[
+            comparison.scenario_name
+        ]
+
     balanced = next(comparison for comparison in comparisons if comparison.scenario_name == "Balanced")
     scenario_team = next(team_result for team_result in balanced.teams if team_result.team_name == "Scenario Team")
     empty_result = next(team_result for team_result in balanced.teams if team_result.team_name == "Empty Team")

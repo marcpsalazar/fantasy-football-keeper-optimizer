@@ -1,5 +1,6 @@
 export type Team = {
   id: string;
+  userId?: string;
   name: string;
   owner: string;
   draftSlot: number;
@@ -40,6 +41,7 @@ export type KeeperRecommendation = {
   team: string;
   player: string;
   position: string;
+  scenario?: string;
   keeperCostPick: number;
   keeperCostRound: number;
   adpPick: number;
@@ -54,6 +56,7 @@ export type KeeperRecommendation = {
 export type Outlook = {
   teamId?: string;
   team: string;
+  scenario?: string;
   stance: string;
   recommendedKeepers: string[];
   lostPicks: string;
@@ -62,12 +65,18 @@ export type Outlook = {
 };
 
 export type ScenarioKeeper = {
+  playerId?: string;
   player: string;
   position: string;
+  keeperCostPick?: number;
+  keeperCostRound?: number;
+  keeperValue?: number;
   keeperScore: number;
+  reason?: string;
 };
 
 export type ScenarioTeamResult = {
+  teamId?: string;
   team: string;
   totalKeeperScore: number;
   picksForfeited: string[];
@@ -317,27 +326,27 @@ export const keeperRecommendations: KeeperRecommendation[] = [
 export const outlooks: Outlook[] = [
   {
     team: "SWEEP THE LEG JOHNNY",
-    stance: "Balanced",
+    stance: "Aggressive Keep",
     recommendedKeepers: ["Jalen Hurts", "Ja'Marr Chase", "Rashee Rice"],
     lostPicks: "1.01, 5.01, 12.06",
     draftCapital: "Strong middle rounds",
-    risk: "Burns first pick for a market-price WR",
+    risk: "This plan gives up a first-round pick, so the keeper quality has to justify the lost early-board flexibility.",
   },
   {
     team: "COBRA KAI NEVER DIES",
-    stance: "Win-now",
+    stance: "Aggressive Keep",
     recommendedKeepers: ["Bijan Robinson", "Justin Jefferson", "Breece Hall", "Sam LaPorta"],
     lostPicks: "1.02, 2.11, 4.02, 8.11",
     draftCapital: "Thin top-50 pool",
-    risk: "Four keepers compress early draft options",
+    risk: "Using four keeper slots narrows the early draft path, so there is less room to fix roster weaknesses later.",
   },
   {
     team: "MIYAGI DO",
-    stance: "Flexible",
+    stance: "Flexible Build",
     recommendedKeepers: ["Trey McBride", "Garrett Wilson"],
     lostPicks: "3.07, 10.06",
     draftCapital: "Best top-100 access",
-    risk: "Needs RB volume in first two rounds",
+    risk: "The keeper cost is manageable, but the roster still depends on the draft to add impact RB depth.",
   },
 ];
 

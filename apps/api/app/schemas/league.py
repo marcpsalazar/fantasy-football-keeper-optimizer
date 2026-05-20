@@ -43,6 +43,7 @@ class LeagueRead(LeagueCreate):
 
 class TeamBase(BaseModel):
     league_id: uuid.UUID
+    user_id: uuid.UUID | None = None
     name: str
     owner_name: str | None = None
     draft_slot: int | None = None
@@ -54,6 +55,7 @@ class TeamCreate(TeamBase):
 
 class TeamUpdate(BaseModel):
     league_id: uuid.UUID | None = None
+    user_id: uuid.UUID | None = None
     name: str | None = None
     owner_name: str | None = None
     draft_slot: int | None = None
@@ -61,6 +63,7 @@ class TeamUpdate(BaseModel):
 
 class TeamRead(TeamCreate):
     id: uuid.UUID
+    user_email: str | None = None
     created_at: datetime
     updated_at: datetime
 

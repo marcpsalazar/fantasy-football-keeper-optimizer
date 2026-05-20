@@ -368,7 +368,7 @@ def _seed_optimizer_settings(
         "max_qb_keepers": 1,
     }
     float_field_defaults = {
-        "minimum_keeper_value": 0,
+        "minimum_keeper_value": 1,
         "minimum_keeper_score": 0,
         "qb_weight": 1.75,
         "rb_weight": 1.20,

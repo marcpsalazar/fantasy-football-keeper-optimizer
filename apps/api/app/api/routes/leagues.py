@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import date
+from datetime import date, datetime
 from io import StringIO
 from typing import Any, Literal
 import uuid
@@ -11,17 +11,22 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.db.session import get_session
+from app.core.config import get_settings
 from app.models import (
     ADPEntry,
     ADPSnapshot,
+    AppDefaultOptimizerSettings,
     DraftPick,
     FinalRosterEntry,
+    KeeperCandidate,
     KeeperRecommendation,
     League,
     ManualOverride,
     OptimizerSettings,
     Player,
     Team,
+    TeamScenarioSelection,
+    User,
 )
 from app.schemas.league import LeagueCreate, LeagueRead, LeagueUpdate, TeamRead, TeamUpdate
 from app.schemas.optimizer import OptimizerSettingsRead, OptimizerSettingsUpdate
@@ -31,6 +36,7 @@ from app.services.csv_imports import (
     import_draft_results_csv,
     import_final_rosters_csv,
 )
+from app.services.adp_refresh import ADPRefreshError, refresh_adp_from_api
 from app.services.csv_preview import (
     CSVPreviewError,
     preview_adp_csv,
@@ -38,19 +44,28 @@ from app.services.csv_preview import (
     preview_final_rosters_csv,
 )
 from app.services.excel_export import ExcelExportError, build_keeper_recommendations_workbook
+from app.services.news_feed import NewsFeedError, fetch_fantasy_news
+from app.services.composite_adp import CompositeADPError, build_composite_adp_template_rows
 from app.services.optimizer import (
     OptimizerInputError,
     ScenarioComparison,
+    latest_recommendation_batch,
     run_optimizer,
     run_scenario_comparison,
 )
 from app.services.pdf_export import PDFExportError, build_team_outlooks_pdf
+from app.services.auth import require_admin, require_current_user
 
-router = APIRouter(prefix="/api", tags=["leagues"])
+router = APIRouter(
+    prefix="/api",
+    tags=["leagues"],
+    dependencies=[Depends(require_current_user)],
+)
 
 
 class TeamCreateRequest(BaseModel):
     name: str
+    user_id: uuid.UUID | None = None
     owner_name: str | None = None
     draft_slot: int | None = None
 
@@ -83,8 +98,16 @@ class ManualOverrideRequest(BaseModel):
     notes: str | None = None
 
 
+class ScenarioSelectionRequest(BaseModel):
+    scenario_name: str | None = None
+
+
 @router.post("/leagues", response_model=LeagueRead, status_code=status.HTTP_201_CREATED)
-def create_league(payload: LeagueCreate, session: Session = Depends(get_session)) -> League:
+def create_league(
+    payload: LeagueCreate,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> League:
     league = League(**payload.model_dump())
     session.add(league)
     session.commit()
@@ -108,6 +131,7 @@ def read_league(league_id: uuid.UUID, session: Session = Depends(get_session)) -
 def update_league(
     league_id: uuid.UUID,
     payload: LeagueUpdate,
+    _: User | None = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> League:
     league = _require_league(session, league_id)
@@ -128,9 +152,12 @@ def update_league(
 def create_team(
     league_id: uuid.UUID,
     payload: TeamCreateRequest,
+    _: User | None = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> Team:
     _require_league(session, league_id)
+    if payload.user_id is not None:
+        _require_user(session, payload.user_id)
     team = Team(league_id=league_id, **payload.model_dump())
     session.add(team)
     session.commit()
@@ -142,7 +169,16 @@ def create_team(
 def list_teams(league_id: uuid.UUID, session: Session = Depends(get_session)) -> dict[str, Any]:
     _require_league(session, league_id)
     teams = session.exec(select(Team).where(Team.league_id == league_id).order_by(Team.name)).all()
-    rows = [TeamRead.model_validate(team).model_dump(mode="json") for team in teams]
+    user_ids = {team.user_id for team in teams if team.user_id is not None}
+    users = {
+        user.id: user
+        for user in session.exec(select(User).where(User.id.in_(user_ids))).all()
+    } if user_ids else {}
+    rows = []
+    for team in teams:
+        row = TeamRead.model_validate(team).model_dump(mode="json")
+        row["user_email"] = users[team.user_id].email if team.user_id in users else None
+        rows.append(row)
     return _table(rows)
 
 
@@ -150,6 +186,7 @@ def list_teams(league_id: uuid.UUID, session: Session = Depends(get_session)) ->
 def update_team(
     team_id: uuid.UUID,
     payload: TeamUpdate,
+    _: User | None = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> Team:
     team = session.get(Team, team_id)
@@ -158,6 +195,8 @@ def update_team(
 
     update_data = payload.model_dump(exclude_unset=True)
     update_data.pop("league_id", None)
+    if "user_id" in update_data and update_data["user_id"] is not None:
+        _require_user(session, update_data["user_id"])
     for field_name, value in update_data.items():
         setattr(team, field_name, value)
 
@@ -165,6 +204,31 @@ def update_team(
     session.commit()
     session.refresh(team)
     return team
+
+
+@router.delete("/teams/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_team(
+    team_id: uuid.UUID,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> Response:
+    team = session.get(Team, team_id)
+    if team is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
+    for model in (
+        TeamScenarioSelection,
+        KeeperRecommendation,
+        ManualOverride,
+        KeeperCandidate,
+        DraftPick,
+        FinalRosterEntry,
+    ):
+        for row in session.exec(select(model).where(model.team_id == team_id)).all():
+            session.delete(row)
+    session.delete(team)
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/leagues/{league_id}/draft-results")
@@ -181,6 +245,7 @@ def list_draft_results(
 def preview_draft_results(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
+    _: User | None = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     try:
@@ -193,6 +258,7 @@ def preview_draft_results(
 def import_draft_results(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
+    _: User | None = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     try:
@@ -216,6 +282,7 @@ def list_final_rosters(
 def preview_final_rosters(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
+    _: User | None = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     try:
@@ -228,6 +295,7 @@ def preview_final_rosters(
 def import_final_rosters(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
+    _: User | None = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     try:
@@ -244,6 +312,7 @@ def import_final_rosters(
 def create_adp_snapshot(
     league_id: uuid.UUID,
     payload: ADPSnapshotCreateRequest,
+    _: User | None = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     league = _require_league(session, league_id)
@@ -287,6 +356,7 @@ def list_adp_snapshots(
 def import_adp(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
+    _: User | None = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     try:
@@ -296,11 +366,54 @@ def import_adp(
     return _table(result.rows, imported=result.imported)
 
 
+@router.post("/leagues/{league_id}/adp/refresh")
+def refresh_adp(
+    league_id: uuid.UUID,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    try:
+        result = refresh_adp_from_api(session, league_id, get_settings())
+    except ADPRefreshError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {
+        **_table(result.import_result.rows, imported=result.import_result.imported),
+        "provider": result.provider,
+        "source_url": result.source_url,
+    }
+
+
+@router.post("/leagues/{league_id}/adp/import-composite")
+def import_composite_adp(
+    league_id: uuid.UUID,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    league = _require_league(session, league_id)
+    try:
+        composite_rows = build_composite_adp_template_rows(session, league, get_settings())
+        import_rows = [row for row in composite_rows if str(row.get("adp_pick", "")).strip()]
+        if not import_rows:
+            raise CompositeADPError("Composite ADP build returned no importable rows with ADP values")
+        result = import_adp_csv(session, league_id, _rows_to_csv_text(import_rows))
+    except (CompositeADPError, CSVImportError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return _table(
+        result.rows,
+        imported=result.imported,
+        generated=len(composite_rows),
+        skipped_missing_adp=len(composite_rows) - len(import_rows),
+    )
+
+
 @router.post("/leagues/{league_id}/adp/preview")
 @router.post("/leagues/{league_id}/adp-snapshots/preview")
 def preview_adp(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
+    _: User | None = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     try:
@@ -325,14 +438,37 @@ def read_adp_snapshot(
     }
 
 
+@router.get("/news/fantasy-football")
+def fantasy_football_news() -> dict[str, Any]:
+    try:
+        items = fetch_fantasy_news(get_settings(), limit=8)
+    except NewsFeedError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    rows = [
+        {
+            "headline": item.headline,
+            "link": item.link,
+            "published_at": item.published_at,
+            "source": item.source,
+        }
+        for item in items
+    ]
+    return _table(rows)
+
+
 @router.get("/leagues/{league_id}/manual-overrides")
 def list_manual_overrides(
     league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     _require_league(session, league_id)
     overrides = session.exec(
-        select(ManualOverride).where(ManualOverride.league_id == league_id)
+        select(ManualOverride).where(
+            ManualOverride.league_id == league_id,
+            ManualOverride.user_id == _user_id(user),
+        )
     ).all()
     return _table(_manual_override_rows(session, overrides))
 
@@ -341,6 +477,7 @@ def list_manual_overrides(
 def upsert_manual_override(
     league_id: uuid.UUID,
     payload: ManualOverrideRequest,
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     _require_league(session, league_id)
@@ -354,6 +491,7 @@ def upsert_manual_override(
     override = session.exec(
         select(ManualOverride).where(
             ManualOverride.league_id == league_id,
+            ManualOverride.user_id == _user_id(user),
             ManualOverride.team_id == payload.team_id,
             ManualOverride.player_id == payload.player_id,
         )
@@ -378,6 +516,7 @@ def upsert_manual_override(
     if override is None:
         override = ManualOverride(
             league_id=league_id,
+            user_id=_user_id(user),
             team_id=payload.team_id,
             player_id=payload.player_id,
             override_type=payload.override_type,
@@ -397,14 +536,11 @@ def upsert_manual_override(
 def read_optimizer_settings(
     league_id: uuid.UUID,
     settings_id: uuid.UUID | None = Query(default=None),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> OptimizerSettings:
     _require_league(session, league_id)
-    settings = _resolve_optimizer_settings(session, league_id, settings_id)
-    if session.get(OptimizerSettings, settings.id) is None:
-        session.add(settings)
-        session.commit()
-        session.refresh(settings)
+    settings = _resolve_optimizer_settings(session, league_id, settings_id, user_id=_user_id(user))
     return settings
 
 
@@ -413,10 +549,17 @@ def update_optimizer_settings(
     league_id: uuid.UUID,
     payload: OptimizerSettingsUpdate,
     settings_id: uuid.UUID | None = Query(default=None),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> OptimizerSettings:
     _require_league(session, league_id)
-    settings = _resolve_optimizer_settings(session, league_id, settings_id)
+    settings = _resolve_optimizer_settings(
+        session,
+        league_id,
+        settings_id,
+        user_id=_user_id(user),
+        for_update=True,
+    )
     update_data = payload.model_dump(exclude_unset=True)
     update_data.pop("league_id", None)
 
@@ -433,6 +576,7 @@ def update_optimizer_settings(
 def run_league_optimizer(
     league_id: uuid.UUID,
     payload: OptimizerRunRequest | None = None,
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     payload = payload or OptimizerRunRequest()
@@ -440,6 +584,7 @@ def run_league_optimizer(
         recommendations = run_optimizer(
             session,
             league_id,
+            user_id=_user_id(user),
             settings_id=payload.settings_id,
             adp_snapshot_id=payload.adp_snapshot_id,
             scenario_name=payload.scenario_name,
@@ -455,6 +600,7 @@ def run_league_optimizer(
 def compare_optimizer_scenarios(
     league_id: uuid.UUID,
     payload: ScenarioComparisonRequest | None = None,
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     payload = payload or ScenarioComparisonRequest()
@@ -462,6 +608,7 @@ def compare_optimizer_scenarios(
         comparisons = run_scenario_comparison(
             session,
             league_id,
+            user_id=_user_id(user),
             adp_snapshot_id=payload.adp_snapshot_id,
             scenario_names=payload.scenario_names,
             persist=payload.persist,
@@ -472,15 +619,113 @@ def compare_optimizer_scenarios(
     return _scenario_comparison_payload(comparisons)
 
 
+@router.get("/leagues/{league_id}/scenario-selections")
+def list_scenario_selections(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    if user is None:
+        return _table([])
+    selections = session.exec(
+        select(TeamScenarioSelection).where(
+            TeamScenarioSelection.league_id == league_id,
+            TeamScenarioSelection.user_id == user.id,
+        )
+    ).all()
+    teams = _teams_by_id(session, {selection.team_id for selection in selections})
+    rows = [
+        {
+            "id": str(selection.id),
+            "league_id": str(selection.league_id),
+            "team_id": str(selection.team_id),
+            "team_name": teams.get(selection.team_id).name if teams.get(selection.team_id) else None,
+            "scenario_name": selection.scenario_name,
+            "created_at": selection.created_at.isoformat(),
+            "updated_at": selection.updated_at.isoformat(),
+        }
+        for selection in selections
+    ]
+    rows.sort(key=lambda row: row["team_name"] or "")
+    return _table(rows)
+
+
+@router.put("/leagues/{league_id}/scenario-selections/{team_id}")
+def upsert_scenario_selection(
+    league_id: uuid.UUID,
+    team_id: uuid.UUID,
+    payload: ScenarioSelectionRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    team = session.get(Team, team_id)
+    if team is None or team.league_id != league_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+
+    selection = session.exec(
+        select(TeamScenarioSelection).where(
+            TeamScenarioSelection.league_id == league_id,
+            TeamScenarioSelection.user_id == user.id,
+            TeamScenarioSelection.team_id == team_id,
+        )
+    ).first()
+
+    scenario_name = (payload.scenario_name or "").strip()
+    if not scenario_name:
+        if selection is not None:
+            session.delete(selection)
+            session.commit()
+        return {
+            "id": None,
+            "league_id": str(league_id),
+            "team_id": str(team_id),
+            "team_name": team.name,
+            "scenario_name": None,
+        }
+
+    if selection is None:
+        selection = TeamScenarioSelection(
+            league_id=league_id,
+            user_id=user.id,
+            team_id=team_id,
+            scenario_name=scenario_name,
+        )
+    else:
+        selection.scenario_name = scenario_name
+    session.add(selection)
+    session.commit()
+    session.refresh(selection)
+    return {
+        "id": str(selection.id),
+        "league_id": str(selection.league_id),
+        "team_id": str(selection.team_id),
+        "team_name": team.name,
+        "scenario_name": selection.scenario_name,
+        "created_at": selection.created_at.isoformat(),
+        "updated_at": selection.updated_at.isoformat(),
+    }
+
+
 @router.get("/leagues/{league_id}/draft-impact")
 def read_draft_impact(
     league_id: uuid.UUID,
     scenario_name: str | None = Query(default=None),
     rounds: int = Query(default=10, ge=1, le=30),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     league = _require_league(session, league_id)
-    rows = _draft_impact_rows(session, league, scenario_name=scenario_name, rounds=rounds)
+    rows = _draft_impact_rows(
+        session,
+        league,
+        scenario_name=scenario_name,
+        rounds=rounds,
+        user_id=_user_id(user),
+    )
     return _table(rows, forfeited_count=sum(1 for row in rows if row["status"] == "Forfeited"))
 
 
@@ -490,18 +735,29 @@ def read_optimizer_results(
     settings_id: uuid.UUID | None = Query(default=None),
     adp_snapshot_id: uuid.UUID | None = Query(default=None),
     scenario_name: str | None = Query(default=None),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     _require_league(session, league_id)
-    statement = select(KeeperRecommendation).where(KeeperRecommendation.league_id == league_id)
-    if settings_id is not None:
-        statement = statement.where(KeeperRecommendation.settings_id == settings_id)
-    if adp_snapshot_id is not None:
-        statement = statement.where(KeeperRecommendation.adp_snapshot_id == adp_snapshot_id)
-    if scenario_name is not None:
-        statement = statement.where(KeeperRecommendation.scenario_name == scenario_name)
-
-    recommendations = session.exec(statement).all()
+    if settings_id is None and adp_snapshot_id is None:
+        recommendations = latest_recommendation_batch(
+            session,
+            league_id,
+            user_id=_user_id(user),
+            scenario_name=scenario_name,
+        )
+    else:
+        statement = select(KeeperRecommendation).where(
+            KeeperRecommendation.league_id == league_id,
+            KeeperRecommendation.user_id == _user_id(user),
+        )
+        if settings_id is not None:
+            statement = statement.where(KeeperRecommendation.settings_id == settings_id)
+        if adp_snapshot_id is not None:
+            statement = statement.where(KeeperRecommendation.adp_snapshot_id == adp_snapshot_id)
+        if scenario_name is not None:
+            statement = statement.where(KeeperRecommendation.scenario_name == scenario_name)
+        recommendations = session.exec(statement).all()
     return _optimizer_table(session, recommendations)
 
 
@@ -509,20 +765,39 @@ def read_optimizer_results(
 def export_keeper_recommendations_csv(
     league_id: uuid.UUID,
     scenario_name: str | None = Query(default=None),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> Response:
     _require_league(session, league_id)
-    statement = select(KeeperRecommendation).where(
-        KeeperRecommendation.league_id == league_id,
-        KeeperRecommendation.is_recommended.is_(True),
+    payload = _optimizer_table(
+        session,
+        latest_recommendation_batch(
+            session,
+            league_id,
+            user_id=_user_id(user),
+            scenario_name=scenario_name,
+            recommended_only=True,
+        ),
     )
-    if scenario_name is not None:
-        statement = statement.where(KeeperRecommendation.scenario_name == scenario_name)
-
-    payload = _optimizer_table(session, session.exec(statement).all())
     return _csv_response(
         rows=payload["rows"],
         filename=f"keeper-recommendations-{league_id}.csv",
+    )
+
+
+@router.get("/leagues/{league_id}/exports/adp-template.csv")
+def export_adp_template_csv(
+    league_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> Response:
+    league = _require_league(session, league_id)
+    try:
+        rows = build_composite_adp_template_rows(session, league, get_settings())
+    except CompositeADPError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return _csv_response(
+        rows=rows,
+        filename=f"adp-template-{league_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv",
     )
 
 
@@ -531,6 +806,7 @@ def export_team_outlooks_pdf(
     league_id: uuid.UUID,
     team_id: uuid.UUID | None = Query(default=None),
     scenario_name: str | None = Query(default=None),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> Response:
     try:
@@ -539,6 +815,7 @@ def export_team_outlooks_pdf(
             league_id,
             team_id=team_id,
             scenario_name=scenario_name,
+            user_id=_user_id(user),
         )
     except PDFExportError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -555,6 +832,7 @@ def export_team_outlooks_pdf(
 def export_keeper_recommendations_excel(
     league_id: uuid.UUID,
     scenario_name: str | None = Query(default=None),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> Response:
     try:
@@ -562,6 +840,7 @@ def export_keeper_recommendations_excel(
             session,
             league_id,
             scenario_name=scenario_name,
+            user_id=_user_id(user),
         )
     except ExcelExportError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -739,6 +1018,7 @@ def _draft_impact_rows(
     *,
     scenario_name: str | None,
     rounds: int,
+    user_id: uuid.UUID | None = None,
 ) -> list[dict[str, Any]]:
     teams = session.exec(
         select(Team).where(Team.league_id == league.id).order_by(Team.draft_slot, Team.name)
@@ -757,20 +1037,28 @@ def _draft_impact_rows(
     for index, team in enumerate(fallback_teams, start=1):
         by_slot.setdefault(index, team)
 
-    statement = select(KeeperRecommendation).where(
-        KeeperRecommendation.league_id == league.id,
-        KeeperRecommendation.is_recommended.is_(True),
+    recommendations = latest_recommendation_batch(
+        session,
+        league.id,
+        user_id=user_id,
+        scenario_name=scenario_name,
+        recommended_only=True,
     )
-    if scenario_name is not None:
-        statement = statement.where(KeeperRecommendation.scenario_name == scenario_name)
-    recommendations = session.exec(statement).all()
     players = _players_by_id(session, {recommendation.player_id for recommendation in recommendations})
-    forfeited_by_pick = {
-        int(recommendation.keeper_cost_pick): recommendation
-        for recommendation in recommendations
-        if recommendation.keeper_cost_pick is not None
-        and recommendation.keeper_cost_pick == int(recommendation.keeper_cost_pick)
-    }
+    forfeited_by_pick: dict[int, KeeperRecommendation] = {}
+    for recommendation in recommendations:
+        team = teams_by_id.get(recommendation.team_id)
+        if team is None or team.draft_slot is None:
+            continue
+        forfeited_pick = _team_forfeited_overall_pick(
+            keeper_cost_pick=recommendation.keeper_cost_pick,
+            keeper_cost_round=recommendation.keeper_cost_round,
+            draft_slot=team.draft_slot,
+            team_count=team_count,
+            draft_type=league.draft_type,
+        )
+        if forfeited_pick is not None:
+            forfeited_by_pick[forfeited_pick] = recommendation
 
     rows = []
     for round_number in range(1, rounds + 1):
@@ -781,11 +1069,7 @@ def _draft_impact_rows(
         for pick_in_round, slot in enumerate(slots, start=1):
             overall_pick = (round_number - 1) * team_count + pick_in_round
             recommendation = forfeited_by_pick.get(overall_pick)
-            team = (
-                teams_by_id.get(recommendation.team_id)
-                if recommendation is not None
-                else by_slot.get(slot)
-            )
+            team = by_slot.get(slot)
             player = players.get(recommendation.player_id) if recommendation else None
             rows.append(
                 {
@@ -801,6 +1085,35 @@ def _draft_impact_rows(
                 }
             )
     return rows
+
+
+def _team_forfeited_overall_pick(
+    *,
+    keeper_cost_pick: float | None,
+    keeper_cost_round: float | None,
+    draft_slot: int,
+    team_count: int,
+    draft_type: str,
+) -> int | None:
+    if team_count <= 0 or draft_slot < 1 or draft_slot > team_count:
+        return None
+
+    round_number: int | None = None
+    if keeper_cost_round is not None and keeper_cost_round > 0:
+        round_number = int(keeper_cost_round)
+    elif keeper_cost_pick is not None and keeper_cost_pick > 0:
+        round_number = int((keeper_cost_pick - 1) // team_count) + 1
+
+    if round_number is None or round_number <= 0:
+        return None
+
+    snake = draft_type.lower() == "snake"
+    if snake and round_number % 2 == 0:
+        pick_in_round = team_count + 1 - draft_slot
+    else:
+        pick_in_round = draft_slot
+
+    return (round_number - 1) * team_count + pick_in_round
 
 
 def _teams_by_id(session: Session, team_ids: set[uuid.UUID]) -> dict[uuid.UUID, Team]:
@@ -874,20 +1187,30 @@ def _acquisition_label(
 
 
 def _csv_response(rows: list[dict[str, Any]], filename: str) -> Response:
+    content = _rows_to_csv_text(rows)
+    if not rows:
+        content = _rows_to_csv_text([{"message": "No rows"}])
+
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
+def _rows_to_csv_text(rows: list[dict[str, Any]]) -> str:
     output = StringIO()
     fieldnames = list(rows[0].keys()) if rows else ["message"]
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     if rows:
         writer.writerows(rows)
-    else:
-        writer.writerow({"message": "No rows"})
-
-    return Response(
-        content=output.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return output.getvalue()
 
 
 def _require_league(session: Session, league_id: uuid.UUID) -> League:
@@ -897,14 +1220,24 @@ def _require_league(session: Session, league_id: uuid.UUID) -> League:
     return league
 
 
+def _require_user(session: Session, user_id: uuid.UUID) -> User:
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
+
+
 def _resolve_optimizer_settings(
     session: Session,
     league_id: uuid.UUID,
     settings_id: uuid.UUID | None,
+    *,
+    user_id: uuid.UUID | None,
+    for_update: bool = False,
 ) -> OptimizerSettings:
     if settings_id is not None:
         settings = session.get(OptimizerSettings, settings_id)
-        if settings is None or settings.league_id != league_id:
+        if settings is None or settings.league_id != league_id or settings.user_id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Optimizer settings not found",
@@ -912,12 +1245,28 @@ def _resolve_optimizer_settings(
         return settings
 
     settings = session.exec(
-        select(OptimizerSettings).where(OptimizerSettings.league_id == league_id)
+        select(OptimizerSettings).where(
+            OptimizerSettings.league_id == league_id,
+            OptimizerSettings.user_id == user_id,
+        )
     ).first()
     if settings is not None:
         return settings
 
-    return OptimizerSettings(league_id=league_id)
+    defaults = _active_default_settings(session)
+    settings = OptimizerSettings(
+        league_id=league_id,
+        user_id=user_id,
+        **{
+            field_name: getattr(defaults, field_name)
+            for field_name in _optimizer_settings_copy_fields()
+        },
+    )
+    if for_update:
+        session.add(settings)
+        session.commit()
+        session.refresh(settings)
+    return settings
 
 
 def _optimizer_table(
@@ -935,11 +1284,15 @@ def _optimizer_table(
         for player in session.exec(select(Player).where(Player.id.in_(player_ids))).all()
     }
     league_ids = {recommendation.league_id for recommendation in recommendations}
+    user_id = recommendations[0].user_id if recommendations else None
     overrides = (
         {
             (override.team_id, override.player_id): override
             for override in session.exec(
-                select(ManualOverride).where(ManualOverride.league_id.in_(league_ids))
+                select(ManualOverride).where(
+                    ManualOverride.league_id.in_(league_ids),
+                    ManualOverride.user_id == user_id,
+                )
             ).all()
         }
         if league_ids
@@ -991,6 +1344,51 @@ def _optimizer_table(
         )
     )
     return _table(rows, selected_count=sum(1 for row in rows if row["is_recommended"]))
+
+
+def _active_default_settings(session: Session) -> AppDefaultOptimizerSettings:
+    settings = session.exec(
+        select(AppDefaultOptimizerSettings)
+        .where(AppDefaultOptimizerSettings.is_active.is_(True))
+        .order_by(AppDefaultOptimizerSettings.created_at.desc())
+    ).first()
+    if settings is None:
+        settings = AppDefaultOptimizerSettings()
+        session.add(settings)
+        session.commit()
+        session.refresh(settings)
+    return settings
+
+
+def _optimizer_settings_copy_fields() -> tuple[str, ...]:
+    return (
+        "max_keepers",
+        "max_keepers_per_position",
+        "max_qb_keepers",
+        "minimum_keeper_value",
+        "max_adp_cap",
+        "minimum_keeper_score",
+        "qb_weight",
+        "rb_weight",
+        "wr_weight",
+        "te_weight",
+        "k_weight",
+        "def_weight",
+        "qb_max_adp",
+        "elite_qb_cutoff",
+        "elite_qb_max_negative_edge",
+        "talent_anchor",
+        "talent_divisor",
+        "starter_status_bonus",
+        "bench_status_bonus",
+        "ir_status_bonus",
+        "enable_draft_slot_bonus",
+        "enable_qb_scarcity_bonus",
+    )
+
+
+def _user_id(user: User | None) -> uuid.UUID | None:
+    return user.id if user is not None else None
 
 
 def _scenario_comparison_payload(comparisons: list[ScenarioComparison]) -> dict[str, Any]:

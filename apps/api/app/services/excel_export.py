@@ -19,7 +19,7 @@ from app.models import (
     Player,
     Team,
 )
-from app.services.optimizer import OptimizerInputError, run_optimizer
+from app.services.optimizer import OptimizerInputError, latest_recommendation_batch, run_optimizer
 
 
 class ExcelExportError(ValueError):
@@ -40,12 +40,13 @@ def build_keeper_recommendations_workbook(
     league_id: uuid.UUID,
     *,
     scenario_name: str | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> bytes:
     league = session.get(League, league_id)
     if league is None:
         raise ExcelExportError(f"League {league_id} was not found")
 
-    context = _load_export_context(session, league, scenario_name)
+    context = _load_export_context(session, league, scenario_name, user_id)
     workbook = Workbook()
     workbook.iso_dates = True
     workbook.remove(workbook.active)
@@ -69,11 +70,15 @@ def _load_export_context(
     session: Session,
     league: League,
     scenario_name: str | None,
+    user_id: uuid.UUID | None,
 ) -> dict[str, object]:
     teams = session.exec(select(Team).where(Team.league_id == league.id)).all()
     team_by_id = {team.id: team for team in teams}
     settings = session.exec(
-        select(OptimizerSettings).where(OptimizerSettings.league_id == league.id)
+        select(OptimizerSettings).where(
+            OptimizerSettings.league_id == league.id,
+            OptimizerSettings.user_id == user_id,
+        )
     ).first()
     adp_snapshot = session.exec(
         select(ADPSnapshot)
@@ -81,12 +86,13 @@ def _load_export_context(
         .order_by(ADPSnapshot.snapshot_date.desc(), ADPSnapshot.created_at.desc())
     ).first()
 
-    recommendations = _load_recommendations(session, league, scenario_name)
+    recommendations = _load_recommendations(session, league, scenario_name, user_id)
     if not recommendations and adp_snapshot is not None:
         try:
             recommendations = run_optimizer(
                 session,
                 league.id,
+                user_id=user_id,
                 adp_snapshot_id=adp_snapshot.id,
                 scenario_name=scenario_name,
                 persist=True,
@@ -149,24 +155,14 @@ def _load_recommendations(
     session: Session,
     league: League,
     scenario_name: str | None,
+    user_id: uuid.UUID | None,
 ) -> list[KeeperRecommendation]:
-    statement = select(KeeperRecommendation).where(KeeperRecommendation.league_id == league.id)
-    if scenario_name is not None:
-        return session.exec(statement.where(KeeperRecommendation.scenario_name == scenario_name)).all()
-
-    default_rows = session.exec(
-        statement.where(KeeperRecommendation.scenario_name == "Default")
-    ).all()
-    if default_rows:
-        return default_rows
-
-    balanced_rows = session.exec(
-        statement.where(KeeperRecommendation.scenario_name == "Balanced")
-    ).all()
-    if balanced_rows:
-        return balanced_rows
-
-    return session.exec(statement).all()
+    return latest_recommendation_batch(
+        session,
+        league.id,
+        user_id=user_id,
+        scenario_name=scenario_name,
+    )
 
 
 def _write_league_summary(workbook: Workbook, context: dict[str, object]) -> None:

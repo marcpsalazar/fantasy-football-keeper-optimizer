@@ -9,9 +9,15 @@ from app.models.base import TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.adp import ADPSnapshot
+    from app.models.auth import User
     from app.models.draft import DraftPick
     from app.models.keeper import KeeperCandidate
-    from app.models.optimizer import KeeperRecommendation, ManualOverride, OptimizerSettings
+    from app.models.optimizer import (
+        KeeperRecommendation,
+        ManualOverride,
+        OptimizerSettings,
+        TeamScenarioSelection,
+    )
     from app.models.roster import FinalRosterEntry
 
 
@@ -43,6 +49,7 @@ class League(TimestampMixin, table=True):
     optimizer_settings: list["OptimizerSettings"] = Relationship(back_populates="league")
     manual_overrides: list["ManualOverride"] = Relationship(back_populates="league")
     keeper_recommendations: list["KeeperRecommendation"] = Relationship(back_populates="league")
+    scenario_selections: list["TeamScenarioSelection"] = Relationship(back_populates="league")
 
 
 class Team(TimestampMixin, table=True):
@@ -51,11 +58,13 @@ class Team(TimestampMixin, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     league_id: uuid.UUID = Field(foreign_key="leagues.id", index=True)
+    user_id: uuid.UUID | None = Field(default=None, foreign_key="users.id", index=True)
     name: str = Field(index=True, max_length=120)
     owner_name: str | None = Field(default=None, max_length=120)
     draft_slot: int | None = Field(default=None, index=True)
 
     league: "League" = Relationship(back_populates="teams")
+    user: "User" = Relationship(back_populates="teams")
     keeper_candidates: list["KeeperCandidate"] = Relationship(back_populates="team")
     draft_picks: list["DraftPick"] = Relationship(back_populates="team")
     final_roster_entries: list["FinalRosterEntry"] = Relationship(back_populates="team")

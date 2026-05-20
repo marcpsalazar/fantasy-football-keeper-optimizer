@@ -11,6 +11,8 @@
     "lint:web": "npm --workspace apps/web run lint",
     "typecheck:web": "npm --workspace apps/web run typecheck",
     "dev:api": "cd apps/api && uvicorn app.main:app --reload"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
   }
 }
-

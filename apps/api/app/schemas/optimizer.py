@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 import uuid
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OptimizerSettingsBase(BaseModel):
@@ -11,7 +11,7 @@ class OptimizerSettingsBase(BaseModel):
     max_keepers: int = 4
     max_keepers_per_position: int = 2
     max_qb_keepers: int = 1
-    minimum_keeper_value: float = 0
+    minimum_keeper_value: float = Field(default=1, ge=-5)
     max_adp_cap: float | None = None
     minimum_keeper_score: float = 0
     qb_weight: float = 1.75
@@ -42,7 +42,7 @@ class OptimizerSettingsUpdate(BaseModel):
     max_keepers: int | None = None
     max_keepers_per_position: int | None = None
     max_qb_keepers: int | None = None
-    minimum_keeper_value: float | None = None
+    minimum_keeper_value: float | None = Field(default=None, ge=-5)
     max_adp_cap: float | None = None
     minimum_keeper_score: float | None = None
     qb_weight: float | None = None

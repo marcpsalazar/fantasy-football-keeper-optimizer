@@ -7,6 +7,7 @@ import uuid
 from sqlmodel import Session, select
 
 from app.models import KeeperRecommendation, League, Player, Team
+from app.services.optimizer import latest_recommendation_batch
 
 
 class PDFExportError(ValueError):
@@ -19,6 +20,7 @@ def build_team_outlooks_pdf(
     *,
     team_id: uuid.UUID | None = None,
     scenario_name: str | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> bytes:
     league = session.get(League, league_id)
     if league is None:
@@ -30,7 +32,7 @@ def build_team_outlooks_pdf(
         if not teams:
             raise PDFExportError(f"Team {team_id} was not found")
 
-    recommendations = _load_recommendations(session, league.id, scenario_name)
+    recommendations = _load_recommendations(session, league.id, scenario_name, user_id)
     players = _players_by_id(session, {recommendation.player_id for recommendation in recommendations})
     recommendations_by_team: dict[uuid.UUID, list[KeeperRecommendation]] = defaultdict(list)
     for recommendation in recommendations:
@@ -53,14 +55,9 @@ def _load_recommendations(
     session: Session,
     league_id: uuid.UUID,
     scenario_name: str | None,
+    user_id: uuid.UUID | None,
 ) -> list[KeeperRecommendation]:
-    statement = select(KeeperRecommendation).where(KeeperRecommendation.league_id == league_id)
-    if scenario_name is not None:
-        statement = statement.where(KeeperRecommendation.scenario_name == scenario_name)
-    rows = session.exec(statement).all()
-    default_rows = [row for row in rows if row.scenario_name == "Default"]
-    balanced_rows = [row for row in rows if row.scenario_name == "Balanced"]
-    return default_rows or balanced_rows or rows
+    return latest_recommendation_batch(session, league_id, user_id=user_id, scenario_name=scenario_name)
 
 
 def _players_by_id(session: Session, player_ids: set[uuid.UUID]) -> dict[uuid.UUID, Player]:

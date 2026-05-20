@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 from app.models import (
     ADPEntry,
     ADPSnapshot,
+    AppDefaultOptimizerSettings,
     DraftPick,
     FinalRosterEntry,
     KeeperRecommendation,
@@ -145,6 +146,7 @@ def run_optimizer(
     session: Session,
     league_id: uuid.UUID,
     *,
+    user_id: uuid.UUID | None = None,
     settings_id: uuid.UUID | None = None,
     adp_snapshot_id: uuid.UUID | None = None,
     scenario_name: str | None = None,
@@ -153,7 +155,12 @@ def run_optimizer(
 ) -> list[KeeperRecommendation]:
     league = _require_league(session, league_id)
     if settings_override is None:
-        settings, settings_is_persisted = _resolve_settings(session, league, settings_id)
+        settings, settings_is_persisted = _resolve_settings(
+            session,
+            league,
+            settings_id,
+            user_id=user_id,
+        )
     else:
         settings = settings_override
         settings_is_persisted = False
@@ -196,6 +203,7 @@ def run_optimizer(
         (override.team_id, override.player_id): override
         for override in session.exec(
             select(ManualOverride).where(ManualOverride.league_id == league.id)
+            .where(ManualOverride.user_id == user_id)
         ).all()
     }
 
@@ -213,6 +221,7 @@ def run_optimizer(
             manual_override=overrides.get((roster_entry.team_id, roster_entry.player_id)),
             scenario_name=scenario,
             team_count=team_count,
+            user_id=user_id,
         )
         for roster_entry in roster_entries
         if roster_entry.team_id in team_by_id and roster_entry.player_id in players
@@ -224,6 +233,7 @@ def run_optimizer(
         _replace_persisted_recommendations(
             session=session,
             league_id=league.id,
+            user_id=user_id,
             settings_id=settings.id if settings_is_persisted else None,
             adp_snapshot_id=adp_snapshot.id,
             scenario_name=scenario,
@@ -237,12 +247,13 @@ def run_scenario_comparison(
     session: Session,
     league_id: uuid.UUID,
     *,
+    user_id: uuid.UUID | None = None,
     adp_snapshot_id: uuid.UUID | None = None,
     scenario_names: list[str] | None = None,
     persist: bool = True,
 ) -> list[ScenarioComparison]:
     league = _require_league(session, league_id)
-    base_settings, _ = _resolve_settings(session, league, None)
+    base_settings, _ = _resolve_settings(session, league, None, user_id=user_id)
     adp_snapshot = _resolve_adp_snapshot(session, league, adp_snapshot_id)
     presets_by_name = {
         preset.name: preset
@@ -259,6 +270,7 @@ def run_scenario_comparison(
         recommendations = run_optimizer(
             session,
             league.id,
+            user_id=user_id,
             adp_snapshot_id=adp_snapshot.id,
             scenario_name=preset.name,
             settings_override=preset.settings,
@@ -267,6 +279,44 @@ def run_scenario_comparison(
         comparisons.append(_build_scenario_comparison(session, league.id, preset, recommendations))
 
     return comparisons
+
+
+def latest_recommendation_batch(
+    session: Session,
+    league_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID | None = None,
+    scenario_name: str | None = None,
+    recommended_only: bool = False,
+) -> list[KeeperRecommendation]:
+    latest = _latest_recommendation(
+        session,
+        league_id,
+        user_id=user_id,
+        scenario_name=scenario_name,
+    )
+    if latest is None:
+        return []
+
+    statement = select(KeeperRecommendation).where(
+        KeeperRecommendation.league_id == league_id,
+        KeeperRecommendation.user_id == user_id,
+        KeeperRecommendation.scenario_name == latest.scenario_name,
+    )
+    if latest.settings_id is None:
+        statement = statement.where(KeeperRecommendation.settings_id.is_(None))
+    else:
+        statement = statement.where(KeeperRecommendation.settings_id == latest.settings_id)
+
+    if latest.adp_snapshot_id is None:
+        statement = statement.where(KeeperRecommendation.adp_snapshot_id.is_(None))
+    else:
+        statement = statement.where(KeeperRecommendation.adp_snapshot_id == latest.adp_snapshot_id)
+
+    if recommended_only:
+        statement = statement.where(KeeperRecommendation.is_recommended.is_(True))
+
+    return session.exec(statement).all()
 
 
 def build_scenario_presets(
@@ -474,6 +524,7 @@ def _build_candidate(
     manual_override: ManualOverride | None,
     scenario_name: str,
     team_count: int,
+    user_id: uuid.UUID | None,
 ) -> KeeperCandidate:
     if player is None:
         raise OptimizerInputError(f"Missing player for roster entry {roster_entry.id}")
@@ -491,6 +542,7 @@ def _build_candidate(
 
     recommendation = KeeperRecommendation(
         league_id=league.id,
+        user_id=user_id,
         team_id=roster_entry.team_id,
         player_id=player.id,
         settings_id=settings_id,
@@ -708,6 +760,7 @@ def _replace_persisted_recommendations(
     *,
     session: Session,
     league_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     settings_id: uuid.UUID | None,
     adp_snapshot_id: uuid.UUID,
     scenario_name: str,
@@ -716,7 +769,7 @@ def _replace_persisted_recommendations(
     existing = session.exec(
         select(KeeperRecommendation).where(
             KeeperRecommendation.league_id == league_id,
-            KeeperRecommendation.settings_id == settings_id,
+            KeeperRecommendation.user_id == user_id,
             KeeperRecommendation.adp_snapshot_id == adp_snapshot_id,
             KeeperRecommendation.scenario_name == scenario_name,
         )
@@ -729,6 +782,42 @@ def _replace_persisted_recommendations(
         session.add(recommendation)
 
     session.commit()
+
+
+def _latest_recommendation(
+    session: Session,
+    league_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID | None,
+    scenario_name: str | None,
+) -> KeeperRecommendation | None:
+    statement = select(KeeperRecommendation).where(
+        KeeperRecommendation.league_id == league_id,
+        KeeperRecommendation.user_id == user_id,
+    )
+    if scenario_name is not None:
+        return session.exec(
+            statement.where(KeeperRecommendation.scenario_name == scenario_name).order_by(
+                KeeperRecommendation.updated_at.desc(),
+                KeeperRecommendation.created_at.desc(),
+            )
+        ).first()
+
+    latest_default = session.exec(
+        statement.where(KeeperRecommendation.scenario_name == "Default").order_by(
+            KeeperRecommendation.updated_at.desc(),
+            KeeperRecommendation.created_at.desc(),
+        )
+    ).first()
+    if latest_default is not None:
+        return latest_default
+
+    return session.exec(
+        statement.order_by(
+            KeeperRecommendation.updated_at.desc(),
+            KeeperRecommendation.created_at.desc(),
+        )
+    ).first()
 
 
 def _scenario_settings(
@@ -885,20 +974,39 @@ def _resolve_settings(
     session: Session,
     league: League,
     settings_id: uuid.UUID | None,
+    *,
+    user_id: uuid.UUID | None,
 ) -> tuple[OptimizerSettings, bool]:
     if settings_id is not None:
         settings = session.get(OptimizerSettings, settings_id)
-        if settings is None or settings.league_id != league.id:
+        if settings is None or settings.league_id != league.id or settings.user_id != user_id:
             raise OptimizerInputError(f"Optimizer settings {settings_id} were not found")
         return settings, True
 
     settings = session.exec(
-        select(OptimizerSettings).where(OptimizerSettings.league_id == league.id)
+        select(OptimizerSettings).where(
+            OptimizerSettings.league_id == league.id,
+            OptimizerSettings.user_id == user_id,
+        )
     ).first()
     if settings is not None:
         return settings, True
 
-    return OptimizerSettings(league_id=league.id), False
+    defaults = session.exec(
+        select(AppDefaultOptimizerSettings)
+        .where(AppDefaultOptimizerSettings.is_active.is_(True))
+        .order_by(AppDefaultOptimizerSettings.created_at.desc())
+    ).first()
+    if defaults is None:
+        return OptimizerSettings(league_id=league.id, user_id=user_id), False
+    return (
+        OptimizerSettings(
+            league_id=league.id,
+            user_id=user_id,
+            **{field_name: getattr(defaults, field_name) for field_name in _SETTINGS_COPY_FIELDS},
+        ),
+        False,
+    )
 
 
 def _resolve_adp_snapshot(
