@@ -38,6 +38,7 @@ class LoginRequest(BaseModel):
 class UserCreateRequest(BaseModel):
     email: str
     password: str
+    alias: str | None = None
     role: Literal["admin", "user"] = "user"
     is_active: bool = True
     team_id: str | None = None
@@ -46,6 +47,7 @@ class UserCreateRequest(BaseModel):
 class UserRead(BaseModel):
     id: str
     email: str
+    alias: str | None = None
     role: str
     is_active: bool
     avatar_data_url: str | None = None
@@ -55,6 +57,7 @@ class UserRead(BaseModel):
 
 class UserUpdateRequest(BaseModel):
     email: str | None = None
+    alias: str | None = None
     password: str | None = None
     role: Literal["admin", "user"] | None = None
     is_active: bool | None = None
@@ -72,6 +75,7 @@ class PasswordChangeRequest(BaseModel):
 
 class ProfileUpdateRequest(BaseModel):
     avatar_data_url: str | None = None
+    alias: str | None = None
 
 
 def user_payload(user: User | None, session: Session | None = None) -> dict[str, Any] | None:
@@ -85,6 +89,7 @@ def user_payload(user: User | None, session: Session | None = None) -> dict[str,
     return {
         "id": str(user.id),
         "email": user.email,
+        "alias": user.alias,
         "role": user.role,
         "is_active": user.is_active,
         "avatar_data_url": user.avatar_data_url,
@@ -141,10 +146,14 @@ def update_profile(
 ) -> dict[str, Any]:
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    avatar_data_url = payload.avatar_data_url
-    if avatar_data_url:
-        _validate_avatar_data_url(avatar_data_url)
-    user.avatar_data_url = avatar_data_url
+    update_data = payload.model_dump(exclude_unset=True)
+    if "avatar_data_url" in update_data:
+        avatar_data_url = update_data["avatar_data_url"]
+        if avatar_data_url:
+            _validate_avatar_data_url(avatar_data_url)
+        user.avatar_data_url = avatar_data_url
+    if "alias" in update_data:
+        user.alias = _clean_alias(update_data["alias"])
     session.add(user)
     session.commit()
     session.refresh(user)
@@ -181,6 +190,7 @@ def create_user(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
     user = User(
         email=email,
+        alias=_clean_alias(payload.alias),
         password_hash=hash_password(payload.password),
         role=payload.role,
         is_active=payload.is_active,
@@ -218,6 +228,8 @@ def update_user(
         if existing is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
         user.email = email
+    if "alias" in update_data:
+        user.alias = _clean_alias(update_data["alias"])
     if "password" in update_data and update_data["password"] is not None:
         user.password_hash = hash_password(update_data["password"])
     if "role" in update_data and update_data["role"] is not None:
@@ -295,6 +307,17 @@ def _validate_avatar_data_url(value: str) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Avatar must be a base64 image data URL",
         )
+
+
+def _clean_alias(value: str | None) -> str | None:
+    if value is None:
+        return None
+    alias = value.strip()
+    if not alias:
+        return None
+    if len(alias) > 120:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Alias is too long")
+    return alias
 
 
 def _assign_user_to_team(session: Session, user: User, team_id: str | None) -> None:

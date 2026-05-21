@@ -83,7 +83,7 @@ import {
   saveOptimizerSettings,
   saveScenarioSelection,
   setManualOverride,
-  updateProfileAvatar,
+  updateProfile,
   updateAdminUser,
   updateTeam,
   type AdminUser,
@@ -411,6 +411,7 @@ type DashboardContextValue = {
   logoutNow: () => Promise<void>;
   resetDisplayAndRefresh: () => Promise<void>;
   updateProfileAvatarNow: (avatarDataUrl: string | null) => Promise<void>;
+  updateProfileAliasNow: (alias: string | null) => Promise<void>;
   changePasswordNow: (currentPassword: string, newPassword: string) => Promise<void>;
   setSelectedScenarioForTeam: (
     teamId: string,
@@ -617,7 +618,7 @@ export function DashboardApp() {
   const updateProfileAvatarNow = React.useCallback(async (avatarDataUrl: string | null) => {
     setIsBusy(true);
     try {
-      const user = await updateProfileAvatar(avatarDataUrl);
+      const user = await updateProfile({ avatarDataUrl });
       setCurrentUser(user);
       setStatusMessage(avatarDataUrl ? "Profile image updated." : "Profile image removed.");
     } catch (error) {
@@ -628,6 +629,23 @@ export function DashboardApp() {
       setIsBusy(false);
     }
   }, []);
+
+  const updateProfileAliasNow = React.useCallback(async (alias: string | null) => {
+    setIsBusy(true);
+    try {
+      const trimmedAlias = alias?.trim() || null;
+      const user = await updateProfile({ alias: trimmedAlias });
+      setCurrentUser(user);
+      await refreshData();
+      setStatusMessage(trimmedAlias ? "Owner alias updated." : "Owner alias cleared.");
+    } catch (error) {
+      setApiStatus("error");
+      setStatusMessage(error instanceof Error ? error.message : "Updating owner alias failed.");
+      throw error;
+    } finally {
+      setIsBusy(false);
+    }
+  }, [refreshData]);
 
   const changePasswordNow = React.useCallback(async (currentPassword: string, newPassword: string) => {
     setIsBusy(true);
@@ -1043,6 +1061,7 @@ export function DashboardApp() {
       logoutNow,
       resetDisplayAndRefresh,
       updateProfileAvatarNow,
+      updateProfileAliasNow,
       changePasswordNow,
       refreshAdpNow,
       setSelectedScenarioForTeam,
@@ -1075,6 +1094,7 @@ export function DashboardApp() {
       refreshAdpNow,
       resetDisplayAndRefresh,
       updateProfileAvatarNow,
+      updateProfileAliasNow,
       runOptimizerNow,
       runScenariosNow,
       saveSettings,
@@ -1385,8 +1405,11 @@ function AvatarImage({
 }
 
 function ProfilePage() {
-  const { changePasswordNow, currentUser, isBusy, updateProfileAvatarNow } = useDashboard();
+  const { changePasswordNow, currentUser, isBusy, updateProfileAliasNow, updateProfileAvatarNow } = useDashboard();
   const [error, setError] = React.useState("");
+  const [aliasError, setAliasError] = React.useState("");
+  const [aliasSaved, setAliasSaved] = React.useState(false);
+  const [alias, setAlias] = React.useState(currentUser?.alias ?? "");
   const [passwordError, setPasswordError] = React.useState("");
   const [passwordSaved, setPasswordSaved] = React.useState(false);
   const [passwordForm, setPasswordForm] = React.useState({
@@ -1394,6 +1417,12 @@ function ProfilePage() {
     newPassword: "",
     confirmPassword: "",
   });
+
+  React.useEffect(() => {
+    setAlias(currentUser?.alias ?? "");
+    setAliasSaved(false);
+    setAliasError("");
+  }, [currentUser?.alias]);
 
   if (!currentUser) {
     return null;
@@ -1492,6 +1521,41 @@ function ProfilePage() {
             ) : null}
           </div>
           {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+          <form
+            className="grid gap-3 border-t border-zinc-200 pt-5 sm:grid-cols-[1fr_auto] sm:items-end"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setAliasError("");
+              setAliasSaved(false);
+              void updateProfileAliasNow(alias)
+                .then(() => setAliasSaved(true))
+                .catch(() => setAliasError("The owner alias could not be saved."));
+            }}
+          >
+            <div className="space-y-2">
+              <Label htmlFor="profile-alias">Owner alias</Label>
+              <Input
+                disabled={isBusy}
+                id="profile-alias"
+                maxLength={120}
+                onChange={(event) => {
+                  setAlias(event.target.value);
+                  setAliasSaved(false);
+                }}
+                placeholder="Display name for assigned team ownership"
+                value={alias}
+              />
+              <p className="text-xs text-zinc-500">
+                Teams assigned to this account show this value as the owner name.
+              </p>
+            </div>
+            <Button disabled={isBusy || alias.trim() === (currentUser.alias ?? "")} type="submit">
+              <Save className="size-4" aria-hidden="true" />
+              Save Alias
+            </Button>
+            {aliasError ? <p className="text-sm text-rose-700 sm:col-span-2">{aliasError}</p> : null}
+            {aliasSaved ? <p className="text-sm text-emerald-700 sm:col-span-2">Owner alias saved.</p> : null}
+          </form>
         </CardContent>
       </Card>
 
@@ -2330,6 +2394,7 @@ function AdminPage({
 
 const emptyUserForm: UserForm = {
   email: "",
+  alias: "",
   password: "",
   role: "user",
   isActive: true,
@@ -2374,6 +2439,7 @@ function UserManagementPanel() {
     setEditingUserId(user.id);
     setForm({
       email: user.email,
+      alias: user.alias ?? "",
       password: "",
       role: user.role,
       isActive: user.isActive,
@@ -2393,7 +2459,7 @@ function UserManagementPanel() {
       setError("Password is required.");
       return;
     }
-    const payload = { ...form, email, password: form.password.trim() };
+    const payload = { ...form, email, alias: form.alias.trim(), password: form.password.trim() };
     if (editingUserId) {
       await updateUserNow(editingUserId, payload);
     } else {
@@ -2415,6 +2481,11 @@ function UserManagementPanel() {
   const columns = React.useMemo<ColumnDef<AdminUser>[]>(
     () => [
       { accessorKey: "email", header: "Email" },
+      {
+        accessorKey: "alias",
+        header: "Alias",
+        cell: ({ getValue }) => getValue<string | null>() || "Not set",
+      },
       {
         accessorKey: "role",
         header: "Role",
@@ -2510,6 +2581,16 @@ function UserManagementPanel() {
                 placeholder={editingUserId ? "Leave blank to keep current password" : ""}
                 type="password"
                 value={form.password}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="user-alias">Owner Alias</Label>
+              <Input
+                id="user-alias"
+                maxLength={120}
+                onChange={(event) => setForm((current) => ({ ...current, alias: event.target.value }))}
+                placeholder="Optional team owner display name"
+                value={form.alias}
               />
             </div>
             <div className="grid gap-2">
@@ -2804,7 +2885,7 @@ function LeagueManagementPanel() {
                 <option value="">Unassigned</option>
                 {users.map((user) => (
                   <option key={user.id} value={user.id}>
-                    {user.email}
+                    {user.alias ? `${user.alias} (${user.email})` : user.email}
                   </option>
                 ))}
               </select>

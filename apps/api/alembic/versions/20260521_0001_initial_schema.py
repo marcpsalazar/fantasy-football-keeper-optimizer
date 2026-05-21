@@ -106,6 +106,7 @@ def upgrade() -> None:
         *timestamps(),
         uuid_pk(),
         sa.Column("email", sa.String(length=255), nullable=False),
+        sa.Column("alias", sa.String(length=120), nullable=True),
         sa.Column("password_hash", sa.String(length=255), nullable=False),
         sa.Column("role", sa.String(length=40), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False),

@@ -29,7 +29,7 @@ def _apply_lightweight_sqlite_migrations() -> None:
         return
 
     column_additions = {
-        "users": [("avatar_data_url", "TEXT")],
+        "users": [("avatar_data_url", "TEXT"), ("alias", "VARCHAR(120)")],
         "teams": [("user_id", "CHAR(32)")],
         "optimizer_settings": [
             ("user_id", "CHAR(32)"),

@@ -88,6 +88,23 @@ def test_user_can_update_and_clear_profile_avatar(client: TestClient) -> None:
     assert clear_response.json()["user"]["avatar_data_url"] is None
 
 
+def test_user_can_update_profile_alias_without_clearing_avatar(client: TestClient) -> None:
+    _create_admin_and_login(client)
+    avatar = "data:image/png;base64,aGVsbG8="
+
+    avatar_response = client.patch("/api/auth/profile", json={"avatar_data_url": avatar})
+    assert avatar_response.status_code == 200
+
+    alias_response = client.patch("/api/auth/profile", json={"alias": "Mayhem Manager"})
+    assert alias_response.status_code == 200
+    assert alias_response.json()["user"]["alias"] == "Mayhem Manager"
+    assert alias_response.json()["user"]["avatar_data_url"] == avatar
+
+    clear_response = client.patch("/api/auth/profile", json={"alias": "   "})
+    assert clear_response.status_code == 200
+    assert clear_response.json()["user"]["alias"] is None
+
+
 def test_user_can_change_own_password_with_current_password(client: TestClient) -> None:
     _create_admin_and_login(client)
 
@@ -298,10 +315,16 @@ def test_team_management_is_admin_only_and_can_assign_users(client: TestClient) 
     league_id = league_response.json()["id"]
     user_response = client.post(
         "/api/admin/users",
-        json={"email": "owner@example.com", "password": "secret", "role": "user"},
+        json={
+            "email": "owner@example.com",
+            "password": "secret",
+            "alias": "Original Owner",
+            "role": "user",
+        },
     )
     assert user_response.status_code == 201
     user_id = user_response.json()["id"]
+    assert user_response.json()["alias"] == "Original Owner"
 
     team_response = client.post(
         f"/api/leagues/{league_id}/teams",
@@ -314,6 +337,19 @@ def test_team_management_is_admin_only_and_can_assign_users(client: TestClient) 
     assert list_response.status_code == 200
     assert list_response.json()["rows"][0]["user_id"] == user_id
     assert list_response.json()["rows"][0]["user_email"] == "owner@example.com"
+    assert list_response.json()["rows"][0]["user_alias"] == "Original Owner"
+    assert list_response.json()["rows"][0]["owner_display_name"] == "Original Owner"
+
+    update_user_response = client.patch(
+        f"/api/admin/users/{user_id}",
+        json={"alias": "Admin Alias"},
+    )
+    assert update_user_response.status_code == 200
+    assert update_user_response.json()["alias"] == "Admin Alias"
+
+    list_response = client.get(f"/api/leagues/{league_id}/teams")
+    assert list_response.status_code == 200
+    assert list_response.json()["rows"][0]["owner_display_name"] == "Admin Alias"
 
     client.post("/api/auth/logout")
     login_response = client.post(
@@ -327,6 +363,16 @@ def test_team_management_is_admin_only_and_can_assign_users(client: TestClient) 
     assert me_response.status_code == 200
     assert me_response.json()["user"]["team_id"] == team_id
     assert me_response.json()["user"]["team_name"] == "Managed Team"
+    assert me_response.json()["user"]["alias"] == "Admin Alias"
+
+    alias_response = client.patch("/api/auth/profile", json={"alias": "Self Alias"})
+    assert alias_response.status_code == 200
+    assert alias_response.json()["user"]["alias"] == "Self Alias"
+
+    list_response = client.get(f"/api/leagues/{league_id}/teams")
+    assert list_response.status_code == 200
+    assert list_response.json()["rows"][0]["owner_display_name"] == "Self Alias"
+
     blocked_update = client.patch(f"/api/teams/{team_id}", json={"user_id": None})
     blocked_delete = client.delete(f"/api/teams/{team_id}")
     assert blocked_update.status_code == 403

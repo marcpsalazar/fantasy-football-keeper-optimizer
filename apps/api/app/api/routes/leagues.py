@@ -177,7 +177,10 @@ def list_teams(league_id: uuid.UUID, session: Session = Depends(get_session)) ->
     rows = []
     for team in teams:
         row = TeamRead.model_validate(team).model_dump(mode="json")
-        row["user_email"] = users[team.user_id].email if team.user_id in users else None
+        assigned_user = users.get(team.user_id)
+        row["user_email"] = assigned_user.email if assigned_user else None
+        row["user_alias"] = assigned_user.alias if assigned_user else None
+        row["owner_display_name"] = _team_owner_display_name(team, assigned_user)
         rows.append(row)
     return _table(rows)
 
@@ -229,6 +232,12 @@ def delete_team(
     session.delete(team)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _team_owner_display_name(team: Team, user: User | None) -> str | None:
+    if user is not None:
+        return user.alias or team.owner_name or None
+    return team.owner_name
 
 
 @router.get("/leagues/{league_id}/draft-results")

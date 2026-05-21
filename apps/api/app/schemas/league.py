@@ -64,6 +64,8 @@ class TeamUpdate(BaseModel):
 class TeamRead(TeamCreate):
     id: uuid.UUID
     user_email: str | None = None
+    user_alias: str | None = None
+    owner_display_name: str | None = None
     created_at: datetime
     updated_at: datetime
 

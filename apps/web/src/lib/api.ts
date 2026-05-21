@@ -36,6 +36,7 @@ export type CsvImportKind = "draft-results" | "final-rosters" | "adp";
 export type AuthUser = {
   id: string;
   email: string;
+  alias: string | null;
   role: "admin" | "user";
   isActive: boolean;
   avatarDataUrl: string | null;
@@ -47,6 +48,7 @@ export type AdminUser = AuthUser;
 
 export type UserForm = {
   email: string;
+  alias: string;
   password: string;
   role: "admin" | "user";
   isActive: boolean;
@@ -299,9 +301,16 @@ export async function logout(): Promise<void> {
   });
 }
 
-export async function updateProfileAvatar(avatarDataUrl: string | null): Promise<AuthUser> {
+export async function updateProfile(profile: { avatarDataUrl?: string | null; alias?: string | null }): Promise<AuthUser> {
+  const body: ApiRow = {};
+  if ("avatarDataUrl" in profile) {
+    body.avatar_data_url = profile.avatarDataUrl;
+  }
+  if ("alias" in profile) {
+    body.alias = profile.alias;
+  }
   const payload = await fetchJson<{ user: ApiRow }>("/api/auth/profile", {
-    body: JSON.stringify({ avatar_data_url: avatarDataUrl }),
+    body: JSON.stringify(body),
     headers: { "content-type": "application/json" },
     method: "PATCH",
   });
@@ -589,6 +598,7 @@ function mapAuthUser(row: ApiRow): AuthUser {
   return {
     id: text(row.id),
     email: text(row.email),
+    alias: text(row.alias) || null,
     role: text(row.role) === "admin" ? "admin" : "user",
     isActive: Boolean(row.is_active),
     avatarDataUrl: text(row.avatar_data_url) || null,
@@ -606,6 +616,7 @@ function mapAdminUser(row: ApiRow): AdminUser {
 function userFormPayload(form: UserForm, includePassword: boolean): ApiRow {
   return {
     email: form.email,
+    alias: form.alias || null,
     ...(includePassword || form.password ? { password: form.password } : {}),
     role: form.role,
     is_active: form.isActive,
@@ -628,7 +639,7 @@ function mapTeam(row: ApiRow): Team {
     id: text(row.id),
     userId: text(row.user_id),
     name: text(row.name),
-    owner: text(row.user_email, text(row.owner_name, "Unassigned")),
+    owner: text(row.owner_display_name, text(row.owner_name, "Unassigned")),
     draftSlot: number(row.draft_slot),
     keepers: 0,
     projectedScore: 0,
