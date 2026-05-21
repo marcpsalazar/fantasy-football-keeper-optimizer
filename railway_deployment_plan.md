@@ -17,17 +17,25 @@ Railway is a better first production target than Cloudflare Pages/Workers for th
 - `apps/api`: FastAPI, SQLModel, Pydantic settings, psycopg, openpyxl.
 - Database: local Docker Postgres for development; Railway Postgres for hosted production.
 - Runtime API entry point: `app.main:app`.
+- Database migrations: Alembic from `apps/api/alembic`.
 - Web API base URL: `NEXT_PUBLIC_API_BASE_URL`.
 - API settings are environment-driven through `apps/api/app/core/config.py`.
 
-## Production Blockers To Address
+## Production Readiness Status
 
-Do these before treating the app as broadly production-ready:
+Current production blocker status:
 
-1. Passwords are currently persisted and returned in plaintext in admin user payloads. Store only password hashes and never return plaintext passwords from API responses.
-2. Session cookies are currently set with `secure=False`. Production should use secure HTTPS cookies.
-3. There is no full migration system yet. `CREATE_TABLES_ON_STARTUP=true` is acceptable for the first MVP deploy, but Alembic should be added before repeated schema changes.
-4. Railway's Postgres URL may be exposed as `postgresql://...`. This project installs `psycopg`, so the safest SQLAlchemy URL is `postgresql+psycopg://...`.
+1. Addressed: the app stores password hashes only and no longer returns plaintext passwords from API responses.
+2. Addressed: production session cookies use the secure flag by default, with `SESSION_COOKIE_SECURE` available for explicit override.
+3. Addressed: Railway's plain `postgresql://...` URLs are normalized to `postgresql+psycopg://...` before SQLAlchemy engine creation.
+4. Addressed: Alembic migrations are available for production schema changes.
+
+The deployment path below assumes a new Railway Postgres database. If an existing database was previously created with `CREATE_TABLES_ON_STARTUP=true`, stamp the baseline first, then upgrade:
+
+```bash
+alembic stamp 20260521_0001
+alembic upgrade head
+```
 
 ## Target Railway Services
 
@@ -77,8 +85,10 @@ pip install -e .
 6. Set start command:
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
+alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
+
+This runs pending migrations before each API boot. If Railway is later configured with a separate pre-deploy/release command, move `alembic upgrade head` there and leave the start command as only `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
 
 7. Generate a public domain for the API service under `Settings` -> `Networking`.
 
@@ -116,9 +126,10 @@ Set these on the API Railway service:
 ```text
 APP_NAME=Fantasy Football Keeper Optimizer API
 ENVIRONMENT=production
-CREATE_TABLES_ON_STARTUP=true
+CREATE_TABLES_ON_STARTUP=false
 SEED_DATA_ON_STARTUP=false
 SESSION_SECRET=<generate-a-long-random-secret>
+SESSION_COOKIE_SECURE=true
 INITIAL_ADMIN_EMAIL=<your-admin-email>
 INITIAL_ADMIN_PASSWORD=<temporary-strong-password>
 ```
@@ -128,6 +139,10 @@ Set `DATABASE_URL` using Railway reference variables:
 ```text
 DATABASE_URL=postgresql+psycopg://${{Postgres.PGUSER}}:${{Postgres.PGPASSWORD}}@${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}
 ```
+
+The API also normalizes Railway's plain `postgresql://...` URL to `postgresql+psycopg://...` before creating the SQLAlchemy engine.
+
+Keep `CREATE_TABLES_ON_STARTUP=false` in production. Alembic should own schema creation and future schema changes.
 
 After the web service has a public domain, set CORS:
 
@@ -151,7 +166,8 @@ This value is baked into the Next.js build, so redeploy the web service after ch
 
 1. Deploy Postgres.
 2. Deploy API.
-3. Confirm API health:
+3. Check API deploy logs and confirm Alembic reached `head`.
+4. Confirm API health:
 
 ```bash
 curl https://<api-domain>/health
@@ -163,12 +179,12 @@ Expected response:
 {"status":"ok","service":"Fantasy Football Keeper Optimizer API"}
 ```
 
-4. Deploy web.
-5. Open `https://<web-domain>`.
-6. Log in with `INITIAL_ADMIN_EMAIL` and `INITIAL_ADMIN_PASSWORD`.
-7. Change the admin password immediately.
-8. Import or create league data.
-9. Verify these flows:
+5. Deploy web.
+6. Open `https://<web-domain>`.
+7. Log in with `INITIAL_ADMIN_EMAIL` and `INITIAL_ADMIN_PASSWORD`.
+8. Change the admin password immediately.
+9. Import or create league data.
+10. Verify these flows:
    - Login/logout.
    - League/team loading.
    - CSV preview/import.
@@ -177,18 +193,15 @@ Expected response:
    - Excel export.
    - CSV export.
    - PDF export.
-10. Check Railway deploy logs for both services.
+11. Check Railway deploy logs for both services.
 
 ## Post-Launch Cleanup
 
 After the first successful deploy:
 
-1. Set `CREATE_TABLES_ON_STARTUP=false` once the database schema exists.
-2. Remove or rotate `INITIAL_ADMIN_PASSWORD`.
-3. Keep `SESSION_SECRET` stable. Changing it invalidates all sessions.
-4. Add Alembic migrations before future schema changes.
-5. Add a production cookie setting, for example `SESSION_COOKIE_SECURE=true`, and wire it into the API.
-6. Remove plaintext password storage and plaintext password API responses.
+1. Remove `INITIAL_ADMIN_PASSWORD` after the first admin has been created, or rotate it if it was exposed.
+2. Keep `SESSION_SECRET` stable. Changing it invalidates all sessions.
+3. Keep schema changes in Alembic migrations and deploy with `alembic upgrade head`.
 
 ## Cost Notes
 

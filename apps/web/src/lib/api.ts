@@ -43,11 +43,7 @@ export type AuthUser = {
   teamName: string | null;
 };
 
-export type AdminUser = AuthUser & {
-  password: string;
-  teamId: string | null;
-  teamName: string | null;
-};
+export type AdminUser = AuthUser;
 
 export type UserForm = {
   email: string;
@@ -604,9 +600,6 @@ function mapAuthUser(row: ApiRow): AuthUser {
 function mapAdminUser(row: ApiRow): AdminUser {
   return {
     ...mapAuthUser(row),
-    password: text(row.password),
-    teamId: text(row.team_id) || null,
-    teamName: text(row.team_name) || null,
   };
 }
 

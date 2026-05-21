@@ -99,7 +99,6 @@ def admin_user_payload(session: Session, user: User) -> dict[str, Any]:
     ).first()
     return {
         **(user_payload(user, session) or {}),
-        "password": user.password,
         "team_id": str(assigned_team.id) if assigned_team else None,
         "team_name": assigned_team.name if assigned_team else None,
     }
@@ -165,7 +164,6 @@ def change_password(
     if not payload.new_password:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password is required")
     user.password_hash = hash_password(payload.new_password)
-    user.password = payload.new_password
     session.add(user)
     session.commit()
     return {"status": "ok"}
@@ -184,7 +182,6 @@ def create_user(
     user = User(
         email=email,
         password_hash=hash_password(payload.password),
-        password=payload.password,
         role=payload.role,
         is_active=payload.is_active,
     )
@@ -223,7 +220,6 @@ def update_user(
         user.email = email
     if "password" in update_data and update_data["password"] is not None:
         user.password_hash = hash_password(update_data["password"])
-        user.password = update_data["password"]
     if "role" in update_data and update_data["role"] is not None:
         user.role = update_data["role"]
     if "is_active" in update_data and update_data["is_active"] is not None:
@@ -245,7 +241,6 @@ def reset_user_password(
 ) -> dict[str, Any]:
     user = _require_user(session, user_id)
     user.password_hash = hash_password(payload.password)
-    user.password = payload.password
     session.add(user)
     session.commit()
     session.refresh(user)

@@ -95,7 +95,7 @@ cd apps/api
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-python -c "from app.db.session import init_db; init_db()"
+alembic upgrade head
 python -m app.db.seed
 uvicorn app.main:app --reload
 ```
@@ -128,6 +128,7 @@ CREATE_TABLES_ON_STARTUP=false
 SEED_DATA_ON_STARTUP=false
 SAMPLE_DATA_PATH=sample-data
 SESSION_SECRET=change-me
+SESSION_COOKIE_SECURE=false
 INITIAL_ADMIN_EMAIL=admin@example.com
 INITIAL_ADMIN_PASSWORD=change-me
 ```
@@ -143,6 +144,7 @@ CREATE_TABLES_ON_STARTUP=false
 SEED_DATA_ON_STARTUP=false
 SAMPLE_DATA_PATH=sample-data
 SESSION_SECRET=change-me
+SESSION_COOKIE_SECURE=false
 INITIAL_ADMIN_EMAIL=admin@example.com
 INITIAL_ADMIN_PASSWORD=change-me
 ```
@@ -153,26 +155,30 @@ INITIAL_ADMIN_PASSWORD=change-me
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```
 
-## Running With Automatic Table Creation and Seed Data
+## Database Migrations and Seed Data
 
-For local development, the API can create tables and seed CSV data on startup:
+Apply database migrations before running the API:
 
 ```bash
 cd apps/api
-CREATE_TABLES_ON_STARTUP=true \
-SEED_DATA_ON_STARTUP=true \
-SAMPLE_DATA_PATH=../../sample-data \
-SESSION_SECRET=local-dev-session-secret \
-INITIAL_ADMIN_EMAIL=admin@example.com \
-INITIAL_ADMIN_PASSWORD=change-me \
-uvicorn app.main:app --reload
+alembic upgrade head
 ```
 
-You can also seed manually:
+Seed manually after migrations:
 
 ```bash
 cd apps/api
 python -m app.db.seed
+```
+
+`CREATE_TABLES_ON_STARTUP=true` remains available for quick throwaway development databases, but Alembic is the normal path for local and production schema changes.
+
+For a database that was previously created with `CREATE_TABLES_ON_STARTUP=true`, stamp the baseline before applying newer migrations:
+
+```bash
+cd apps/api
+alembic stamp 20260521_0001
+alembic upgrade head
 ```
 
 The seeder supports:
@@ -661,8 +667,9 @@ If you want to try the API without Postgres:
 
 ```bash
 cd apps/api
+DATABASE_URL=sqlite:////tmp/keeper_optimizer_dev.db alembic upgrade head
+
 DATABASE_URL=sqlite:////tmp/keeper_optimizer_dev.db \
-CREATE_TABLES_ON_STARTUP=true \
 SEED_DATA_ON_STARTUP=true \
 SAMPLE_DATA_PATH=../../sample-data \
 SESSION_SECRET=local-dev-session-secret \

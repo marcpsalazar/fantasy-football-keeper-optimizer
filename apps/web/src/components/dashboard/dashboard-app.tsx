@@ -8,8 +8,6 @@ import {
   CheckCircle2,
   ClipboardList,
   Download,
-  Eye,
-  EyeOff,
   FileText,
   Gauge,
   GitCompare,
@@ -2277,7 +2275,7 @@ function AdminPage({
         <div className="min-w-0">
           <h2 className="text-lg font-semibold text-zinc-950">User Management</h2>
           <p className="mt-1 text-sm text-zinc-600">
-            Create accounts, view and reset passwords, and assign teams.
+            Create accounts, reset passwords, and assign teams.
           </p>
         </div>
       </div>
@@ -2352,7 +2350,6 @@ function UserManagementPanel() {
   const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [form, setForm] = React.useState<UserForm>(emptyUserForm);
   const [editingUserId, setEditingUserId] = React.useState<string | null>(null);
-  const [visiblePasswords, setVisiblePasswords] = React.useState<Record<string, boolean>>({});
   const [error, setError] = React.useState("");
 
   const loadUsers = React.useCallback(async () => {
@@ -2419,36 +2416,6 @@ function UserManagementPanel() {
     () => [
       { accessorKey: "email", header: "Email" },
       {
-        accessorKey: "password",
-        header: "Password",
-        cell: ({ row }) => {
-          const user = row.original;
-          const isVisible = Boolean(visiblePasswords[user.id]);
-          return (
-            <div className="flex items-center gap-2">
-              <span className="min-w-[96px] font-mono text-xs">
-                {isVisible ? user.password || "Not stored" : user.password ? "••••••••" : "Not stored"}
-              </span>
-              <Button
-                aria-label={isVisible ? "Hide password" : "Show password"}
-                onClick={() =>
-                  setVisiblePasswords((current) => ({ ...current, [user.id]: !current[user.id] }))
-                }
-                size="icon"
-                type="button"
-                variant="ghost"
-              >
-                {isVisible ? (
-                  <EyeOff className="size-4" aria-hidden="true" />
-                ) : (
-                  <Eye className="size-4" aria-hidden="true" />
-                )}
-              </Button>
-            </div>
-          );
-        },
-      },
-      {
         accessorKey: "role",
         header: "Role",
         cell: ({ getValue }) => <Badge variant={getValue<string>() === "admin" ? "success" : "info"}>{getValue<string>()}</Badge>,
@@ -2510,7 +2477,7 @@ function UserManagementPanel() {
         },
       },
     ],
-    [currentUser, deleteUserNow, isBusy, loadUsers, resetPassword, visiblePasswords],
+    [currentUser, deleteUserNow, isBusy, loadUsers, resetPassword],
   );
 
   return (
@@ -2519,7 +2486,7 @@ function UserManagementPanel() {
         <CardHeader>
           <CardTitle>{editingUserId ? "Edit User" : "Create User"}</CardTitle>
           <CardDescription>
-            User records include credentials, role, status, and one assigned team.
+            User passwords are write-only. Reset a password when a user needs a new one.
           </CardDescription>
         </CardHeader>
         <CardContent>

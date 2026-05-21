@@ -67,7 +67,6 @@ def ensure_initial_admin_user(session: Session, email: str, password: str) -> No
             User(
                 email=normalized_email,
                 password_hash=hash_password(password),
-                password=password,
                 role="admin",
                 is_active=True,
             )
@@ -75,14 +74,8 @@ def ensure_initial_admin_user(session: Session, email: str, password: str) -> No
         session.commit()
         return
 
-    if user.password == password and verify_password(password, user.password_hash):
+    if verify_password(password, user.password_hash):
         return
-
-    if user.password is None or user.password == password:
-        user.password_hash = hash_password(password)
-        user.password = password
-        session.add(user)
-        session.commit()
 
 
 app = create_app()

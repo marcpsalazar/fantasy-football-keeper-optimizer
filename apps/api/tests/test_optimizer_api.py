@@ -2,6 +2,7 @@ from collections.abc import Generator
 from datetime import UTC, datetime
 import json
 
+from fastapi import Response
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -12,7 +13,8 @@ from app.core.config import Settings
 from app.db.session import get_session
 from app.main import create_app, ensure_initial_admin_user
 from app.models import User
-from app.services.auth import hash_password, verify_password
+from app.services.auth import clear_session_cookie, hash_password, set_session_cookie, verify_password
+import app.services.auth as auth_service
 from app.services.composite_adp import ProviderFetchResult, _parse_draftsharks_browser_payload
 import app.services.news_feed as news_feed
 
@@ -114,14 +116,99 @@ def test_user_can_change_own_password_with_current_password(client: TestClient) 
     assert new_login_response.status_code == 200
 
 
-def test_initial_admin_seed_repairs_matching_display_password_hash(client: TestClient) -> None:
+def test_session_cookie_is_not_secure_by_default_in_development(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        auth_service,
+        "get_settings",
+        lambda: Settings(environment="development", session_secret="test-secret"),
+    )
+    response = Response()
+
+    set_session_cookie(
+        response,
+        User(email="dev@example.com", password_hash=hash_password("secret")),
+    )
+
+    set_cookie = response.headers["set-cookie"]
+    assert "httponly" in set_cookie.lower()
+    assert "samesite=lax" in set_cookie.lower()
+    assert "secure" not in set_cookie.lower()
+
+
+def test_session_cookie_is_secure_by_default_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        auth_service,
+        "get_settings",
+        lambda: Settings(environment="production", session_secret="test-secret"),
+    )
+    response = Response()
+
+    set_session_cookie(
+        response,
+        User(email="prod@example.com", password_hash=hash_password("secret")),
+    )
+    clear_session_cookie(response)
+
+    set_cookie_headers = response.headers.getlist("set-cookie")
+    assert "secure" in set_cookie_headers[0].lower()
+    assert "secure" in set_cookie_headers[1].lower()
+
+
+def test_session_cookie_secure_setting_overrides_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        auth_service,
+        "get_settings",
+        lambda: Settings(
+            environment="production",
+            session_cookie_secure=False,
+            session_secret="test-secret",
+        ),
+    )
+    response = Response()
+
+    set_session_cookie(
+        response,
+        User(email="override@example.com", password_hash=hash_password("secret")),
+    )
+
+    assert "secure" not in response.headers["set-cookie"].lower()
+
+
+def test_settings_normalizes_railway_postgresql_database_url() -> None:
+    settings = Settings(database_url="postgresql://keeper:secret@host.railway.internal:5432/keeper")
+
+    assert (
+        settings.sqlalchemy_database_url
+        == "postgresql+psycopg://keeper:secret@host.railway.internal:5432/keeper"
+    )
+
+
+def test_settings_keeps_explicit_sqlalchemy_and_sqlite_database_urls() -> None:
+    postgres_settings = Settings(
+        database_url="postgresql+psycopg://keeper:secret@localhost:5432/keeper"
+    )
+    sqlite_settings = Settings(database_url="sqlite:////tmp/keeper_optimizer_dev.db")
+
+    assert (
+        postgres_settings.sqlalchemy_database_url
+        == "postgresql+psycopg://keeper:secret@localhost:5432/keeper"
+    )
+    assert sqlite_settings.sqlalchemy_database_url == "sqlite:////tmp/keeper_optimizer_dev.db"
+
+
+def test_initial_admin_seed_keeps_existing_hash_only_admin_password(client: TestClient) -> None:
     session_generator = client.app.dependency_overrides[get_session]()
     session = next(session_generator)
     try:
         user = User(
             email="admin@example.com",
             password_hash=hash_password("old-secret"),
-            password="change-me",
             role="admin",
             is_active=True,
         )
@@ -131,8 +218,8 @@ def test_initial_admin_seed_repairs_matching_display_password_hash(client: TestC
         ensure_initial_admin_user(session, "admin@example.com", "change-me")
         session.refresh(user)
 
-        assert user.password == "change-me"
-        assert verify_password("change-me", user.password_hash)
+        assert verify_password("old-secret", user.password_hash)
+        assert not verify_password("change-me", user.password_hash)
     finally:
         session_generator.close()
 
@@ -330,7 +417,7 @@ def test_admin_can_manage_users_passwords_and_team_assignment(client: TestClient
 
     assert user_response.status_code == 201
     user_payload = user_response.json()
-    assert user_payload["password"] == "first-secret"
+    assert "password" not in user_payload
     assert user_payload["team_id"] == team_id
     user_id = user_payload["id"]
 
@@ -348,7 +435,7 @@ def test_admin_can_manage_users_passwords_and_team_assignment(client: TestClient
         json={"password": "second-secret"},
     )
     assert reset_response.status_code == 200
-    assert reset_response.json()["password"] == "second-secret"
+    assert "password" not in reset_response.json()
 
     client.patch(f"/api/admin/users/{user_id}", json={"is_active": True})
     client.post("/api/auth/logout")

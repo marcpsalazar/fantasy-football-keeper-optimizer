@@ -23,7 +23,6 @@ class User(TimestampMixin, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     email: str = Field(index=True, max_length=255)
     password_hash: str = Field(max_length=255)
-    password: str | None = Field(default=None, max_length=255)
     role: str = Field(default="user", index=True, max_length=40)
     is_active: bool = Field(default=True, index=True)
     avatar_data_url: str | None = Field(default=None)

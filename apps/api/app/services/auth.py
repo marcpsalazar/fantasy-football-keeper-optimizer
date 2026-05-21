@@ -75,18 +75,25 @@ def verify_session(value: str | None) -> uuid.UUID | None:
 
 
 def set_session_cookie(response: Response, user: User) -> None:
+    settings = get_settings()
     response.set_cookie(
-        key=get_settings().session_cookie_name,
+        key=settings.session_cookie_name,
         value=sign_session(user.id),
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=settings.use_secure_session_cookie,
         path="/",
     )
 
 
 def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(get_settings().session_cookie_name, path="/")
+    settings = get_settings()
+    response.delete_cookie(
+        settings.session_cookie_name,
+        path="/",
+        secure=settings.use_secure_session_cookie,
+        samesite="lax",
+    )
 
 
 def users_exist(session: Session) -> bool:

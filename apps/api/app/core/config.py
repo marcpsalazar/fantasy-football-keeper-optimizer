@@ -25,8 +25,21 @@ class Settings(BaseSettings):
     fantasy_nerds_adp_url: str = "https://api.fantasynerds.com/v1/nfl/adp"
     session_secret: str = "dev-session-secret-change-me"
     session_cookie_name: str = "keeper_optimizer_session"
+    session_cookie_secure: bool | None = None
     initial_admin_email: str | None = None
     initial_admin_password: str | None = None
+
+    @property
+    def use_secure_session_cookie(self) -> bool:
+        if self.session_cookie_secure is not None:
+            return self.session_cookie_secure
+        return self.environment.lower() == "production"
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        if self.database_url.startswith("postgresql://"):
+            return self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        return self.database_url
 
     model_config = SettingsConfigDict(
         env_file=".env",

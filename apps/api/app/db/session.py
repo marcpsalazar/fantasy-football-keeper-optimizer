@@ -9,7 +9,7 @@ from app.core.config import get_settings
 
 
 settings = get_settings()
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+engine = create_engine(settings.sqlalchemy_database_url, pool_pre_ping=True)
 
 
 def get_session() -> Generator[Session, None, None]:
@@ -29,7 +29,7 @@ def _apply_lightweight_sqlite_migrations() -> None:
         return
 
     column_additions = {
-        "users": [("password", "VARCHAR(255)"), ("avatar_data_url", "TEXT")],
+        "users": [("avatar_data_url", "TEXT")],
         "teams": [("user_id", "CHAR(32)")],
         "optimizer_settings": [
             ("user_id", "CHAR(32)"),
