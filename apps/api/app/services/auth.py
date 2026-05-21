@@ -80,7 +80,7 @@ def set_session_cookie(response: Response, user: User) -> None:
         key=settings.session_cookie_name,
         value=sign_session(user.id),
         httponly=True,
-        samesite="lax",
+        samesite=settings.cookie_samesite_policy,
         secure=settings.use_secure_session_cookie,
         path="/",
     )
@@ -92,7 +92,7 @@ def clear_session_cookie(response: Response) -> None:
         settings.session_cookie_name,
         path="/",
         secure=settings.use_secure_session_cookie,
-        samesite="lax",
+        samesite=settings.cookie_samesite_policy,
     )
 
 

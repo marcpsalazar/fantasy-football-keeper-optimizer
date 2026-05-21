@@ -35,6 +35,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
 - Database: PostgreSQL for normal local development, SQLite works for quick local smoke testing
 - Local DB bootstrap: SQLModel `create_all`
 - Seed data: CSV files in `sample-data`
+- Production hosting: Railway web service, Railway API service, and Railway Postgres
 
 ## Repository Layout
 
@@ -123,12 +124,14 @@ POSTGRES_DB=keeper_optimizer
 POSTGRES_PORT=5432
 
 DATABASE_URL=postgresql+psycopg://keeper:keeper@localhost:5432/keeper_optimizer
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+API_PROXY_TARGET=http://localhost:8000
+NEXT_PUBLIC_API_BASE_URL=
 CREATE_TABLES_ON_STARTUP=false
 SEED_DATA_ON_STARTUP=false
 SAMPLE_DATA_PATH=sample-data
 SESSION_SECRET=change-me
 SESSION_COOKIE_SECURE=false
+SESSION_COOKIE_SAMESITE=lax
 INITIAL_ADMIN_EMAIL=admin@example.com
 INITIAL_ADMIN_PASSWORD=change-me
 ```
@@ -145,6 +148,7 @@ SEED_DATA_ON_STARTUP=false
 SAMPLE_DATA_PATH=sample-data
 SESSION_SECRET=change-me
 SESSION_COOKIE_SECURE=false
+SESSION_COOKIE_SAMESITE=lax
 INITIAL_ADMIN_EMAIL=admin@example.com
 INITIAL_ADMIN_PASSWORD=change-me
 ```
@@ -152,7 +156,117 @@ INITIAL_ADMIN_PASSWORD=change-me
 `apps/web/.env.local` is loaded by Next.js:
 
 ```text
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+API_PROXY_TARGET=http://localhost:8000
+NEXT_PUBLIC_API_BASE_URL=
+```
+
+By default the browser calls same-origin `/api/...` paths. Next.js rewrites those requests to
+`API_PROXY_TARGET`. This keeps local development simple and avoids production third-party-cookie
+issues by letting the hosted web app and API share the public web origin. `NEXT_PUBLIC_API_BASE_URL`
+is still supported for explicit direct API calls, but it should normally stay blank.
+
+Session cookie behavior:
+
+- In development, cookies default to `Secure=false` and `SameSite=lax`.
+- In production, cookies default to `Secure=true` and `SameSite=none`.
+- `SESSION_COOKIE_SECURE` and `SESSION_COOKIE_SAMESITE` can override those defaults.
+
+## Railway Deployment
+
+Production is deployed on Railway in project `easygoing-upliftment` with three services:
+
+```text
+@keeper-optimizer/web  Next.js frontend
+api                    FastAPI backend
+Postgres               Railway PostgreSQL database
+```
+
+Current public service URLs:
+
+```text
+Web: https://keeper-optimizerweb-production.up.railway.app
+API: https://api-production-666b.up.railway.app
+Custom domain target: https://mayhemfantasyfootballtools.com
+```
+
+Attach the custom domain to `@keeper-optimizer/web`, not to `api`. The web service proxies `/api/*`
+to the API service, so users should only need the web domain.
+
+### API Railway Variables
+
+Set these on the `api` service:
+
+```text
+APP_NAME=Fantasy Football Keeper Optimizer API
+ENVIRONMENT=production
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+CORS_ORIGINS=["https://keeper-optimizerweb-production.up.railway.app","https://mayhemfantasyfootballtools.com"]
+CREATE_TABLES_ON_STARTUP=false
+SEED_DATA_ON_STARTUP=false
+SESSION_SECRET=<long-random-secret>
+SESSION_COOKIE_SECURE=true
+INITIAL_ADMIN_EMAIL=<admin-email>
+INITIAL_ADMIN_PASSWORD=<temporary-admin-password>
+```
+
+The API normalizes Railway's plain `postgresql://...` database URL to
+`postgresql+psycopg://...` before creating the SQLAlchemy engine.
+
+`apps/api/railway.json` configures the API service to:
+
+- build with `apps/api/Dockerfile`;
+- run `alembic upgrade head` before deploy;
+- use `/health` as the health check;
+- start the container with the Dockerfile `CMD`.
+
+### Web Railway Variables
+
+Set these on `@keeper-optimizer/web`:
+
+```text
+API_PROXY_TARGET=https://api-production-666b.up.railway.app
+NEXT_PUBLIC_API_BASE_URL=
+```
+
+The deployed frontend should not bake in the API hostname. Keeping `NEXT_PUBLIC_API_BASE_URL` blank
+means browser requests go to `/api/...` on the current web origin, including the custom domain.
+
+### Railway CLI Commands
+
+Useful production checks:
+
+```bash
+railway status
+railway service list
+railway deployment list --service api --environment production --json
+railway deployment list --service '@keeper-optimizer/web' --environment production --json
+railway logs --service api --environment production --lines 120
+railway logs --service '@keeper-optimizer/web' --environment production --lines 120
+```
+
+Deploy from the repository root:
+
+```bash
+railway up --service api --environment production --detach
+railway up --service '@keeper-optimizer/web' --environment production --detach
+```
+
+Add the custom domain from the Railway dashboard if the CLI domain command returns an authorization
+error:
+
+1. Open Railway project `easygoing-upliftment`.
+2. Select `@keeper-optimizer/web`.
+3. Open `Settings` -> `Networking`.
+4. Add `mayhemfantasyfootballtools.com`.
+5. Wait for DNS and SSL provisioning to complete.
+
+After domain activation, verify:
+
+```bash
+curl https://mayhemfantasyfootballtools.com
+curl -i -X OPTIONS https://api-production-666b.up.railway.app/api/auth/me \
+  -H 'Origin: https://mayhemfantasyfootballtools.com' \
+  -H 'Access-Control-Request-Method: GET'
 ```
 
 ## Database Migrations and Seed Data
@@ -691,13 +805,19 @@ Check:
 ```bash
 curl http://localhost:8000/health
 curl http://localhost:8000/api/leagues
+curl http://localhost:3000/api/leagues
 ```
 
 Also confirm `apps/web/.env.local` contains:
 
 ```text
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+API_PROXY_TARGET=http://localhost:8000
+NEXT_PUBLIC_API_BASE_URL=
 ```
+
+In production, confirm the web service has `API_PROXY_TARGET` set to the API service URL and that
+the browser is calling `/api/...` on the web domain. If the custom domain is active, the API CORS
+allowlist must include `https://mayhemfantasyfootballtools.com`.
 
 ### CSV import button is disabled
 
@@ -737,7 +857,6 @@ CREATE_TABLES_ON_STARTUP=true uvicorn app.main:app --reload
 
 ## Current Limitations
 
-- Alembic migrations are not wired yet.
 - Yahoo or external league-provider integration is not implemented yet.
 - Frontend CRUD is focused on users, teams, imports, optimizer runs, overrides, scenarios, draft impact, and exports.
 - PDF reports are intentionally simple and dependency-free.

@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     session_secret: str = "dev-session-secret-change-me"
     session_cookie_name: str = "keeper_optimizer_session"
     session_cookie_secure: bool | None = None
+    session_cookie_samesite: str | None = None
     initial_admin_email: str | None = None
     initial_admin_password: str | None = None
 
@@ -34,6 +35,14 @@ class Settings(BaseSettings):
         if self.session_cookie_secure is not None:
             return self.session_cookie_secure
         return self.environment.lower() == "production"
+
+    @property
+    def cookie_samesite_policy(self) -> str:
+        if self.session_cookie_samesite is not None:
+            return self.session_cookie_samesite
+        if self.environment.lower() == "production":
+            return "none"
+        return "lax"
 
     @property
     def sqlalchemy_database_url(self) -> str:

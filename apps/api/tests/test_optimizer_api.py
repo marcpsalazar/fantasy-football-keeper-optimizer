@@ -156,6 +156,8 @@ def test_session_cookie_is_secure_by_default_in_production(
     set_cookie_headers = response.headers.getlist("set-cookie")
     assert "secure" in set_cookie_headers[0].lower()
     assert "secure" in set_cookie_headers[1].lower()
+    assert "samesite=none" in set_cookie_headers[0].lower()
+    assert "samesite=none" in set_cookie_headers[1].lower()
 
 
 def test_session_cookie_secure_setting_overrides_environment(
@@ -178,6 +180,28 @@ def test_session_cookie_secure_setting_overrides_environment(
     )
 
     assert "secure" not in response.headers["set-cookie"].lower()
+
+
+def test_session_cookie_samesite_setting_overrides_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        auth_service,
+        "get_settings",
+        lambda: Settings(
+            environment="production",
+            session_cookie_samesite="lax",
+            session_secret="test-secret",
+        ),
+    )
+    response = Response()
+
+    set_session_cookie(
+        response,
+        User(email="same-site@example.com", password_hash=hash_password("secret")),
+    )
+
+    assert "samesite=lax" in response.headers["set-cookie"].lower()
 
 
 def test_settings_normalizes_railway_postgresql_database_url() -> None:
