@@ -2,11 +2,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlmodel import Session, select
 
 from app.api.routes.auth import router as auth_router
 from app.api.routes.leagues import router as leagues_router
 from app.core.config import get_settings
+from app.models import User
 from app.schemas.health import HealthResponse
+from app.services.auth import hash_password, verify_password
 
 
 def create_app() -> FastAPI:
@@ -26,28 +29,13 @@ def create_app() -> FastAPI:
 
         if settings.initial_admin_email and settings.initial_admin_password:
             from app.db.session import engine
-            from app.models import User
-            from app.services.auth import hash_password
-            from sqlmodel import Session, select
 
             with Session(engine) as session:
-                email = settings.initial_admin_email.lower()
-                user = session.exec(select(User).where(User.email == email)).first()
-                if user is None:
-                    session.add(
-                        User(
-                            email=email,
-                            password_hash=hash_password(settings.initial_admin_password),
-                            password=settings.initial_admin_password,
-                            role="admin",
-                            is_active=True,
-                        )
-                    )
-                    session.commit()
-                elif user.password is None:
-                    user.password = settings.initial_admin_password
-                    session.add(user)
-                    session.commit()
+                ensure_initial_admin_user(
+                    session,
+                    settings.initial_admin_email,
+                    settings.initial_admin_password,
+                )
 
         yield
 
@@ -69,6 +57,32 @@ def create_app() -> FastAPI:
     api.include_router(leagues_router)
 
     return api
+
+
+def ensure_initial_admin_user(session: Session, email: str, password: str) -> None:
+    normalized_email = email.lower()
+    user = session.exec(select(User).where(User.email == normalized_email)).first()
+    if user is None:
+        session.add(
+            User(
+                email=normalized_email,
+                password_hash=hash_password(password),
+                password=password,
+                role="admin",
+                is_active=True,
+            )
+        )
+        session.commit()
+        return
+
+    if user.password == password and verify_password(password, user.password_hash):
+        return
+
+    if user.password is None or user.password == password:
+        user.password_hash = hash_password(password)
+        user.password = password
+        session.add(user)
+        session.commit()
 
 
 app = create_app()

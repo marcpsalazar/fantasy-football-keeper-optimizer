@@ -58,6 +58,8 @@ import {
   buildActiveKeeperRecommendations,
   buildDraftImpact,
   buildOutlooks,
+  changeOwnPassword,
+  countDraftRounds,
   createAdminUser,
   createTeam,
   deleteAdminUser,
@@ -162,45 +164,57 @@ type GlossaryTerm = {
   meaning: string;
 };
 
+type WorkflowStep = {
+  title: string;
+  text: string;
+  view?: ViewId;
+};
+
+type ControlGuide = {
+  title: string;
+  icon: React.ComponentType<{ className?: string }>;
+  text: string;
+};
+
 const screenGuides: ScreenGuide[] = [
   {
     title: "League Dashboard",
     icon: Gauge,
-    bestFor: "A quick health check before making decisions.",
-    howToRead: "The Keeper Board highlights top recommendations, while Draft Capital estimates how many top-100 picks each team keeps after keeper costs.",
-    watchFor: "If the dashboard still shows mock data, refresh after confirming the API is running.",
+    bestFor: "A quick health check before making decisions or explaining the league state.",
+    howToRead: "Use the connection badge, active snapshot, keeper board, draft capital, news, and review flags to see whether the workspace is ready.",
+    watchFor: "If data looks stale, use Refresh. If recommendations look stale after input changes, use Run Optimizer.",
     view: "dashboard",
   },
   {
     title: "Teams",
     icon: Users,
     bestFor: "Checking team names, owners, draft slots, keeper counts, and remaining top-100 picks.",
-    howToRead: "Draft slot is used to project the snake draft board. Top-100 picks are open picks remaining after keeper forfeits.",
-    watchFor: "Wrong draft slots will make Draft Capital and Draft Impact misleading.",
+    howToRead: "Draft slot feeds the snake draft board and draft slot bonus. Selected keepers and top-100 picks come from the active recommendation set.",
+    watchFor: "Wrong draft slots or team assignments make Draft Capital, Draft Impact, and user-specific views misleading.",
     view: "teams",
   },
   {
     title: "Draft Results",
     icon: ClipboardList,
     bestFor: "Verifying original draft cost.",
-    howToRead: "If a player was drafted by the same team and is still on that final roster, the keeper cost is the original draft pick.",
-    watchFor: "Missing or duplicated overall picks can make keeper costs unreliable.",
+    howToRead: "If a player was drafted by the same team and is still on that final roster, the original draft pick becomes keeper cost.",
+    watchFor: "Missing teams, duplicate picks, or wrong original owners create bad keeper values.",
     view: "draft",
   },
   {
     title: "Final Rosters",
     icon: ListChecks,
     bestFor: "Confirming who each team can actually keep.",
-    howToRead: "Roster status adds context. Starters receive more status bonus than bench players, while injured or suspended players carry more risk.",
+    howToRead: "This is the keeper candidate pool. Roster status adds context, so starters get more credit and injured or suspended players carry more risk.",
     watchFor: "Players not on a final roster will not become keeper candidates.",
     view: "rosters",
   },
   {
     title: "Admin",
     icon: ShieldCheck,
-    bestFor: "Managing admin-only league inputs, including ADP snapshots.",
-    howToRead: "ADP pick is what the market thinks a player costs now. Earlier ADP picks mean more expensive, more desirable players.",
-    watchFor: "Players missing ADP cannot be scored correctly. For traded or waiver players, ADP becomes the keeper cost.",
+    bestFor: "Managing users, team assignments, CSV imports, and ADP snapshots.",
+    howToRead: "Admins preview and import league source data here. ADP is the market baseline; lower ADP picks mean earlier, more expensive players.",
+    watchFor: "Preview before import. Missing ADP makes scores unreliable, and imported data should be followed by Run Optimizer.",
     view: "admin",
     adminOnly: true,
   },
@@ -208,8 +222,8 @@ const screenGuides: ScreenGuide[] = [
     title: "Optimizer Settings",
     icon: SlidersHorizontal,
     bestFor: "Tuning the model to match league strategy.",
-    howToRead: "Position weights, minimum value, ADP caps, and bonuses determine how much the optimizer rewards value, talent, starters, draft slot, and superflex QB scarcity.",
-    watchFor: "Very high minimums can produce fewer keepers. Lower minimums can include more aggressive or marginal keepers.",
+    howToRead: "Keeper limits, thresholds, ADP cap, position weights, and bonuses decide who qualifies and how candidates are ranked.",
+    watchFor: "Save Settings persists values and reruns recommendations. Very high thresholds can produce fewer keepers.",
     view: "settings",
   },
   {
@@ -224,25 +238,91 @@ const screenGuides: ScreenGuide[] = [
     title: "Scenario Comparison",
     icon: GitCompare,
     bestFor: "Seeing how strategy changes the keeper list.",
-    howToRead: "Each preset shows selected keepers, forfeited picks, and notes by team. This helps compare safe value against win-now upside.",
-    watchFor: "Compare how many keepers each preset selects and which draft rounds are being forfeited.",
+    howToRead: "Each preset shows selected keepers, forfeited picks, total score, and notes by team. The Outlook Scenario selector chooses the active strategy for that team.",
+    watchFor: "Run All Presets after settings or input changes. Scenario selections change Team Outlook and Draft Impact.",
     view: "scenarios",
   },
   {
     title: "Team Outlooks",
     icon: ShieldCheck,
     bestFor: "A team-by-team summary for discussion.",
-    howToRead: "Each card summarizes stance, recommended keepers, lost picks, draft capital, and risk in plain language.",
-    watchFor: "Outlooks are summaries, not separate rankings. The detailed math lives in Keeper Recommendations.",
+    howToRead: "Each card summarizes stance, recommended keepers, lost picks, draft capital, and risk from the active keeper plan.",
+    watchFor: "Outlooks are summaries, not separate rankings. Export a PDF when the team plan is ready to share.",
     view: "outlooks",
   },
   {
     title: "Draft Impact",
     icon: ClipboardList,
     bestFor: "Understanding the draft board after keeper picks are removed.",
-    howToRead: "Forfeited picks are picks spent to keep players. Open picks are still available in the projected draft.",
-    watchFor: "This assumes normal draft order. Traded draft picks are not modeled yet.",
+    howToRead: "Forfeited picks are spent on keepers. Open picks remain available in the projected draft board.",
+    watchFor: "Draft Impact is downstream of recommendations and scenario selections. Rerun the right calculation before using it for planning.",
     view: "draft-impact",
+  },
+];
+
+const workflowSteps: WorkflowStep[] = [
+  {
+    title: "Confirm the source data",
+    text: "Check teams, draft results, final rosters, and ADP before trusting recommendations. Admins should preview and import CSVs from Admin when those inputs need to change.",
+    view: "dashboard",
+  },
+  {
+    title: "Tune model behavior",
+    text: "Use Optimizer Settings when league rules or strategy should change the calculation, such as keeper limits, QB caps, thresholds, ADP cap, position weights, or bonus toggles.",
+    view: "settings",
+  },
+  {
+    title: "Run the calculation",
+    text: "Use Run Optimizer after imports, team edits, settings changes, ADP updates, or manual overrides. This recomputes keeper recommendations from live inputs.",
+    view: "recommendations",
+  },
+  {
+    title: "Review and override",
+    text: "Read Keeper Recommendations first. Use Auto for model control, Force Keep for outside context the model cannot know, and Exclude for players you do not want selected.",
+    view: "recommendations",
+  },
+  {
+    title: "Compare strategies",
+    text: "Use Scenario Comparison to compare Pure Value, Balanced, Superflex Heavy, Win Now, and Rebuild. Pick an Outlook Scenario per team when the report should reflect a specific strategy.",
+    view: "scenarios",
+  },
+  {
+    title: "Share the result",
+    text: "Use Draft Impact and Team Outlook after recommendations are set, then export Excel, CSV, or PDF reports from the recommendation and outlook screens.",
+    view: "outlooks",
+  },
+];
+
+const controlGuides: ControlGuide[] = [
+  {
+    title: "Optimizer Settings",
+    icon: SlidersHorizontal,
+    text: "Changes the model input. Use it before calculation when you want stricter recommendations, more speculative candidates, different position emphasis, or different keeper caps.",
+  },
+  {
+    title: "Save Settings",
+    icon: Save,
+    text: "Persists the visible settings, reruns the optimizer, clears selected scenario overrides, and refreshes recommendation-driven screens.",
+  },
+  {
+    title: "Run Optimizer",
+    icon: Play,
+    text: "Saves the visible settings, recomputes keeper recommendations from teams, draft results, final rosters, ADP, overrides, and settings, then reloads the workspace.",
+  },
+  {
+    title: "Refresh",
+    icon: RefreshCw,
+    text: "Reloads displayed workspace data and resets table filters or sorting. It does not rerun the optimizer or change recommendation results.",
+  },
+  {
+    title: "Preview and Import",
+    icon: Upload,
+    text: "Preview validates pasted CSV before writes. Import commits valid draft, roster, or ADP rows. Run Optimizer after imports when recommendations should change.",
+  },
+  {
+    title: "Run All Presets",
+    icon: GitCompare,
+    text: "Recomputes scenario presets for side-by-side strategy comparison. Use it after settings or source data change.",
   },
 ];
 
@@ -333,6 +413,7 @@ type DashboardContextValue = {
   logoutNow: () => Promise<void>;
   resetDisplayAndRefresh: () => Promise<void>;
   updateProfileAvatarNow: (avatarDataUrl: string | null) => Promise<void>;
+  changePasswordNow: (currentPassword: string, newPassword: string) => Promise<void>;
   setSelectedScenarioForTeam: (
     teamId: string,
     scenarioName: ScenarioComparison["scenarioName"] | null,
@@ -422,7 +503,12 @@ export function DashboardApp() {
       ...baseData,
       teams: activeTeams,
       keeperRecommendations: activeKeeperRecommendations,
-      draftImpact: buildDraftImpact(activeTeams, activeKeeperRecommendations, draftType, 10),
+      draftImpact: buildDraftImpact(
+        activeTeams,
+        activeKeeperRecommendations,
+        draftType,
+        countDraftRounds(baseData.draftResults, activeKeeperRecommendations),
+      ),
       outlooks: buildOutlooks(activeTeams, activeKeeperRecommendations),
     };
   }, [selectedScenarioByTeam, settings, workspace]);
@@ -539,6 +625,20 @@ export function DashboardApp() {
     } catch (error) {
       setApiStatus("error");
       setStatusMessage(error instanceof Error ? error.message : "Updating profile image failed.");
+      throw error;
+    } finally {
+      setIsBusy(false);
+    }
+  }, []);
+
+  const changePasswordNow = React.useCallback(async (currentPassword: string, newPassword: string) => {
+    setIsBusy(true);
+    try {
+      await changeOwnPassword(currentPassword, newPassword);
+      setStatusMessage("Password updated.");
+    } catch (error) {
+      setApiStatus("error");
+      setStatusMessage(error instanceof Error ? error.message : "Updating password failed.");
       throw error;
     } finally {
       setIsBusy(false);
@@ -945,6 +1045,7 @@ export function DashboardApp() {
       logoutNow,
       resetDisplayAndRefresh,
       updateProfileAvatarNow,
+      changePasswordNow,
       refreshAdpNow,
       setSelectedScenarioForTeam,
       previewCsvText,
@@ -957,6 +1058,7 @@ export function DashboardApp() {
     }),
     [
       apiStatus,
+      changePasswordNow,
       csvPreviews,
       currentUser,
       createUserNow,
@@ -1109,7 +1211,12 @@ export function DashboardApp() {
                           <AvatarImage user={currentUser} className="size-10" iconClassName="size-6" />
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium text-zinc-950">{currentUser.email}</p>
-                            <Badge variant={isAdmin ? "success" : "info"}>{currentUser.role}</Badge>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <Badge variant={isAdmin ? "success" : "info"}>{currentUser.role}</Badge>
+                              {currentUser.teamName ? (
+                                <Badge variant="success">{currentUser.teamName}</Badge>
+                              ) : null}
+                            </div>
                           </div>
                         </div>
                         <button
@@ -1280,12 +1387,27 @@ function AvatarImage({
 }
 
 function ProfilePage() {
-  const { currentUser, isBusy, updateProfileAvatarNow } = useDashboard();
+  const { changePasswordNow, currentUser, isBusy, updateProfileAvatarNow } = useDashboard();
   const [error, setError] = React.useState("");
+  const [passwordError, setPasswordError] = React.useState("");
+  const [passwordSaved, setPasswordSaved] = React.useState(false);
+  const [passwordForm, setPasswordForm] = React.useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
 
   if (!currentUser) {
     return null;
   }
+
+  const passwordMismatch =
+    passwordForm.confirmPassword.length > 0 &&
+    passwordForm.newPassword !== passwordForm.confirmPassword;
+  const canSavePassword =
+    Boolean(passwordForm.currentPassword) &&
+    Boolean(passwordForm.newPassword) &&
+    passwordForm.newPassword === passwordForm.confirmPassword;
 
   const uploadAvatar = (file: File | undefined) => {
     if (!file) {
@@ -1332,6 +1454,14 @@ function ProfilePage() {
                   {currentUser.role}
                 </Badge>
               </div>
+              <p className="text-sm text-zinc-600">
+                Assigned team:{" "}
+                {currentUser.teamName ? (
+                  <span className="font-medium text-zinc-950">{currentUser.teamName}</span>
+                ) : (
+                  <span>Not assigned</span>
+                )}
+              </p>
             </div>
           </div>
 
@@ -1366,12 +1496,93 @@ function ProfilePage() {
           {error ? <p className="text-sm text-rose-700">{error}</p> : null}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Password</CardTitle>
+          <CardDescription>Update the password for this account.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setPasswordError("");
+              setPasswordSaved(false);
+              if (!canSavePassword) {
+                setPasswordError("Enter your current password and matching new passwords.");
+                return;
+              }
+              void changePasswordNow(passwordForm.currentPassword, passwordForm.newPassword)
+                .then(() => {
+                  setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+                  setPasswordSaved(true);
+                })
+                .catch(() => {
+                  setPasswordError("The password could not be updated.");
+                });
+            }}
+          >
+            <div className="space-y-2">
+              <Label htmlFor="current-password">Current password</Label>
+              <Input
+                autoComplete="current-password"
+                disabled={isBusy}
+                id="current-password"
+                onChange={(event) => {
+                  setPasswordSaved(false);
+                  setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }));
+                }}
+                type="password"
+                value={passwordForm.currentPassword}
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="new-password">New password</Label>
+                <Input
+                  autoComplete="new-password"
+                  disabled={isBusy}
+                  id="new-password"
+                  onChange={(event) => {
+                    setPasswordSaved(false);
+                    setPasswordForm((current) => ({ ...current, newPassword: event.target.value }));
+                  }}
+                  type="password"
+                  value={passwordForm.newPassword}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirm-password">Confirm new password</Label>
+                <Input
+                  autoComplete="new-password"
+                  disabled={isBusy}
+                  id="confirm-password"
+                  onChange={(event) => {
+                    setPasswordSaved(false);
+                    setPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }));
+                  }}
+                  type="password"
+                  value={passwordForm.confirmPassword}
+                />
+              </div>
+            </div>
+            {passwordMismatch ? <p className="text-sm text-rose-700">New passwords do not match.</p> : null}
+            {passwordError ? <p className="text-sm text-rose-700">{passwordError}</p> : null}
+            {passwordSaved ? <p className="text-sm text-emerald-700">Password updated.</p> : null}
+            <Button disabled={isBusy || !canSavePassword} type="submit">
+              <KeyRound className="size-4" aria-hidden="true" />
+              Save Password
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
 function LeagueDashboard() {
-  const { data } = useDashboard();
+  const { currentUser, data } = useDashboard();
   const recommendedKeepers = data.keeperRecommendations.filter(
     (recommendation) => recommendation.status === "Recommended",
   );
@@ -1646,6 +1857,7 @@ function LeagueDashboard() {
           {teamSnapshots.map(({ outlook, review, team }) => (
             <DashboardTeamSnapshotCard
               key={team.id}
+              currentUser={currentUser}
               outlook={outlook}
               review={review?.reasons}
               team={team}
@@ -1669,7 +1881,12 @@ function LeagueDashboard() {
               <div key={team.id}>
                 <div className="mb-1 flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-zinc-900">{team.name}</p>
+                    <TeamNameMark
+                      className="text-sm font-medium text-zinc-900"
+                      name={team.name}
+                      teamId={team.id}
+                      user={currentUser}
+                    />
                     <p className="text-xs text-zinc-500">
                       {draftCapitalLabel(team.remainingTop100Picks)}
                     </p>
@@ -1704,7 +1921,7 @@ function GuidePage({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
           <div className="min-w-0">
             <CardTitle>How to Use the Keeper Optimizer</CardTitle>
             <CardDescription>
-              A plain-language guide to the workflow, screens, scores, and keeper terms.
+              A plain-language guide to the workflow, controls, screens, scores, and keeper terms.
             </CardDescription>
           </div>
           <Button onClick={() => onNavigate("recommendations")}>
@@ -1723,14 +1940,60 @@ function GuidePage({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
             </p>
           </div>
           <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
-            <p className="text-sm font-semibold text-zinc-950">A good keeper is usually...</p>
+            <p className="text-sm font-semibold text-zinc-950">How the pieces fit</p>
             <ul className="mt-2 space-y-2 text-sm leading-6 text-zinc-700">
-              <li>Cheaper than the player&apos;s current ADP.</li>
-              <li>Useful enough to matter in your starting lineup.</li>
-              <li>Not so expensive that it damages your early draft plan.</li>
-              <li>Allowed by league limits, such as max keepers and max QBs.</li>
+              <li>Teams, draft results, final rosters, and ADP are the source inputs.</li>
+              <li>Optimizer settings and manual overrides shape the calculation.</li>
+              <li>Recommendations feed scenarios, draft impact, outlooks, and exports.</li>
+              <li>Refresh reloads displayed data; Run Optimizer recalculates results.</li>
             </ul>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Recommended Workflow</CardTitle>
+          <CardDescription>
+            Follow this order when setting up data, rerunning recommendations, or preparing reports.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ol className="grid gap-3 lg:grid-cols-2">
+            {workflowSteps.map((step, index) => (
+              <WorkflowStepItem
+                index={index}
+                key={step.title}
+                onNavigate={onNavigate}
+                step={step}
+              />
+            ))}
+          </ol>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Controls That Change Results</CardTitle>
+          <CardDescription>
+            Use these buttons intentionally; some reload the display, while others recalculate the model.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {controlGuides.map((control) => {
+            const Icon = control.icon;
+            return (
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4" key={control.title}>
+                <div className="flex items-center gap-2">
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white text-zinc-700 ring-1 ring-zinc-200">
+                    <Icon className="size-4" aria-hidden="true" />
+                  </div>
+                  <p className="text-sm font-semibold text-zinc-950">{control.title}</p>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-zinc-600">{control.text}</p>
+              </div>
+            );
+          })}
         </CardContent>
       </Card>
 
@@ -1845,11 +2108,44 @@ function GuidePage({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
   );
 }
 
+function WorkflowStepItem({
+  index,
+  onNavigate,
+  step,
+}: {
+  index: number;
+  onNavigate: (view: ViewId) => void;
+  step: WorkflowStep;
+}) {
+  const view = step.view;
+
+  return (
+    <li className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase text-zinc-500">Step {index + 1}</p>
+          <p className="mt-1 text-sm font-semibold text-zinc-950">{step.title}</p>
+        </div>
+        {view ? (
+          <Button onClick={() => onNavigate(view)} size="sm" type="button" variant="outline">
+            Open
+          </Button>
+        ) : null}
+      </div>
+      <p className="mt-2 text-sm leading-6 text-zinc-600">{step.text}</p>
+    </li>
+  );
+}
+
 function TeamsPage() {
-  const { data, tableDisplayResetSignal } = useDashboard();
+  const { currentUser, data, tableDisplayResetSignal } = useDashboard();
   const columns = React.useMemo<ColumnDef<Team>[]>(
     () => [
-      { accessorKey: "name", header: "Team" },
+      {
+        accessorKey: "name",
+        header: "Team",
+        cell: ({ row }) => <TeamNameMark name={row.original.name} teamId={row.original.id} user={currentUser} />,
+      },
       { accessorKey: "owner", header: "Owner" },
       { accessorKey: "draftSlot", header: "Draft Slot" },
       {
@@ -1864,7 +2160,7 @@ function TeamsPage() {
       },
       { accessorKey: "remainingTop100Picks", header: "Top-100 Picks" },
     ],
-    [],
+    [currentUser],
   );
 
   return (
@@ -1884,10 +2180,14 @@ function TeamsPage() {
 }
 
 function DraftResultsPage() {
-  const { data, tableDisplayResetSignal } = useDashboard();
+  const { currentUser, data, tableDisplayResetSignal } = useDashboard();
   const columns = React.useMemo<ColumnDef<DraftPick>[]>(
     () => [
-      { accessorKey: "team", header: "Team" },
+      {
+        accessorKey: "team",
+        header: "Team",
+        cell: ({ getValue }) => <TeamNameMark name={getValue<string>()} user={currentUser} />,
+      },
       { accessorKey: "round", header: "Round" },
       { accessorKey: "overallPick", header: "Pick" },
       { accessorKey: "player", header: "Player" },
@@ -1898,7 +2198,7 @@ function DraftResultsPage() {
       },
       { accessorKey: "keeperCost", header: "Keeper Cost" },
     ],
-    [],
+    [currentUser],
   );
 
   return (
@@ -1915,10 +2215,14 @@ function DraftResultsPage() {
 }
 
 function FinalRostersPage() {
-  const { data, tableDisplayResetSignal } = useDashboard();
+  const { currentUser, data, tableDisplayResetSignal } = useDashboard();
   const columns = React.useMemo<ColumnDef<FinalRosterEntry>[]>(
     () => [
-      { accessorKey: "team", header: "Team" },
+      {
+        accessorKey: "team",
+        header: "Team",
+        cell: ({ getValue }) => <TeamNameMark name={getValue<string>()} user={currentUser} />,
+      },
       { accessorKey: "scenario", header: "Scenario" },
       { accessorKey: "player", header: "Player" },
       {
@@ -1933,7 +2237,7 @@ function FinalRostersPage() {
       },
       { accessorKey: "acquiredVia", header: "Acquired Via" },
     ],
-    [],
+    [currentUser],
   );
 
   return (
@@ -2037,6 +2341,7 @@ const emptyUserForm: UserForm = {
 function UserManagementPanel() {
   const {
     createUserNow,
+    currentUser,
     data,
     deleteUserNow,
     isBusy,
@@ -2151,7 +2456,16 @@ function UserManagementPanel() {
       {
         accessorKey: "teamName",
         header: "Assigned Team",
-        cell: ({ getValue }) => getValue<string>() || "Unassigned",
+        cell: ({ row }) =>
+          row.original.teamName ? (
+            <TeamNameMark
+              name={row.original.teamName}
+              teamId={row.original.teamId}
+              user={currentUser}
+            />
+          ) : (
+            "Unassigned"
+          ),
       },
       {
         accessorKey: "isActive",
@@ -2196,7 +2510,7 @@ function UserManagementPanel() {
         },
       },
     ],
-    [deleteUserNow, isBusy, loadUsers, resetPassword, visiblePasswords],
+    [currentUser, deleteUserNow, isBusy, loadUsers, resetPassword, visiblePasswords],
   );
 
   return (
@@ -2361,6 +2675,7 @@ const emptyTeamForm: TeamForm = {
 function LeagueManagementPanel() {
   const {
     createTeamNow,
+    currentUser,
     data,
     deleteTeamNow,
     isBusy,
@@ -2429,7 +2744,11 @@ function LeagueManagementPanel() {
 
   const columns = React.useMemo<ColumnDef<Team>[]>(
     () => [
-      { accessorKey: "name", header: "Team" },
+      {
+        accessorKey: "name",
+        header: "Team",
+        cell: ({ row }) => <TeamNameMark name={row.original.name} teamId={row.original.id} user={currentUser} />,
+      },
       { accessorKey: "owner", header: "Assigned User / Owner" },
       { accessorKey: "draftSlot", header: "Draft Slot" },
       {
@@ -2468,7 +2787,7 @@ function LeagueManagementPanel() {
         },
       },
     ],
-    [deleteTeamNow, isBusy],
+    [currentUser, deleteTeamNow, isBusy],
   );
 
   return (
@@ -2882,6 +3201,7 @@ function KeeperRecommendationsPage() {
 
 function ScenarioComparisonPage() {
   const {
+    currentUser,
     data,
     isBusy,
     runScenariosNow,
@@ -2946,10 +3266,28 @@ function ScenarioComparisonPage() {
               </thead>
               <tbody>
                 {teams.map((team) => (
-                  <tr key={team.id} className="border-b border-zinc-100 align-top">
-                    <td className="sticky left-0 z-10 bg-white px-3 py-4 shadow-[inset_-1px_0_0_#e4e4e7]">
+                  <tr
+                    key={team.id}
+                    className={cn(
+                      "border-b border-zinc-100 align-top",
+                      isCurrentUserTeam({ name: team.name, teamId: team.id, user: currentUser }) &&
+                        "bg-emerald-50/30",
+                    )}
+                  >
+                    <td
+                      className={cn(
+                        "sticky left-0 z-10 bg-white px-3 py-4 shadow-[inset_-1px_0_0_#e4e4e7]",
+                        isCurrentUserTeam({ name: team.name, teamId: team.id, user: currentUser }) &&
+                          "bg-emerald-50",
+                      )}
+                    >
                       <div className="space-y-2">
-                        <p className="font-semibold text-zinc-900">{team.name}</p>
+                        <TeamNameMark
+                          className="font-semibold text-zinc-900"
+                          name={team.name}
+                          teamId={team.id}
+                          user={currentUser}
+                        />
                         <div className="space-y-1">
                           <Label className="text-xs font-semibold uppercase text-zinc-500">
                             Outlook Scenario
@@ -2996,11 +3334,12 @@ function ScenarioComparisonPage() {
 }
 
 function TeamOutlooksPage() {
-  const { data, exportRecommendations, isBusy } = useDashboard();
+  const { currentUser, data, exportRecommendations, isBusy } = useDashboard();
   return (
     <div className="grid gap-4 xl:grid-cols-3">
       {data.outlooks.map((outlook) => (
         <OutlookCard
+          currentUser={currentUser}
           disabled={isBusy}
           key={outlook.team}
           onExport={() => exportRecommendations("pdf", outlook.teamId)}
@@ -3012,7 +3351,7 @@ function TeamOutlooksPage() {
 }
 
 function DraftImpactPage() {
-  const { data, tableDisplayResetSignal } = useDashboard();
+  const { currentUser, data, tableDisplayResetSignal } = useDashboard();
   const forfeitedCount = data.draftImpact.filter((pick) => pick.status === "Forfeited").length;
   const openTop100 = data.draftImpact.filter(
     (pick) => pick.overallPick <= 100 && pick.status === "Open",
@@ -3022,7 +3361,11 @@ function DraftImpactPage() {
       { accessorKey: "round", header: "Round" },
       { accessorKey: "pickInRound", header: "Pick In Round" },
       { accessorKey: "overallPick", header: "Overall" },
-      { accessorKey: "team", header: "Team" },
+      {
+        accessorKey: "team",
+        header: "Team",
+        cell: ({ getValue }) => <TeamNameMark name={getValue<string>()} user={currentUser} />,
+      },
       {
         accessorKey: "status",
         header: "Status",
@@ -3050,7 +3393,7 @@ function DraftImpactPage() {
         },
       },
     ],
-    [],
+    [currentUser],
   );
 
   return (
@@ -3064,7 +3407,7 @@ function DraftImpactPage() {
           <MetricStrip label="Forfeited" value={forfeitedCount.toString()} />
           <MetricStrip label="Open Top-100" value={openTop100.toString()} />
         </div>
-        <DraftBoardPreview picks={data.draftImpact} />
+        <DraftBoardPreview currentUser={currentUser} picks={data.draftImpact} />
         <DataTable
           columns={columns}
           data={data.draftImpact}
@@ -3077,18 +3420,15 @@ function DraftImpactPage() {
   );
 }
 
-function DraftBoardPreview({ picks }: { picks: DraftImpactPick[] }) {
+function DraftBoardPreview({
+  currentUser,
+  picks,
+}: {
+  currentUser: AuthUser | null;
+  picks: DraftImpactPick[];
+}) {
   const rounds = React.useMemo(() => {
-    const availableRounds = Array.from(new Set(picks.map((pick) => pick.round))).sort((a, b) => a - b);
-    const latestForfeitedRound = picks
-      .filter((pick) => pick.status === "Forfeited")
-      .reduce((latest, pick) => Math.max(latest, pick.round), 0);
-
-    if (latestForfeitedRound === 0) {
-      return availableRounds.slice(0, Math.min(8, availableRounds.length));
-    }
-
-    return availableRounds.filter((round) => round <= latestForfeitedRound);
+    return Array.from(new Set(picks.map((pick) => pick.round))).sort((a, b) => a - b);
   }, [picks]);
   const picksByRound = new Map<number, DraftImpactPick[]>();
   for (const round of rounds) {
@@ -3119,6 +3459,8 @@ function DraftBoardPreview({ picks }: { picks: DraftImpactPick[] }) {
                     pick.status === "Forfeited"
                       ? "border-rose-200 bg-rose-50 text-rose-950"
                       : "border-zinc-200 bg-zinc-50 text-zinc-800",
+                    isCurrentUserTeam({ name: pick.team, user: currentUser }) &&
+                      "border-emerald-300 bg-emerald-50 text-emerald-950 ring-1 ring-emerald-200",
                   )}
                   key={pick.overallPick}
                   title={
@@ -3242,9 +3584,20 @@ function KeeperRecommendationsTable({
   showOverrides?: boolean;
   teamCount?: number;
 }) {
+  const { currentUser } = useDashboard();
   const columns = React.useMemo<ColumnDef<KeeperRecommendation>[]>(
     () => [
-      { accessorKey: "team", header: "Team" },
+      {
+        accessorKey: "team",
+        header: "Team",
+        cell: ({ row }) => (
+          <TeamNameMark
+            name={row.original.team}
+            teamId={row.original.teamId}
+            user={currentUser}
+          />
+        ),
+      },
       { accessorKey: "scenario", header: "Scenario" },
       { accessorKey: "player", header: "Player" },
       {
@@ -3257,7 +3610,11 @@ function KeeperRecommendationsTable({
         header: "Cost Pick",
         cell: ({ row }) => formatKeeperCost(row.original, teamCount),
       },
-      { accessorKey: "adpPick", header: "ADP" },
+      {
+        accessorKey: "adpPick",
+        header: "ADP",
+        cell: ({ row }) => formatRecommendationAdp(row.original, teamCount),
+      },
       {
         accessorKey: "keeperValue",
         header: "Value",
@@ -3287,7 +3644,7 @@ function KeeperRecommendationsTable({
       },
       { accessorKey: "reason", header: "Reason" },
     ],
-    [onOverride, teamCount],
+    [currentUser, onOverride, teamCount],
   );
 
   const visibleColumns = compact
@@ -3336,6 +3693,25 @@ function formatKeeperCost(recommendation: KeeperRecommendation, teamCount?: numb
   const derivedRound =
     teamCount && teamCount > 0 ? Math.ceil(costPick / teamCount) : recommendation.keeperCostRound;
   return derivedRound ? `${costPick} (R${derivedRound})` : String(costPick);
+}
+
+function formatRecommendationAdp(recommendation: KeeperRecommendation, teamCount?: number): string {
+  const draftSharksAdp = recommendation.adpSourceNote?.match(/DraftSharks Superflex ADP ([0-9]+(?:\.[0-9]+)?)/)?.[1];
+  if (draftSharksAdp) {
+    return draftSharksAdp;
+  }
+
+  if (!recommendation.adpPick) {
+    return "";
+  }
+
+  if (teamCount && teamCount > 0 && Number.isInteger(recommendation.adpPick)) {
+    const round = Math.floor((recommendation.adpPick - 1) / teamCount) + 1;
+    const pick = ((recommendation.adpPick - 1) % teamCount) + 1;
+    return `${round}.${String(pick).padStart(2, "0")}`;
+  }
+
+  return String(recommendation.adpPick);
 }
 
 function ManualOverrideControls({
@@ -3662,21 +4038,34 @@ function DashboardNewsList({ items }: { items: NewsHeadline[] }) {
 }
 
 function DashboardTeamSnapshotCard({
+  currentUser,
   outlook,
   review,
   team,
 }: {
+  currentUser: AuthUser | null;
   outlook: Outlook | undefined;
   review?: string;
   team: Team;
 }) {
   const displayedKeeperCount = outlook?.recommendedKeepers.length ?? team.keepers;
+  const isCurrentTeam = isCurrentUserTeam({ name: team.name, teamId: team.id, user: currentUser });
 
   return (
-    <div className="rounded-md border border-zinc-200 bg-white p-4">
+    <div
+      className={cn(
+        "rounded-md border border-zinc-200 bg-white p-4",
+        isCurrentTeam && "border-emerald-300 bg-emerald-50/40 ring-1 ring-emerald-100",
+      )}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-zinc-950">{team.name}</p>
+          <TeamNameMark
+            className="text-sm font-semibold text-zinc-950"
+            name={team.name}
+            teamId={team.id}
+            user={currentUser}
+          />
           <p className="text-xs text-zinc-500">{team.owner || "Owner not assigned"}</p>
         </div>
         <Badge variant={review ? "warning" : "success"}>
@@ -3815,19 +4204,29 @@ function ToggleRow({
 }
 
 function OutlookCard({
+  currentUser,
   disabled,
   onExport,
   outlook,
 }: {
+  currentUser: AuthUser | null;
   disabled?: boolean;
   onExport?: () => void;
   outlook: Outlook;
 }) {
+  const isCurrentTeam = isCurrentUserTeam({
+    name: outlook.team,
+    teamId: outlook.teamId,
+    user: currentUser,
+  });
+
   return (
-    <Card>
+    <Card className={cn(isCurrentTeam && "border-emerald-300 bg-emerald-50/40 ring-1 ring-emerald-100")}>
       <CardHeader>
         <div className="flex items-center justify-between gap-3">
-          <CardTitle className="truncate">{outlook.team}</CardTitle>
+          <CardTitle className="min-w-0">
+            <TeamNameMark name={outlook.team} teamId={outlook.teamId} user={currentUser} />
+          </CardTitle>
           <div className="flex items-center gap-2">
             {outlook.scenario ? <Badge>{outlook.scenario}</Badge> : null}
             <Badge variant="info">{outlook.stance}</Badge>
@@ -3861,6 +4260,55 @@ function OutlookCard({
       </CardContent>
     </Card>
   );
+}
+
+function TeamNameMark({
+  className,
+  name,
+  teamId,
+  user,
+}: {
+  className?: string;
+  name: string;
+  teamId?: string | null;
+  user: AuthUser | null;
+}) {
+  const isCurrentTeam = isCurrentUserTeam({ name, teamId, user });
+
+  return (
+    <span
+      className={cn(
+        "inline-flex min-w-0 max-w-full items-center gap-2 align-middle",
+        isCurrentTeam && "rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-emerald-950",
+        className,
+      )}
+    >
+      <span className="truncate">{name}</span>
+      {isCurrentTeam ? (
+        <Badge className="shrink-0" variant="success">
+          Your team
+        </Badge>
+      ) : null}
+    </span>
+  );
+}
+
+function isCurrentUserTeam({
+  name,
+  teamId,
+  user,
+}: {
+  name: string;
+  teamId?: string | null;
+  user: AuthUser | null;
+}): boolean {
+  if (!user) {
+    return false;
+  }
+  if (teamId && user.teamId && teamId === user.teamId) {
+    return true;
+  }
+  return Boolean(name && user.teamName && name === user.teamName);
 }
 
 function InfoLine({ label, value }: { label: string; value: string }) {

@@ -46,6 +46,7 @@ export type KeeperRecommendation = {
   keeperCostRound: number;
   adpPick: number;
   adpRound: number;
+  adpSourceNote?: string;
   keeperValue: number;
   keeperScore: number;
   status: "Recommended" | "Eligible" | "Excluded";

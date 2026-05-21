@@ -1291,6 +1291,24 @@ def _optimizer_table(
         player.id: player
         for player in session.exec(select(Player).where(Player.id.in_(player_ids))).all()
     }
+    adp_keys = {
+        (recommendation.adp_snapshot_id, recommendation.player_id)
+        for recommendation in recommendations
+        if recommendation.adp_snapshot_id is not None
+    }
+    adp_entries = (
+        {
+            (entry.snapshot_id, entry.player_id): entry
+            for entry in session.exec(
+                select(ADPEntry).where(
+                    ADPEntry.snapshot_id.in_({snapshot_id for snapshot_id, _ in adp_keys}),
+                    ADPEntry.player_id.in_({player_id for _, player_id in adp_keys}),
+                )
+            ).all()
+        }
+        if adp_keys
+        else {}
+    )
     league_ids = {recommendation.league_id for recommendation in recommendations}
     user_id = recommendations[0].user_id if recommendations else None
     overrides = (
@@ -1312,6 +1330,7 @@ def _optimizer_table(
         team = teams.get(recommendation.team_id)
         player = players.get(recommendation.player_id)
         override = overrides.get((recommendation.team_id, recommendation.player_id))
+        adp_entry = adp_entries.get((recommendation.adp_snapshot_id, recommendation.player_id))
         rows.append(
             {
                 "id": str(recommendation.id),
@@ -1333,6 +1352,7 @@ def _optimizer_table(
                 "keeper_cost_round": recommendation.keeper_cost_round,
                 "adp_pick": recommendation.adp_pick,
                 "adp_round": recommendation.adp_round,
+                "adp_source_note": adp_entry.source_note if adp_entry else None,
                 "keeper_value": recommendation.keeper_value,
                 "keeper_score": recommendation.keeper_score,
                 "is_eligible": recommendation.is_eligible,

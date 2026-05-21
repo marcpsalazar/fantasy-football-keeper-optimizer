@@ -23,6 +23,7 @@ class CompositeADPError(Exception):
 
 
 PUBLIC_DRAFTSHARKS_ROW_LIMIT = 26
+MAX_ROUND_PICK_ROUND = 30
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,7 @@ def build_composite_adp_template_rows(
         for player, entry in current_entries
     }
 
-    source_draftsharks = _fetch_draftsharks_superflex_rows(settings)
+    source_draftsharks = _fetch_draftsharks_superflex_rows(settings, team_count)
     sleeper_players = _fetch_sleeper_players(settings)
 
     if not source_draftsharks.rows:
@@ -332,9 +333,9 @@ def _export_adp_pick(candidate: CompositeCandidate) -> float | None:
     return candidate.composite_adp
 
 
-def _fetch_draftsharks_superflex_rows(settings: Settings) -> ProviderFetchResult:
+def _fetch_draftsharks_superflex_rows(settings: Settings, team_count: int) -> ProviderFetchResult:
     request_url = settings.draftsharks_superflex_adp_url
-    browser_result = _fetch_draftsharks_browser_rows(settings)
+    browser_result = _fetch_draftsharks_browser_rows(settings, team_count)
     if browser_result.rows:
         return browser_result
 
@@ -345,7 +346,7 @@ def _fetch_draftsharks_superflex_rows(settings: Settings) -> ProviderFetchResult
             accept_header="text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         )
         html_text = payload.decode("utf-8")
-        rows = _parse_draftsharks_superflex_rows(html_text)
+        rows = _parse_draftsharks_superflex_rows(html_text, team_count)
     except urllib.error.HTTPError as exc:
         return ProviderFetchResult(rows={}, error=f"DraftSharks HTTP {exc.code}")
     except (urllib.error.URLError, OSError):
@@ -373,7 +374,7 @@ def _fetch_draftsharks_superflex_rows(settings: Settings) -> ProviderFetchResult
     return ProviderFetchResult(rows=rows)
 
 
-def _fetch_draftsharks_browser_rows(settings: Settings) -> ProviderFetchResult:
+def _fetch_draftsharks_browser_rows(settings: Settings, team_count: int) -> ProviderFetchResult:
     script_path = _repo_root() / "scripts" / "draftsharks_scrape.mjs"
     if not script_path.exists():
         return ProviderFetchResult(rows={}, error="DraftSharks browser scraper script is missing")
@@ -402,7 +403,7 @@ def _fetch_draftsharks_browser_rows(settings: Settings) -> ProviderFetchResult:
         detail = stderr.splitlines()[-1] if stderr else "invalid scraper JSON"
         return ProviderFetchResult(rows={}, error=f"DraftSharks browser scrape failed: {detail}")
 
-    rows = _parse_draftsharks_browser_payload(payload)
+    rows = _parse_draftsharks_browser_payload(payload, team_count)
     if completed.returncode != 0:
         error = _string(payload.get("error")) if isinstance(payload, dict) else ""
         return ProviderFetchResult(
@@ -420,7 +421,10 @@ def _fetch_draftsharks_browser_rows(settings: Settings) -> ProviderFetchResult:
     return ProviderFetchResult(rows=rows)
 
 
-def _parse_draftsharks_browser_payload(payload: object) -> dict[tuple[str, str], ProviderRow]:
+def _parse_draftsharks_browser_payload(
+    payload: object,
+    team_count: int,
+) -> dict[tuple[str, str], ProviderRow]:
     if not isinstance(payload, dict):
         return {}
     payload_rows = payload.get("rows")
@@ -434,7 +438,11 @@ def _parse_draftsharks_browser_payload(payload: object) -> dict[tuple[str, str],
         player = _string(row.get("player"))
         position = _string(row.get("position")).upper()
         nfl_team = _string(row.get("nfl_team")).upper() or None
-        adp_pick = _coerce_float(row.get("adp_pick"))
+        adp_pick = _draftsharks_overall_pick(
+            row.get("adp_pick"),
+            team_count,
+            rank=row.get("rank") or row.get("overall_rank"),
+        )
         if not player or not position or adp_pick is None or adp_pick <= 0:
             continue
         position = "DST" if position == "DEF" else position
@@ -455,7 +463,10 @@ def _parse_draftsharks_browser_payload(payload: object) -> dict[tuple[str, str],
     return rows
 
 
-def _parse_draftsharks_superflex_rows(html_text: str) -> dict[tuple[str, str], ProviderRow]:
+def _parse_draftsharks_superflex_rows(
+    html_text: str,
+    team_count: int,
+) -> dict[tuple[str, str], ProviderRow]:
     rows: dict[tuple[str, str], ProviderRow] = {}
     row_pattern = re.compile(
         r'<tr class="player-row">.*?'
@@ -475,7 +486,12 @@ def _parse_draftsharks_superflex_rows(html_text: str) -> dict[tuple[str, str], P
         rows[_player_key(player, position)] = ProviderRow(
             player=player,
             position=position,
-            adp_pick=float(match.group("adp")),
+            adp_pick=_draftsharks_overall_pick(
+                match.group("adp"),
+                team_count,
+                rank=match.group("rank"),
+            )
+            or float(match.group("rank")),
             nfl_team=nfl_team,
         )
     return rows
@@ -640,6 +656,46 @@ def _parse_numeric_cell(value: str) -> float | None:
         return float(text)
     except ValueError:
         return None
+
+
+def _draftsharks_overall_pick(
+    value: object,
+    team_count: int,
+    *,
+    rank: object | None = None,
+) -> float | None:
+    rank_text = str(rank).strip() if rank is not None else ""
+    if rank_text.isdigit():
+        parsed_rank = int(rank_text)
+        if parsed_rank > 0:
+            return float(parsed_rank)
+
+    return _round_pick_to_overall(value, team_count) or _coerce_float(value)
+
+
+def _round_pick_to_overall(value: object, team_count: int) -> float | None:
+    if team_count <= 0:
+        return None
+
+    text = str(value).strip() if value is not None else ""
+    if not text or "." not in text:
+        return None
+
+    round_text, pick_text = text.split(".", 1)
+    if not round_text.isdigit() or not pick_text.isdigit() or len(pick_text) > 2:
+        return None
+
+    round_number = int(round_text)
+    pick_in_round = int(pick_text) if len(pick_text) == 2 else int(pick_text) * 10
+    if (
+        round_number <= 0
+        or round_number > MAX_ROUND_PICK_ROUND
+        or pick_in_round <= 0
+        or pick_in_round > team_count
+    ):
+        return None
+
+    return float((round_number - 1) * team_count + pick_in_round)
 
 
 def _fetch_sleeper_players(settings: Settings) -> dict[tuple[str, str], dict[str, str]]:

@@ -4,6 +4,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Keeper Optimizer Dashboard",
   description: "Fantasy football keeper optimizer dashboard",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({

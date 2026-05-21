@@ -12,6 +12,8 @@ from sqlmodel import Session, select
 
 from app.models import ADPEntry, ADPSnapshot, DraftPick, FinalRosterEntry, League, Player, Team
 
+MAX_ROUND_PICK_ROUND = 30
+
 
 class CSVImportError(ValueError):
     """Raised when an import CSV is missing required data."""
@@ -152,8 +154,9 @@ def import_adp_csv(session: Session, league_id: uuid.UUID, csv_text: str) -> Imp
         snapshot_name = _first(row, "snapshot_name", "name") or f"{source} {snapshot_date}"
         player_name = _required(row, "player")
         position = _position(_required(row, "position"))
-        adp_pick = _float(_required(row, "adp_pick", "adp", "pick"))
         team_count = _team_count(session, league)
+        raw_adp_pick = _required(row, "adp_pick", "adp", "pick")
+        adp_pick = _normalize_adp_pick(raw_adp_pick, team_count)
         adp_round = _float(_first(row, "adp_round", "round"), float(_round_for_pick(adp_pick, team_count)))
 
         snapshot = _get_or_create_adp_snapshot(
@@ -413,6 +416,36 @@ def _optional_float(value: str | int | float | None) -> float | None:
         return float(value)
     except ValueError:
         return None
+
+
+def _normalize_adp_pick(value: str | int | float, team_count: int) -> float:
+    round_pick = _round_pick_to_overall(value, team_count)
+    return round_pick if round_pick is not None else _float(value)
+
+
+def _round_pick_to_overall(value: str | int | float, team_count: int) -> float | None:
+    if team_count <= 0:
+        return None
+
+    text = str(value).strip()
+    if "." not in text:
+        return None
+
+    round_text, pick_text = text.split(".", 1)
+    if not round_text.isdigit() or not pick_text.isdigit() or len(pick_text) > 2:
+        return None
+
+    round_number = int(round_text)
+    pick_in_round = int(pick_text) if len(pick_text) == 2 else int(pick_text) * 10
+    if (
+        round_number <= 0
+        or round_number > MAX_ROUND_PICK_ROUND
+        or pick_in_round <= 0
+        or pick_in_round > team_count
+    ):
+        return None
+
+    return float((round_number - 1) * team_count + pick_in_round)
 
 
 def _date(value: str | None, default: date) -> date:

@@ -11,6 +11,8 @@ from sqlmodel import Session, select
 
 from app.models import League, Team
 
+MAX_ROUND_PICK_ROUND = 30
+
 
 Severity = Literal["error", "warning"]
 
@@ -205,7 +207,8 @@ def preview_adp_csv(
     league_id: uuid.UUID,
     csv_text: str,
 ) -> CSVPreviewResult:
-    _require_league(session, league_id)
+    league = _require_league(session, league_id)
+    team_count = _team_count(session, league)
     parsed = _parse_csv(csv_text)
     issues = _header_issues(parsed.fieldnames, {"player": ("player",), "position": ("position",), "adp_pick": ("adp_pick", "adp", "pick")})
     rows: list[dict[str, Any]] = []
@@ -216,6 +219,8 @@ def preview_adp_csv(
         player_name = _first(raw, "player")
         position = _position(_first(raw, "position"))
         adp_pick, adp_issue = _positive_float(raw, row_number, "adp_pick", "adp_pick", "adp", "pick")
+        if adp_pick is not None:
+            adp_pick = _normalize_adp_pick(_first(raw, "adp_pick", "adp", "pick"), team_count)
         adp_round, round_issue = _optional_positive_float(raw, row_number, "adp_round", "adp_round", "round")
         source = _first(raw, "source", "source_name") or "Unknown ADP"
         snapshot_date = _first(raw, "snapshot_date", "date") or date.today().isoformat()
@@ -415,6 +420,37 @@ def _optional_positive_float(
     *aliases: str,
 ) -> tuple[float | None, CSVPreviewIssue | None]:
     return _positive_float(row, row_number, field, *aliases) if _first(row, *aliases) else (None, None)
+
+
+def _normalize_adp_pick(value: str, team_count: int) -> float:
+    round_pick = _round_pick_to_overall(value, team_count)
+    return round_pick if round_pick is not None else float(value)
+
+
+def _round_pick_to_overall(value: str, team_count: int) -> float | None:
+    if team_count <= 0 or "." not in value:
+        return None
+
+    round_text, pick_text = value.strip().split(".", 1)
+    if not round_text.isdigit() or not pick_text.isdigit() or len(pick_text) > 2:
+        return None
+
+    round_number = int(round_text)
+    pick_in_round = int(pick_text) if len(pick_text) == 2 else int(pick_text) * 10
+    if (
+        round_number <= 0
+        or round_number > MAX_ROUND_PICK_ROUND
+        or pick_in_round <= 0
+        or pick_in_round > team_count
+    ):
+        return None
+
+    return float((round_number - 1) * team_count + pick_in_round)
+
+
+def _team_count(session: Session, league: League) -> int:
+    teams = session.exec(select(Team).where(Team.league_id == league.id)).all()
+    return len(teams) or 12
 
 
 def _first(row: dict[str, str], *names: str) -> str:

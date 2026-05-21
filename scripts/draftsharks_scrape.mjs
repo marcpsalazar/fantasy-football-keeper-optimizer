@@ -66,6 +66,7 @@ function normalizeRow(row) {
   const position = String(row.position || "").replace(/^DEF$/, "DST").trim().toUpperCase();
   const nflTeam = String(row.nfl_team || "").trim().toUpperCase();
   const adp = Number(row.adp_pick);
+  const rank = finiteNumber(row.rank);
   if (!player || !position || !Number.isFinite(adp) || adp <= 0) {
     return null;
   }
@@ -74,6 +75,7 @@ function normalizeRow(row) {
     position,
     nfl_team: nflTeam || null,
     adp_pick: adp,
+    rank,
     sos: finiteNumber(row.sos),
     injury: finiteNumber(row.injury),
     risk: finiteNumber(row.risk),
@@ -100,6 +102,19 @@ async function extractVisibleRows(page) {
       const adpCell = row.querySelector("td.adp[data-value], [data-value].adp, td.adp");
       const raw = adpCell?.getAttribute("data-value") || adpCell?.textContent || "";
       const value = Number.parseFloat(clean(raw));
+      return Number.isFinite(value) ? value : null;
+    }
+
+    function parseRank(row) {
+      const rankNode = row.querySelector(".rank-index span, td.rank span, td.rank");
+      const raw =
+        row.getAttribute("data-rank") ||
+        row.getAttribute("data-overall-rank") ||
+        rankNode?.textContent ||
+        "";
+      const text = clean(raw);
+      if (!/^\d+$/.test(text)) return null;
+      const value = Number.parseInt(text, 10);
       return Number.isFinite(value) ? value : null;
     }
 
@@ -150,6 +165,7 @@ async function extractVisibleRows(page) {
         position: clean(parsePosition(row)).toUpperCase(),
         nfl_team: clean(parseTeam(row)).toUpperCase(),
         adp_pick: parseAdp(row),
+        rank: parseRank(row),
         sos: parseMetric(row, ["td.sos", "[data-stat='sos']", "[data-column='sos']"]),
         injury: parseMetric(row, ["td.injury", "[data-stat='injury']", "[data-column='injury']"]),
         risk: parseMetric(row, ["td.risk", "[data-stat='risk']", "[data-column='risk']"]),

@@ -49,6 +49,8 @@ class UserRead(BaseModel):
     role: str
     is_active: bool
     avatar_data_url: str | None = None
+    team_id: str | None = None
+    team_name: str | None = None
 
 
 class UserUpdateRequest(BaseModel):
@@ -63,19 +65,31 @@ class PasswordResetRequest(BaseModel):
     password: str
 
 
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class ProfileUpdateRequest(BaseModel):
     avatar_data_url: str | None = None
 
 
-def user_payload(user: User | None) -> dict[str, Any] | None:
+def user_payload(user: User | None, session: Session | None = None) -> dict[str, Any] | None:
     if user is None:
         return None
+    assigned_team = None
+    if session is not None:
+        assigned_team = session.exec(
+            select(Team).where(Team.user_id == user.id).order_by(Team.name)
+        ).first()
     return {
         "id": str(user.id),
         "email": user.email,
         "role": user.role,
         "is_active": user.is_active,
         "avatar_data_url": user.avatar_data_url,
+        "team_id": str(assigned_team.id) if assigned_team else None,
+        "team_name": assigned_team.name if assigned_team else None,
     }
 
 
@@ -84,7 +98,7 @@ def admin_user_payload(session: Session, user: User) -> dict[str, Any]:
         select(Team).where(Team.user_id == user.id).order_by(Team.name)
     ).first()
     return {
-        **(user_payload(user) or {}),
+        **(user_payload(user, session) or {}),
         "password": user.password,
         "team_id": str(assigned_team.id) if assigned_team else None,
         "team_name": assigned_team.name if assigned_team else None,
@@ -103,7 +117,7 @@ def login(
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive")
     set_session_cookie(response, user)
-    return {"user": user_payload(user)}
+    return {"user": user_payload(user, session)}
 
 
 @router.post("/auth/logout")
@@ -113,8 +127,11 @@ def logout(response: Response) -> dict[str, str]:
 
 
 @router.get("/auth/me")
-def me(user: User | None = Depends(require_current_user)) -> dict[str, Any]:
-    return {"user": user_payload(user)}
+def me(
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    return {"user": user_payload(user, session)}
 
 
 @router.patch("/auth/profile")
@@ -132,7 +149,26 @@ def update_profile(
     session.add(user)
     session.commit()
     session.refresh(user)
-    return {"user": user_payload(user)}
+    return {"user": user_payload(user, session)}
+
+
+@router.post("/auth/password")
+def change_password(
+    payload: PasswordChangeRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, str]:
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+    if not payload.new_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password is required")
+    user.password_hash = hash_password(payload.new_password)
+    user.password = payload.new_password
+    session.add(user)
+    session.commit()
+    return {"status": "ok"}
 
 
 @router.post("/admin/users", status_code=status.HTTP_201_CREATED)

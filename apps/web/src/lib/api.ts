@@ -39,6 +39,8 @@ export type AuthUser = {
   role: "admin" | "user";
   isActive: boolean;
   avatarDataUrl: string | null;
+  teamId: string | null;
+  teamName: string | null;
 };
 
 export type AdminUser = AuthUser & {
@@ -190,7 +192,12 @@ export const mockWorkspaceData: WorkspaceData = {
   keeperRecommendations: mockKeeperRecommendations,
   scenarioComparisons: mockScenarioComparisons,
   outlooks: mockOutlooks,
-  draftImpact: buildDraftImpact(mockTeams, mockKeeperRecommendations, "snake", 12),
+  draftImpact: buildDraftImpact(
+    mockTeams,
+    mockKeeperRecommendations,
+    "snake",
+    countDraftRounds(mockDraftResults, mockKeeperRecommendations),
+  ),
   leagueNews: [
     {
       headline: "Fantasy managers are debating early-round quarterback builds in superflex drafts",
@@ -245,6 +252,7 @@ export async function loadWorkspaceData(): Promise<WorkspaceData | null> {
       resultsTable = initialResultsTable;
     }
   }
+  const draftResults = draftTable.rows.map(mapDraftPick);
   const recommendations = dedupeRecommendations(resultsTable.rows.map(mapRecommendation));
   const snapshotRow = snapshotsTable.rows[0];
   const activeSnapshot = snapshotRow ? mapSnapshot(snapshotRow) : null;
@@ -254,19 +262,20 @@ export async function loadWorkspaceData(): Promise<WorkspaceData | null> {
 
   const scenarioComparisons = await loadScenarios(league.id);
   const hydratedTeams = hydrateTeams(teams, recommendations, league.draftType);
+  const draftRoundCount = countDraftRounds(draftResults, recommendations);
 
   return {
     source: "api",
     league,
     activeSnapshot,
     teams: hydratedTeams,
-    draftResults: draftTable.rows.map(mapDraftPick),
+    draftResults,
     finalRosters: rosterTable.rows.map(mapFinalRosterEntry),
     adpEntries,
     keeperRecommendations: recommendations,
     scenarioComparisons,
     outlooks: buildOutlooks(hydratedTeams, recommendations),
-    draftImpact: buildDraftImpact(hydratedTeams, recommendations, league.draftType, 10),
+    draftImpact: buildDraftImpact(hydratedTeams, recommendations, league.draftType, draftRoundCount),
     leagueNews: newsTable.rows.map(mapNewsHeadline),
     settings: mapSettings(settingsRow),
   };
@@ -301,6 +310,14 @@ export async function updateProfileAvatar(avatarDataUrl: string | null): Promise
     method: "PATCH",
   });
   return mapAuthUser(payload.user);
+}
+
+export async function changeOwnPassword(currentPassword: string, newPassword: string): Promise<void> {
+  await fetchJson("/api/auth/password", {
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
 }
 
 export async function listAdminUsers(): Promise<AdminUser[]> {
@@ -579,6 +596,8 @@ function mapAuthUser(row: ApiRow): AuthUser {
     role: text(row.role) === "admin" ? "admin" : "user",
     isActive: Boolean(row.is_active),
     avatarDataUrl: text(row.avatar_data_url) || null,
+    teamId: text(row.team_id) || null,
+    teamName: text(row.team_name) || null,
   };
 }
 
@@ -679,6 +698,7 @@ function mapRecommendation(row: ApiRow): KeeperRecommendation {
     keeperCostRound: number(row.keeper_cost_round),
     adpPick: number(row.adp_pick),
     adpRound: number(row.adp_round),
+    adpSourceNote: text(row.adp_source_note),
     keeperValue: number(row.keeper_value),
     keeperScore: number(row.keeper_score),
     status: isRecommended ? "Recommended" : isEligible ? "Eligible" : "Excluded",
@@ -798,7 +818,8 @@ export function hydrateTeams(
   recommendations: KeeperRecommendation[],
   draftType: string,
 ): Team[] {
-  const impact = buildDraftImpact(teams, recommendations, draftType, 10);
+  const top100Rounds = Math.ceil(100 / Math.max(teams.length, 1));
+  const impact = buildDraftImpact(teams, recommendations, draftType, top100Rounds);
   return teams.map((team) => {
     const teamRecommendations = recommendations.filter(
       (recommendation) => recommendation.teamId === team.id || recommendation.team === team.name,
@@ -816,6 +837,25 @@ export function hydrateTeams(
       ).length,
     };
   });
+}
+
+export function countDraftRounds(
+  draftResults: DraftPick[],
+  recommendations: KeeperRecommendation[],
+): number {
+  const maxDraftRound = draftResults.reduce(
+    (maximum, pick) => Math.max(maximum, pick.round),
+    0,
+  );
+  if (maxDraftRound > 0) {
+    return maxDraftRound;
+  }
+
+  const maxKeeperRound = recommendations.reduce(
+    (maximum, recommendation) => Math.max(maximum, recommendation.keeperCostRound),
+    0,
+  );
+  return Math.max(maxKeeperRound, 1);
 }
 
 export function buildActiveKeeperRecommendations(

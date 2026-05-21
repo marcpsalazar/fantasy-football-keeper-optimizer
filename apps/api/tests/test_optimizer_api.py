@@ -10,8 +10,10 @@ from sqlmodel import SQLModel, Session, create_engine
 import app.models  # noqa: F401
 from app.core.config import Settings
 from app.db.session import get_session
-from app.main import create_app
-from app.services.composite_adp import ProviderFetchResult
+from app.main import create_app, ensure_initial_admin_user
+from app.models import User
+from app.services.auth import hash_password, verify_password
+from app.services.composite_adp import ProviderFetchResult, _parse_draftsharks_browser_payload
 import app.services.news_feed as news_feed
 
 
@@ -40,7 +42,7 @@ def client() -> Generator[TestClient, None, None]:
 def _disable_draftsharks_browser_scraper(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "app.services.composite_adp._fetch_draftsharks_browser_rows",
-        lambda settings: ProviderFetchResult(rows={}, error="browser scraper disabled in test"),
+        lambda settings, team_count: ProviderFetchResult(rows={}, error="browser scraper disabled in test"),
     )
 
 
@@ -82,6 +84,57 @@ def test_user_can_update_and_clear_profile_avatar(client: TestClient) -> None:
     clear_response = client.patch("/api/auth/profile", json={"avatar_data_url": None})
     assert clear_response.status_code == 200
     assert clear_response.json()["user"]["avatar_data_url"] is None
+
+
+def test_user_can_change_own_password_with_current_password(client: TestClient) -> None:
+    _create_admin_and_login(client)
+
+    wrong_current_response = client.post(
+        "/api/auth/password",
+        json={"current_password": "wrong", "new_password": "new-secret"},
+    )
+    assert wrong_current_response.status_code == 400
+
+    update_response = client.post(
+        "/api/auth/password",
+        json={"current_password": "secret", "new_password": "new-secret"},
+    )
+    assert update_response.status_code == 200
+
+    client.post("/api/auth/logout")
+    old_login_response = client.post(
+        "/api/auth/login",
+        json={"email": "admin@example.com", "password": "secret"},
+    )
+    assert old_login_response.status_code == 401
+    new_login_response = client.post(
+        "/api/auth/login",
+        json={"email": "admin@example.com", "password": "new-secret"},
+    )
+    assert new_login_response.status_code == 200
+
+
+def test_initial_admin_seed_repairs_matching_display_password_hash(client: TestClient) -> None:
+    session_generator = client.app.dependency_overrides[get_session]()
+    session = next(session_generator)
+    try:
+        user = User(
+            email="admin@example.com",
+            password_hash=hash_password("old-secret"),
+            password="change-me",
+            role="admin",
+            is_active=True,
+        )
+        session.add(user)
+        session.commit()
+
+        ensure_initial_admin_user(session, "admin@example.com", "change-me")
+        session.refresh(user)
+
+        assert user.password == "change-me"
+        assert verify_password("change-me", user.password_hash)
+    finally:
+        session_generator.close()
 
 
 def test_regular_user_is_blocked_from_admin_endpoints(client: TestClient) -> None:
@@ -157,6 +210,12 @@ def test_team_management_is_admin_only_and_can_assign_users(client: TestClient) 
         json={"email": "owner@example.com", "password": "secret"},
     )
     assert login_response.status_code == 200
+    assert login_response.json()["user"]["team_id"] == team_id
+    assert login_response.json()["user"]["team_name"] == "Managed Team"
+    me_response = client.get("/api/auth/me")
+    assert me_response.status_code == 200
+    assert me_response.json()["user"]["team_id"] == team_id
+    assert me_response.json()["user"]["team_name"] == "Managed Team"
     blocked_update = client.patch(f"/api/teams/{team_id}", json={"user_id": None})
     blocked_delete = client.delete(f"/api/teams/{team_id}")
     assert blocked_update.status_code == 403
@@ -173,6 +232,75 @@ def test_team_management_is_admin_only_and_can_assign_users(client: TestClient) 
     assert unassign_response.json()["user_id"] is None
     delete_response = client.delete(f"/api/teams/{team_id}")
     assert delete_response.status_code == 204
+
+
+def test_adp_import_converts_round_pick_notation_to_overall_pick(client: TestClient) -> None:
+    _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={"name": "Round Pick ADP League", "season_year": 2026},
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    for draft_slot in range(1, 13):
+        team_response = client.post(
+            f"/api/leagues/{league_id}/teams",
+            json={"name": f"Round Pick Team {draft_slot}", "draft_slot": draft_slot},
+        )
+        assert team_response.status_code == 201
+
+    csv_text = (
+        "player,position,adp_pick,source,snapshot_date,format\n"
+        "Late RB,RB,21.09,Endpoint ADP,2026-05-01,superflex\n"
+        "Deep QB,QB,447.06,Endpoint ADP,2026-05-01,superflex\n"
+    )
+    preview_response = client.post(
+        f"/api/leagues/{league_id}/adp/preview",
+        content=csv_text,
+        headers={"content-type": "text/csv"},
+    )
+    assert preview_response.status_code == 200
+    assert preview_response.json()["rows"][0]["adp_pick"] == 249
+    assert preview_response.json()["rows"][1]["adp_pick"] == 447.06
+
+    import_response = client.post(
+        f"/api/leagues/{league_id}/adp/import",
+        content=csv_text,
+        headers={"content-type": "text/csv"},
+    )
+    assert import_response.status_code == 200
+    snapshot_response = client.get(f"/api/adp-snapshots/{import_response.json()['rows'][0]['snapshot_id']}")
+    assert snapshot_response.status_code == 200
+    assert snapshot_response.json()["rows"][0]["adp_pick"] == 249
+    assert snapshot_response.json()["rows"][0]["adp_round"] == 21
+    assert snapshot_response.json()["rows"][1]["adp_pick"] == 447.06
+    assert snapshot_response.json()["rows"][1]["adp_round"] == 38
+
+
+def test_draftsharks_browser_payload_does_not_convert_large_decimal_adp() -> None:
+    rows = _parse_draftsharks_browser_payload(
+        {
+            "rows": [
+                {
+                    "player": "Deep QB",
+                    "position": "QB",
+                    "nfl_team": "CLE",
+                    "adp_pick": 447.06,
+                    "rank": "447.06",
+                },
+                {
+                    "player": "Late RB",
+                    "position": "RB",
+                    "nfl_team": "LAR",
+                    "adp_pick": "21.09",
+                },
+            ]
+        },
+        team_count=12,
+    )
+
+    assert rows[("deepqb", "QB")].adp_pick == 447.06
+    assert rows[("laterb", "RB")].adp_pick == 249
 
 
 def test_admin_can_manage_users_passwords_and_team_assignment(client: TestClient) -> None:
@@ -847,11 +975,12 @@ def test_adp_template_builds_composite_from_ffc_sources(
                 <tr class="player-row"><td class="rank centered"><div class="column-title rank-index"><span>2</span></div></td><td class="player-name overall"><div class="player-name-inner"><div><a class="hide-on-mobile">Elite WR</a><div><div class="team-position-logo-container"><span>CIN</span><div class="position-rank RB">WR1</div></div></div></div></div></td><td class="adp centered" data-value="1.05"></td></tr>
                 <tr class="player-row"><td class="rank centered"><div class="column-title rank-index"><span>3</span></div></td><td class="player-name overall"><div class="player-name-inner"><div><a class="hide-on-mobile">League QB</a><div><div class="team-position-logo-container"><span>BUF</span><div class="position-rank RB">QB2</div></div></div></div></div></td><td class="adp centered" data-value="2.02"></td></tr>
                 <tr class="player-row"><td class="rank centered"><div class="column-title rank-index"><span>4</span></div></td><td class="player-name overall"><div class="player-name-inner"><div><a class="hide-on-mobile">League WR</a><div><div class="team-position-logo-container"><span>PHI</span><div class="position-rank RB">WR2</div></div></div></div></div></td><td class="adp centered" data-value="3.07"></td></tr>
+                <tr class="player-row"><td class="rank centered"><div class="column-title rank-index"><span>249</span></div></td><td class="player-name overall"><div class="player-name-inner"><div><a class="hide-on-mobile">Late RB</a><div><div class="team-position-logo-container"><span>LAR</span><div class="position-rank RB">RB80</div></div></div></div></div></td><td class="adp centered" data-value="21.09"></td></tr>
                 """
             )
         if "sleeper.app" in url:
             return FakeResponse(
-                '{"1":{"full_name":"Elite QB","position":"QB","team":"BAL"},"2":{"full_name":"Elite WR","position":"WR","team":"CIN"},"3":{"full_name":"League QB","position":"QB","team":"BUF"},"4":{"full_name":"League WR","position":"WR","team":"PHI"}}'
+                '{"1":{"full_name":"Elite QB","position":"QB","team":"BAL"},"2":{"full_name":"Elite WR","position":"WR","team":"CIN"},"3":{"full_name":"League QB","position":"QB","team":"BUF"},"4":{"full_name":"League WR","position":"WR","team":"PHI"},"5":{"full_name":"Late RB","position":"RB","team":"LAR"}}'
             )
         raise AssertionError(f"Unexpected URL: {url}")
 
@@ -891,11 +1020,12 @@ def test_adp_template_builds_composite_from_ffc_sources(
 
     template_response = client.get(f"/api/leagues/{league_id}/exports/adp-template.csv")
     assert template_response.status_code == 200
-    assert "Elite QB,QB,BAL,1.01,1,Composite Superflex ADP - Composite League" in template_response.text
-    assert "Elite WR,WR,CIN,1.05,1,Composite Superflex ADP - Composite League" in template_response.text
-    assert "League QB,QB,BUF,2.02,1,Composite Superflex ADP - Composite League" in template_response.text
-    assert "League WR,WR,PHI,3.07,1,Composite Superflex ADP - Composite League" in template_response.text
-    assert "DraftSharks Superflex ADP 1.01" in template_response.text
+    assert "Elite QB,QB,BAL,1,1,Composite Superflex ADP - Composite League" in template_response.text
+    assert "Elite WR,WR,CIN,2,1,Composite Superflex ADP - Composite League" in template_response.text
+    assert "League QB,QB,BUF,3,1,Composite Superflex ADP - Composite League" in template_response.text
+    assert "League WR,WR,PHI,4,1,Composite Superflex ADP - Composite League" in template_response.text
+    assert "Late RB,RB,LAR,249,21,Composite Superflex ADP - Composite League" in template_response.text
+    assert "DraftSharks Superflex ADP 1" in template_response.text
     assert "draftsharks_superflex_adp" in template_response.text
 
 
@@ -1138,10 +1268,10 @@ def test_composite_template_falls_back_to_scraped_ffc_pages(
 
     template_response = client.get(f"/api/leagues/{league_id}/exports/adp-template.csv")
     assert template_response.status_code == 200
-    assert "Josh Allen,QB,BUF,1.01,1,Composite Superflex ADP - Scraped Composite League" in template_response.text
-    assert "Lamar Jackson,QB,BAL,1.08,1,Composite Superflex ADP - Scraped Composite League" in template_response.text
-    assert "Ja'Marr Chase,WR,CIN,1.1,1,Composite Superflex ADP - Scraped Composite League" in template_response.text
-    assert "Bijan Robinson,RB,ATL,2.04,1,Composite Superflex ADP - Scraped Composite League" in template_response.text
+    assert "Josh Allen,QB,BUF,1,1,Composite Superflex ADP - Scraped Composite League" in template_response.text
+    assert "Lamar Jackson,QB,BAL,2,1,Composite Superflex ADP - Scraped Composite League" in template_response.text
+    assert "Ja'Marr Chase,WR,CIN,3,1,Composite Superflex ADP - Scraped Composite League" in template_response.text
+    assert "Bijan Robinson,RB,ATL,4,1,Composite Superflex ADP - Scraped Composite League" in template_response.text
     assert "adp-template-" in template_response.headers["content-disposition"]
 
 

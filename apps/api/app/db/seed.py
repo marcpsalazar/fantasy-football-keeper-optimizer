@@ -26,6 +26,7 @@ from app.models import (
 
 DEFAULT_LEAGUE_NAME = "Maryland Mayhem"
 DEFAULT_FORMAT = "superflex"
+MAX_ROUND_PICK_ROUND = 30
 SUPPORTED_CSV_FILES = (
     "leagues.csv",
     "teams.csv",
@@ -321,11 +322,11 @@ def _seed_adp(
 
         position = _normalize_position(_first(row, "position"))
         player = _player_from_row(session, row, position)
-        adp_pick = _float(_first(row, "adp_pick", "adp", "pick"), None)
+        team_count = _team_count(session, league.id)
+        adp_pick = _normalize_adp_pick(_first(row, "adp_pick", "adp", "pick"), team_count)
         if player is None or adp_pick is None:
             continue
 
-        team_count = _team_count(session, league.id)
         adp_round = _float(_first(row, "adp_round", "round"), None)
         if adp_round is None:
             adp_round = float(_round_for_pick(adp_pick, team_count))
@@ -714,6 +715,39 @@ def _float(value: str | int | float | None, default: float | None) -> float | No
     if value in (None, ""):
         return default
     return float(value)
+
+
+def _normalize_adp_pick(value: str | int | float | None, team_count: int) -> float | None:
+    if value in (None, ""):
+        return None
+
+    round_pick = _round_pick_to_overall(value, team_count)
+    return round_pick if round_pick is not None else _float(value, None)
+
+
+def _round_pick_to_overall(value: str | int | float, team_count: int) -> float | None:
+    if team_count <= 0:
+        return None
+
+    text = str(value).strip()
+    if "." not in text:
+        return None
+
+    round_text, pick_text = text.split(".", 1)
+    if not round_text.isdigit() or not pick_text.isdigit() or len(pick_text) > 2:
+        return None
+
+    round_number = int(round_text)
+    pick_in_round = int(pick_text) if len(pick_text) == 2 else int(pick_text) * 10
+    if (
+        round_number <= 0
+        or round_number > MAX_ROUND_PICK_ROUND
+        or pick_in_round <= 0
+        or pick_in_round > team_count
+    ):
+        return None
+
+    return float((round_number - 1) * team_count + pick_in_round)
 
 
 def _bool(value: str | bool | None, default: bool) -> bool:
