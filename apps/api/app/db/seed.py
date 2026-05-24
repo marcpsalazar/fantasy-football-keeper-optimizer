@@ -154,6 +154,10 @@ def _seed_leagues(
             max_keepers=_int(_first(row, "max_keepers"), 4),
             max_keepers_per_position=_int(_first(row, "max_keepers_per_position"), 2),
             max_qb_keepers=_int(_first(row, "max_qb_keepers"), 1),
+            keeper_pick_deadline=_optional_date(_first(row, "keeper_pick_deadline", "keeper_deadline")),
+            regular_season_start_date=_optional_date(
+                _first(row, "regular_season_start_date", "nfl_regular_season_start_date")
+            ),
             roster_settings=_json_object(_first(row, "roster_settings"), {}),
             keeper_rules=_json_object(_first(row, "keeper_rules"), {}),
         )
@@ -477,6 +481,8 @@ def _get_or_create_league(
     max_keepers: int = 4,
     max_keepers_per_position: int = 2,
     max_qb_keepers: int = 1,
+    keeper_pick_deadline: date | None = None,
+    regular_season_start_date: date | None = None,
     roster_settings: dict[str, Any] | None = None,
     keeper_rules: dict[str, Any] | None = None,
 ) -> League:
@@ -493,6 +499,8 @@ def _get_or_create_league(
             max_keepers=max_keepers,
             max_keepers_per_position=max_keepers_per_position,
             max_qb_keepers=max_qb_keepers,
+            keeper_pick_deadline=keeper_pick_deadline,
+            regular_season_start_date=regular_season_start_date,
             roster_settings=roster_settings or {},
             keeper_rules=keeper_rules or {},
         )
@@ -504,6 +512,10 @@ def _get_or_create_league(
         league.max_keepers = max_keepers
         league.max_keepers_per_position = max_keepers_per_position
         league.max_qb_keepers = max_qb_keepers
+        if keeper_pick_deadline is not None:
+            league.keeper_pick_deadline = keeper_pick_deadline
+        if regular_season_start_date is not None:
+            league.regular_season_start_date = regular_season_start_date
         if roster_settings is not None:
             league.roster_settings = roster_settings
         if keeper_rules is not None:
@@ -633,6 +645,8 @@ def _league_from_row(session: Session, row: dict[str, str], default_league: Leag
         max_keepers=default_league.max_keepers,
         max_keepers_per_position=default_league.max_keepers_per_position,
         max_qb_keepers=default_league.max_qb_keepers,
+        keeper_pick_deadline=default_league.keeper_pick_deadline,
+        regular_season_start_date=default_league.regular_season_start_date,
         roster_settings=default_league.roster_settings,
         keeper_rules=default_league.keeper_rules,
     )
@@ -761,6 +775,12 @@ def _bool(value: str | bool | None, default: bool) -> bool:
 def _date(value: str | None, default: date) -> date:
     if not value:
         return default
+    return date.fromisoformat(value)
+
+
+def _optional_date(value: str | None) -> date | None:
+    if not value:
+        return None
     return date.fromisoformat(value)
 
 

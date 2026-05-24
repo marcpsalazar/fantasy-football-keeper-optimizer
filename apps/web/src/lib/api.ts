@@ -93,6 +93,13 @@ export type LeagueSummary = {
   seasonYear: number;
   scoringFormat: string;
   draftType: string;
+  keeperPickDeadline: string | null;
+  regularSeasonStartDate: string | null;
+};
+
+export type LeagueCalendarSettings = {
+  keeperPickDeadline: string;
+  regularSeasonStartDate: string;
 };
 
 export type ActiveSnapshot = {
@@ -176,6 +183,8 @@ export const mockWorkspaceData: WorkspaceData = {
     seasonYear: 2026,
     scoringFormat: "superflex",
     draftType: "snake",
+    keeperPickDeadline: null,
+    regularSeasonStartDate: "2026-09-10",
   },
   activeSnapshot: {
     id: "mock-snapshot",
@@ -393,6 +402,21 @@ export async function deleteTeam(teamId: string): Promise<void> {
       throw new Error(`API ${response.status}: ${await response.text()}`);
     }
   });
+}
+
+export async function updateLeagueCalendarSettings(
+  leagueId: string,
+  settings: LeagueCalendarSettings,
+): Promise<LeagueSummary> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}`, {
+    body: JSON.stringify({
+      keeper_pick_deadline: settings.keeperPickDeadline || null,
+      regular_season_start_date: settings.regularSeasonStartDate || null,
+    }),
+    headers: { "content-type": "application/json" },
+    method: "PATCH",
+  });
+  return mapLeague(payload);
 }
 
 export async function importCsv(
@@ -631,6 +655,8 @@ function mapLeague(row: ApiRow): LeagueSummary {
     seasonYear: number(row.season_year),
     scoringFormat: text(row.scoring_format, "superflex"),
     draftType: text(row.draft_type, "snake"),
+    keeperPickDeadline: text(row.keeper_pick_deadline) || null,
+    regularSeasonStartDate: text(row.regular_season_start_date) || null,
   };
 }
 

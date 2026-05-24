@@ -85,6 +85,7 @@ import {
   setManualOverride,
   updateProfile,
   updateAdminUser,
+  updateLeagueCalendarSettings,
   updateTeam,
   type AdminUser,
   type TeamForm,
@@ -92,6 +93,7 @@ import {
   type CsvImportKind,
   type CsvPreviewResult,
   type DraftImpactPick,
+  type LeagueCalendarSettings,
   type ManualOverrideType,
   type NewsHeadline,
   type OptimizerSettingsForm,
@@ -424,6 +426,7 @@ type DashboardContextValue = {
   refreshAdpNow: () => Promise<void>;
   runScenariosNow: () => Promise<void>;
   saveSettings: (settings: OptimizerSettingsForm) => Promise<void>;
+  saveLeagueCalendarSettings: (settings: LeagueCalendarSettings) => Promise<void>;
   downloadAdpTemplateNow: () => Promise<void>;
   importCompositeAdpNow: () => Promise<void>;
   createUserNow: (form: UserForm) => Promise<void>;
@@ -999,6 +1002,28 @@ export function DashboardApp() {
     [refreshData, requireLeagueId],
   );
 
+  const saveLeagueCalendarSettings = React.useCallback(
+    async (nextSettings: LeagueCalendarSettings) => {
+      const leagueId = requireLeagueId();
+      if (!leagueId) {
+        return;
+      }
+      setIsBusy(true);
+      try {
+        const league = await updateLeagueCalendarSettings(leagueId, nextSettings);
+        setWorkspace((current) => ({ ...current, league }));
+        setApiStatus("live");
+        setStatusMessage("League countdown dates saved.");
+      } catch (error) {
+        setApiStatus("error");
+        setStatusMessage(error instanceof Error ? error.message : "Saving league dates failed.");
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [requireLeagueId],
+  );
+
   const setManualOverrideNow = React.useCallback(
     async (
       teamId: string | undefined,
@@ -1069,6 +1094,7 @@ export function DashboardApp() {
       importCsvText,
       runOptimizerNow,
       runScenariosNow,
+      saveLeagueCalendarSettings,
       saveSettings,
       setManualOverrideNow,
       exportRecommendations,
@@ -1097,6 +1123,7 @@ export function DashboardApp() {
       updateProfileAliasNow,
       runOptimizerNow,
       runScenariosNow,
+      saveLeagueCalendarSettings,
       saveSettings,
       resetUserPasswordNow,
       selectedScenarioByTeam,
@@ -1181,6 +1208,7 @@ export function DashboardApp() {
                   <h1 className="truncate text-xl font-semibold text-zinc-950">{activeLabel}</h1>
                   <p className="mt-0.5 truncate text-xs text-zinc-500">{statusMessage}</p>
                 </div>
+                <CountdownClock league={workspaceData.league} />
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <ConnectionBadge status={apiStatus} />
@@ -1297,6 +1325,130 @@ export function DashboardApp() {
     </main>
     </DashboardContext.Provider>
   );
+}
+
+function CountdownClock({ league }: { league: WorkspaceData["league"] }) {
+  const [now, setNow] = React.useState(() => new Date());
+
+  React.useEffect(() => {
+    const timerId = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timerId);
+  }, []);
+
+  const countdown = React.useMemo(() => buildCountdownState(now, league), [league, now]);
+
+  return (
+    <div
+      className={cn(
+        "shrink-0 border-l border-zinc-200 pl-3 text-zinc-950",
+        countdown.isDeadlineDay && "text-rose-700",
+      )}
+    >
+      <p className="text-[11px] font-semibold uppercase text-current">{countdown.label}</p>
+      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums tracking-normal">
+        {countdown.value}
+      </p>
+    </div>
+  );
+}
+
+type CountdownState = {
+  isDeadlineDay: boolean;
+  label: string;
+  value: string;
+};
+
+function buildCountdownState(now: Date, league: WorkspaceData["league"]): CountdownState {
+  const today = localDateStart(now);
+  const keeperDeadline = parseLocalDate(league?.keeperPickDeadline ?? null);
+
+  if (!keeperDeadline) {
+    return {
+      isDeadlineDay: false,
+      label: "Keeper Deadline",
+      value: "Not set",
+    };
+  }
+
+  if (sameLocalDate(today, keeperDeadline)) {
+    return {
+      isDeadlineDay: true,
+      label: "Keeper Deadline",
+      value: "00:00:00:00",
+    };
+  }
+
+  if (today.getTime() < keeperDeadline.getTime()) {
+    return {
+      isDeadlineDay: false,
+      label: "Keeper Deadline",
+      value: formatCountdown(keeperDeadline.getTime() - now.getTime()),
+    };
+  }
+
+  const regularSeasonStart =
+    parseLocalDate(league?.regularSeasonStartDate ?? null) ??
+    parseLocalDate(defaultRegularSeasonStartDate(league?.seasonYear));
+  if (!regularSeasonStart) {
+    return {
+      isDeadlineDay: false,
+      label: "NFL Kickoff",
+      value: "Not set",
+    };
+  }
+
+  return {
+    isDeadlineDay: false,
+    label: "NFL Kickoff",
+    value: formatCountdown(Math.max(0, regularSeasonStart.getTime() - now.getTime())),
+  };
+}
+
+function formatCountdown(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [days, hours, minutes, seconds].map((part) => String(part).padStart(2, "0")).join(":");
+}
+
+function parseLocalDate(value: string | null | undefined): Date | null {
+  if (!value) {
+    return null;
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+  return new Date(year, month - 1, day);
+}
+
+function localDateStart(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function sameLocalDate(left: Date, right: Date): boolean {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
+function defaultRegularSeasonStartDate(seasonYear: number | undefined): string {
+  if (!seasonYear) {
+    return "";
+  }
+  const septemberFirst = new Date(seasonYear, 8, 1);
+  const laborDayOffset = (8 - septemberFirst.getDay()) % 7;
+  const laborDay = new Date(seasonYear, 8, 1 + laborDayOffset);
+  const kickoff = new Date(seasonYear, 8, laborDay.getDate() + 3);
+  return [
+    kickoff.getFullYear(),
+    String(kickoff.getMonth() + 1).padStart(2, "0"),
+    String(kickoff.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 function AuthShell({ status, title }: { status: string; title: string }) {
@@ -2347,6 +2499,19 @@ function AdminPage({
 
       <div className="flex items-center gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+          <CalendarDays className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-zinc-950">League Dates</h2>
+          <p className="mt-1 text-sm text-zinc-600">
+            Set the keeper deadline and NFL regular season start date.
+          </p>
+        </div>
+      </div>
+      <LeagueCalendarSettingsPanel />
+
+      <div className="flex items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
           <Users className="size-5" aria-hidden="true" />
         </div>
         <div className="min-w-0">
@@ -2389,6 +2554,69 @@ function AdminPage({
       </div>
       <ADPInputPage csvText={adpCsvText} setCsvText={setAdpCsvText} />
     </div>
+  );
+}
+
+function LeagueCalendarSettingsPanel() {
+  const { data, isBusy, saveLeagueCalendarSettings } = useDashboard();
+  const [form, setForm] = React.useState<LeagueCalendarSettings>({
+    keeperPickDeadline: data.league?.keeperPickDeadline ?? "",
+    regularSeasonStartDate:
+      data.league?.regularSeasonStartDate ?? defaultRegularSeasonStartDate(data.league?.seasonYear),
+  });
+
+  React.useEffect(() => {
+    setForm({
+      keeperPickDeadline: data.league?.keeperPickDeadline ?? "",
+      regularSeasonStartDate:
+        data.league?.regularSeasonStartDate ?? defaultRegularSeasonStartDate(data.league?.seasonYear),
+    });
+  }, [data.league?.keeperPickDeadline, data.league?.regularSeasonStartDate, data.league?.seasonYear]);
+
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await saveLeagueCalendarSettings(form);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Countdown Clock Dates</CardTitle>
+        <CardDescription>
+          Dates are saved at the league level and shown to every user in the header.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form className="grid gap-4 md:grid-cols-[1fr_1fr_auto]" onSubmit={(event) => void submit(event)}>
+          <div className="grid gap-2">
+            <Label htmlFor="keeper-pick-deadline">Keeper Pick Deadline</Label>
+            <Input
+              id="keeper-pick-deadline"
+              onChange={(event) =>
+                setForm((current) => ({ ...current, keeperPickDeadline: event.target.value }))
+              }
+              type="date"
+              value={form.keeperPickDeadline}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="regular-season-start-date">Regular Season Start Date</Label>
+            <Input
+              id="regular-season-start-date"
+              onChange={(event) =>
+                setForm((current) => ({ ...current, regularSeasonStartDate: event.target.value }))
+              }
+              type="date"
+              value={form.regularSeasonStartDate}
+            />
+          </div>
+          <Button className="self-end" disabled={isBusy || data.source !== "api"} type="submit">
+            <Save className="size-4" aria-hidden="true" />
+            Save Dates
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 

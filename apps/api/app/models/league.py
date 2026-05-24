@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 from typing import Any
 from typing import TYPE_CHECKING
 
@@ -33,6 +34,8 @@ class League(TimestampMixin, table=True):
     max_keepers: int = Field(default=4)
     max_keepers_per_position: int = Field(default=2)
     max_qb_keepers: int = Field(default=1)
+    keeper_pick_deadline: date | None = Field(default=None)
+    regular_season_start_date: date | None = Field(default=None)
     roster_settings: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column(JSON, nullable=False),

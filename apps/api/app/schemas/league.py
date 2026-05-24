@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 import uuid
 from typing import Any
 
@@ -13,6 +13,8 @@ class LeagueBase(BaseModel):
     max_keepers: int = 4
     max_keepers_per_position: int = 2
     max_qb_keepers: int = 1
+    keeper_pick_deadline: date | None = None
+    regular_season_start_date: date | None = None
     roster_settings: dict[str, Any] = Field(default_factory=dict)
     keeper_rules: dict[str, Any] = Field(default_factory=dict)
 
@@ -29,6 +31,8 @@ class LeagueUpdate(BaseModel):
     max_keepers: int | None = None
     max_keepers_per_position: int | None = None
     max_qb_keepers: int | None = None
+    keeper_pick_deadline: date | None = None
+    regular_season_start_date: date | None = None
     roster_settings: dict[str, Any] | None = None
     keeper_rules: dict[str, Any] | None = None
 

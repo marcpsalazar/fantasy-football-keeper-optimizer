@@ -811,6 +811,7 @@ def _calculate_eligibility(
     has_elite_floor_exception = (
         settings.enable_elite_player_bonus
         and elite_anchor_bonus >= 12
+        and keeper_value < 0
         and keeper_value >= -abs(settings.elite_player_max_negative_edge)
     )
     if keeper_value < settings.minimum_keeper_value and not has_elite_floor_exception:
