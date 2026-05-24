@@ -1344,8 +1344,11 @@ function CountdownClock({ league }: { league: WorkspaceData["league"] }) {
         countdown.isDeadlineDay && "text-rose-700",
       )}
     >
-      <p className="text-[11px] font-semibold uppercase text-current">{countdown.label}</p>
-      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums tracking-normal">
+      <p className="text-[11px] font-semibold uppercase text-current">
+        {countdown.label}
+        {countdown.targetDate ? <span className="ml-2">{countdown.targetDate}</span> : null}
+      </p>
+      <p className="mt-0.5 font-mono text-xl font-semibold tabular-nums tracking-normal">
         {countdown.value}
       </p>
     </div>
@@ -1355,6 +1358,7 @@ function CountdownClock({ league }: { league: WorkspaceData["league"] }) {
 type CountdownState = {
   isDeadlineDay: boolean;
   label: string;
+  targetDate: string | null;
   value: string;
 };
 
@@ -1366,6 +1370,7 @@ function buildCountdownState(now: Date, league: WorkspaceData["league"]): Countd
     return {
       isDeadlineDay: false,
       label: "Keeper Deadline",
+      targetDate: null,
       value: "Not set",
     };
   }
@@ -1374,6 +1379,7 @@ function buildCountdownState(now: Date, league: WorkspaceData["league"]): Countd
     return {
       isDeadlineDay: true,
       label: "Keeper Deadline",
+      targetDate: formatDisplayDate(keeperDeadline),
       value: "00:00:00:00",
     };
   }
@@ -1382,6 +1388,7 @@ function buildCountdownState(now: Date, league: WorkspaceData["league"]): Countd
     return {
       isDeadlineDay: false,
       label: "Keeper Deadline",
+      targetDate: formatDisplayDate(keeperDeadline),
       value: formatCountdown(keeperDeadline.getTime() - now.getTime()),
     };
   }
@@ -1393,6 +1400,7 @@ function buildCountdownState(now: Date, league: WorkspaceData["league"]): Countd
     return {
       isDeadlineDay: false,
       label: "NFL Kickoff",
+      targetDate: null,
       value: "Not set",
     };
   }
@@ -1400,6 +1408,7 @@ function buildCountdownState(now: Date, league: WorkspaceData["league"]): Countd
   return {
     isDeadlineDay: false,
     label: "NFL Kickoff",
+    targetDate: formatDisplayDate(regularSeasonStart),
     value: formatCountdown(Math.max(0, regularSeasonStart.getTime() - now.getTime())),
   };
 }
@@ -1422,6 +1431,14 @@ function parseLocalDate(value: string | null | undefined): Date | null {
     return null;
   }
   return new Date(year, month - 1, day);
+}
+
+function formatDisplayDate(date: Date): string {
+  return [
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+    date.getFullYear(),
+  ].join("/");
 }
 
 function localDateStart(date: Date): Date {
