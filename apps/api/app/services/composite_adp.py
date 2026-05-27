@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 from html import unescape
@@ -7,6 +8,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+from typing import Any
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,6 +26,11 @@ class CompositeADPError(Exception):
 
 PUBLIC_DRAFTSHARKS_ROW_LIMIT = 26
 MAX_ROUND_PICK_ROUND = 30
+
+_DISAGREEMENT_THRESHOLD = 40.0
+_SINGLE_SOURCE_REVIEW_ADP_CUTOFF = 150.0
+_MOVEMENT_NOTABLE_EARLY = 15.0   # notable move for players in/near top 100
+_MOVEMENT_NOTABLE = 30.0          # notable move for players outside top 100
 
 
 @dataclass(frozen=True)
@@ -60,6 +67,13 @@ class CompositeCandidate:
     ffc_ppr_adp: float | None
     existing_adp: float | None
     review_flag: str
+    source_count: int = 0
+    adp_spread: float | None = None
+    disagreement_flag: bool = False
+    sleeper_player_id: str | None = None
+    sleeper_status: str = ""
+    adp_movement: float | None = None
+    movement_flag: str = ""
     sos: float | None = None
     injury: float | None = None
     risk: float | None = None
@@ -70,34 +84,91 @@ class CompositeCandidate:
     draftsharks_3d_value: float | None = None
 
 
+@dataclass
+class CompositeBuildResult:
+    rows: list[dict[str, str]]
+    coverage: dict[str, Any]
+
+
+def _compute_coverage_summary(
+    candidates: list[CompositeCandidate],
+    league_keys: frozenset[tuple[str, str]],
+) -> dict[str, Any]:
+    source_counts = Counter(c.source_count for c in candidates)
+    review_flag_counts = Counter(c.review_flag for c in candidates if c.review_flag)
+    movement_dirs = Counter(
+        "riser" if c.movement_flag.startswith("riser") else "faller"
+        for c in candidates
+        if c.movement_flag
+    )
+
+    top_150 = [c for c in candidates if c.composite_adp is not None and c.composite_adp <= 150]
+    top_150_multi = sum(1 for c in top_150 if c.source_count >= 2)
+    top_150_pct = round(100.0 * top_150_multi / len(top_150), 1) if top_150 else None
+
+    roster_candidates = [c for c in candidates if candidate_key(c) in league_keys]
+    roster_missing = sum(1 for c in roster_candidates if c.source_count == 0)
+
+    return {
+        "total_players": len(candidates),
+        "source_coverage": {str(k): source_counts[k] for k in range(4)},
+        "review_flag_counts": dict(review_flag_counts),
+        "top_150": {
+            "total": len(top_150),
+            "multi_source_count": top_150_multi,
+            "multi_source_pct": top_150_pct,
+        },
+        "movement": {
+            "risers": movement_dirs.get("riser", 0),
+            "fallers": movement_dirs.get("faller", 0),
+        },
+        "roster_players": {
+            "total": len(roster_candidates),
+            "missing_adp": roster_missing,
+        },
+    }
+
+
 def build_composite_adp_template_rows(
     session: Session,
     league: League,
     settings: Settings,
-) -> list[dict[str, str]]:
+) -> CompositeBuildResult:
     team_count = _team_count(session, league)
     _, current_entries = _load_current_snapshot(session, league.id)
     current_by_key = {
         _player_key(player.full_name, player.position): (player, entry)
         for player, entry in current_entries
+        if not _is_snapshot_placeholder(player.full_name)
     }
 
     source_draftsharks = _fetch_draftsharks_superflex_rows(settings, team_count)
+    source_ffc_2qb = _fetch_ffc_rows(settings, league, team_count, "2qb")
+    source_ffc_ppr = _fetch_ffc_rows(settings, league, team_count, "ppr")
     sleeper_players = _fetch_sleeper_players(settings)
 
-    if not source_draftsharks.rows:
-        details = "; ".join(
-            detail for detail in [source_draftsharks.error] if detail
-        ) or "DraftSharks returned no usable superflex rows"
+    if not source_draftsharks.rows and not source_ffc_2qb.rows and not source_ffc_ppr.rows:
+        source_errors = [
+            err
+            for err in [source_draftsharks.error, source_ffc_2qb.error, source_ffc_ppr.error]
+            if err
+        ]
         raise CompositeADPError(
-            "Composite ADP build failed because the external ADP sources were unavailable. "
-            f"Details: {details}"
+            "Composite ADP build failed: no external ADP sources returned usable rows."
+            + (f" Details: {'; '.join(source_errors)}" if source_errors else "")
         )
 
     league_players = _load_league_players(session, league.id)
     league_keys = {_player_key(player.full_name, player.position) for player in league_players}
+    league_player_by_key = {
+        _player_key(player.full_name, player.position): player for player in league_players
+    }
 
-    provider_keys = set(source_draftsharks.rows)
+    provider_keys = (
+        set(source_draftsharks.rows)
+        | set(source_ffc_2qb.rows)
+        | set(source_ffc_ppr.rows)
+    )
     focus_limit = max(300, team_count * 25)
     early_board_cutoff = max(120, team_count * 10)
 
@@ -107,9 +178,13 @@ def build_composite_adp_template_rows(
         if key not in candidate_cache:
             candidate_cache[key] = _build_candidate(
                 key,
+                scoring_format=league.scoring_format,
                 source_draftsharks=source_draftsharks.rows,
+                source_ffc_2qb=source_ffc_2qb.rows,
+                source_ffc_ppr=source_ffc_ppr.rows,
                 sleeper_players=sleeper_players,
                 current_by_key=current_by_key,
+                league_player_by_key=league_player_by_key,
             )
         return candidate_cache[key]
 
@@ -139,18 +214,17 @@ def build_composite_adp_template_rows(
             key[0],
         ),
     )
+    sorted_candidates = [resolve_candidate(key) for key in sorted_keys]
     rows = [
-        _candidate_row(
-            resolve_candidate(key),
-            league=league,
-            team_count=team_count,
-        )
-        for key in sorted_keys
+        _candidate_row(candidate, league=league, team_count=team_count)
+        for candidate in sorted_candidates
     ]
 
     if not rows:
         raise CompositeADPError("No league players or ADP source rows were available to build the composite CSV")
-    return rows
+
+    coverage = _compute_coverage_summary(composite_candidates, frozenset(league_keys))
+    return CompositeBuildResult(rows=rows, coverage=coverage)
 
 
 def candidate_key(candidate: CompositeCandidate) -> tuple[str, str]:
@@ -192,42 +266,98 @@ def _load_league_players(session: Session, league_id: uuid.UUID) -> list[Player]
     return session.exec(select(Player).where(Player.id.in_(player_ids))).all()
 
 
+def _compute_movement(
+    composite_adp: float | None,
+    existing_adp: float | None,
+) -> tuple[float | None, str]:
+    if composite_adp is None or existing_adp is None:
+        return None, ""
+    delta = composite_adp - existing_adp
+    threshold = (
+        _MOVEMENT_NOTABLE_EARLY
+        if composite_adp <= 100 or existing_adp <= 100
+        else _MOVEMENT_NOTABLE
+    )
+    if abs(delta) < threshold:
+        return delta, ""
+    if delta < 0:
+        return delta, f"riser_{abs(delta):.0f}"
+    return delta, f"faller_{delta:.0f}"
+
+
 def _build_candidate(
     key: tuple[str, str],
     *,
+    scoring_format: str,
     source_draftsharks: dict[tuple[str, str], ProviderRow],
+    source_ffc_2qb: dict[tuple[str, str], ProviderRow],
+    source_ffc_ppr: dict[tuple[str, str], ProviderRow],
     sleeper_players: dict[tuple[str, str], dict[str, str]],
     current_by_key: dict[tuple[str, str], tuple[Player, ADPEntry]],
+    league_player_by_key: dict[tuple[str, str], Player] | None = None,
 ) -> CompositeCandidate:
     draftsharks_row = source_draftsharks.get(key)
+    ffc_2qb_row = source_ffc_2qb.get(key)
+    ffc_ppr_row = source_ffc_ppr.get(key)
     current = current_by_key.get(key)
     sleeper = sleeper_players.get(key)
+    league_player = league_player_by_key.get(key) if league_player_by_key else None
 
+    sleeper_player_id = _string(sleeper.get("player_id")) if sleeper else None
+    sleeper_status = _string(sleeper.get("status")) if sleeper else ""
+
+    # Snapshot name is user-entered (authoritative); Sleeper is the canonical NFL source.
     player_name = (
         (current[0].full_name if current else None)
+        or (sleeper.get("full_name") if sleeper else None)
         or (draftsharks_row.player if draftsharks_row else None)
-        or (sleeper.get("full_name") if sleeper else "")
+        or (ffc_2qb_row.player if ffc_2qb_row else None)
+        or (ffc_ppr_row.player if ffc_ppr_row else None)
+        or (league_player.full_name if league_player else "")
     )
-    position = (
+    position = _normalize_position(
         (current[0].position if current else None)
         or (draftsharks_row.position if draftsharks_row else None)
+        or (ffc_2qb_row.position if ffc_2qb_row else None)
+        or (ffc_ppr_row.position if ffc_ppr_row else None)
         or (sleeper.get("position") if sleeper else "")
+        or ""
     )
+    # Sleeper team is live (updated daily for trades/releases) — highest non-user priority.
     nfl_team = (
-        (current[0].nfl_team if current and current[0].nfl_team else None)
+        (sleeper.get("team") if sleeper and sleeper.get("team") else None)
         or (draftsharks_row.nfl_team if draftsharks_row and draftsharks_row.nfl_team else None)
-        or (sleeper.get("team") if sleeper else None)
+        or (ffc_2qb_row.nfl_team if ffc_2qb_row and ffc_2qb_row.nfl_team else None)
+        or (ffc_ppr_row.nfl_team if ffc_ppr_row and ffc_ppr_row.nfl_team else None)
+        or (current[0].nfl_team if current and current[0].nfl_team else None)
     )
     existing_adp = current[1].adp_pick if current else None
-    composite_adp, composite_method = _compose_adp(
-        position=position or key[1],
-        draftsharks_adp=draftsharks_row.adp_pick if draftsharks_row else None,
+    # Don't carry forward snapshot ADPs that are implausibly early for K/DST —
+    # they reflect stale/bad imports and would block composite re-import.
+    canonical_pos = _normalize_position(position or key[1])
+    if canonical_pos in ("K", "DST") and existing_adp is not None and existing_adp < 100:
+        existing_adp = None
+    # DS kicker/DST rankings are unreliable — exclude from composite for those positions
+    ds_adp_for_composite = (
+        None
+        if canonical_pos in ("K", "DST")
+        else (draftsharks_row.adp_pick if draftsharks_row else None)
+    )
+    composite_adp, composite_method, source_count, adp_spread, disagreement_flag = _compose_adp(
+        scoring_format=scoring_format,
+        draftsharks_adp=ds_adp_for_composite,
+        ffc_2qb_adp=ffc_2qb_row.adp_pick if ffc_2qb_row else None,
+        ffc_ppr_adp=ffc_ppr_row.adp_pick if ffc_ppr_row else None,
         existing_adp=existing_adp,
     )
+    adp_movement, movement_flag = _compute_movement(composite_adp, existing_adp)
     review_flag = _review_flag(
         position=position or key[1],
-        draftsharks_adp=draftsharks_row.adp_pick if draftsharks_row else None,
-        existing_adp=existing_adp,
+        composite_adp=composite_adp,
+        source_count=source_count,
+        adp_spread=adp_spread,
+        nfl_team=nfl_team,
+        sleeper_status=sleeper_status,
     )
 
     return CompositeCandidate(
@@ -237,9 +367,16 @@ def _build_candidate(
         composite_adp=composite_adp,
         composite_method=composite_method,
         draftsharks_adp=draftsharks_row.adp_pick if draftsharks_row else None,
-        ffc_2qb_adp=None,
-        ffc_ppr_adp=None,
+        ffc_2qb_adp=ffc_2qb_row.adp_pick if ffc_2qb_row else None,
+        ffc_ppr_adp=ffc_ppr_row.adp_pick if ffc_ppr_row else None,
         existing_adp=existing_adp,
+        source_count=source_count,
+        adp_spread=adp_spread,
+        disagreement_flag=disagreement_flag,
+        sleeper_player_id=sleeper_player_id or None,
+        sleeper_status=sleeper_status,
+        adp_movement=adp_movement,
+        movement_flag=movement_flag,
         review_flag=review_flag,
         sos=draftsharks_row.sos if draftsharks_row else None,
         injury=draftsharks_row.injury if draftsharks_row else None,
@@ -252,29 +389,101 @@ def _build_candidate(
     )
 
 
+def _source_weights(scoring_format: str) -> dict[str, float]:
+    fmt = scoring_format.strip().lower()
+    if fmt in ("superflex", "2qb"):
+        return {"draftsharks": 1.3, "ffc_2qb": 0.85, "ffc_ppr": 0.35, "existing": 0.15}
+    if fmt == "ppr":
+        return {"draftsharks": 0.45, "ffc_2qb": 0.35, "ffc_ppr": 1.0, "existing": 0.15}
+    # half-ppr, standard
+    return {"draftsharks": 0.40, "ffc_2qb": 0.30, "ffc_ppr": 0.90, "existing": 0.15}
+
+
+def _weighted_median(values_weights: list[tuple[float, float]]) -> float:
+    sorted_vw = sorted(values_weights, key=lambda item: item[0])
+    total = sum(w for _, w in sorted_vw)
+    cumulative = 0.0
+    for value, weight in sorted_vw:
+        cumulative += weight
+        if cumulative >= total / 2.0:
+            return value
+    return sorted_vw[-1][0]
+
+
 def _compose_adp(
     *,
-    position: str,
+    scoring_format: str,
     draftsharks_adp: float | None,
+    ffc_2qb_adp: float | None,
+    ffc_ppr_adp: float | None,
     existing_adp: float | None,
-) -> tuple[float | None, str]:
+) -> tuple[float | None, str, int, float | None, bool]:
+    weights = _source_weights(scoring_format)
+
+    real_sources: list[tuple[float, float, str]] = []
     if draftsharks_adp is not None:
-        return draftsharks_adp, "draftsharks_superflex_adp"
-    if existing_adp is not None:
-        return None, "missing_from_draftsharks"
-    return None, "missing"
+        real_sources.append((draftsharks_adp, weights["draftsharks"], "draftsharks"))
+    if ffc_2qb_adp is not None:
+        real_sources.append((ffc_2qb_adp, weights["ffc_2qb"], "ffc_2qb"))
+    if ffc_ppr_adp is not None:
+        real_sources.append((ffc_ppr_adp, weights["ffc_ppr"], "ffc_ppr"))
+
+    source_count = len(real_sources)
+
+    all_sources = list(real_sources)
+    if source_count < 2 and existing_adp is not None:
+        all_sources.append((existing_adp, weights["existing"], "existing"))
+
+    if not all_sources:
+        return None, "missing", 0, None, False
+
+    if len(all_sources) == 1:
+        value, _, name = all_sources[0]
+        return value, f"{name}_only", source_count, None, False
+
+    values = [v for v, _, _ in all_sources]
+    adp_spread = max(values) - min(values)
+    disagreement_flag = adp_spread >= _DISAGREEMENT_THRESHOLD
+
+    composite = _weighted_median([(v, w) for v, w, _ in all_sources])
+    source_names = "+".join(name for _, _, name in all_sources)
+    method = f"weighted_median_{source_names}"
+
+    return composite, method, source_count, adp_spread, disagreement_flag
+
+
+_SLEEPER_INACTIVE_STATUSES = frozenset({"Inactive", "IR", "PUP", "SUS", "NFI", "NA"})
 
 
 def _review_flag(
     *,
     position: str,
-    draftsharks_adp: float | None,
-    existing_adp: float | None,
+    composite_adp: float | None,
+    source_count: int,
+    adp_spread: float | None,
+    nfl_team: str | None,
+    sleeper_status: str = "",
 ) -> str:
-    if draftsharks_adp is None and existing_adp is None:
+    if composite_adp is None and source_count == 0:
         return "missing_all_sources"
-    if draftsharks_adp is None:
-        return "missing_from_draftsharks"
+    if (
+        sleeper_status in _SLEEPER_INACTIVE_STATUSES
+        and composite_adp is not None
+        and composite_adp <= _SINGLE_SOURCE_REVIEW_ADP_CUTOFF
+    ):
+        return f"sleeper_{sleeper_status.lower()}_top150"
+    if source_count < 2 and composite_adp is not None and composite_adp <= _SINGLE_SOURCE_REVIEW_ADP_CUTOFF:
+        return "single_source_top150"
+    if adp_spread is not None and adp_spread >= _DISAGREEMENT_THRESHOLD:
+        return f"source_disagreement_{adp_spread:.0f}picks"
+    pos = position.strip().upper()
+    if (
+        pos in ("QB", "RB", "WR", "TE")
+        and nfl_team is None
+        and composite_adp is not None
+        and composite_adp <= _SINGLE_SOURCE_REVIEW_ADP_CUTOFF
+    ):
+        return "missing_nfl_team"
     return ""
 
 
@@ -306,6 +515,13 @@ def _candidate_row(
         "ffc_ppr_adp": _fmt(candidate.ffc_ppr_adp),
         "existing_adp": _fmt(candidate.existing_adp),
         "composite_method": candidate.composite_method,
+        "source_count": str(candidate.source_count),
+        "adp_spread": _fmt(candidate.adp_spread),
+        "disagreement_flag": "1" if candidate.disagreement_flag else "",
+        "sleeper_player_id": candidate.sleeper_player_id or "",
+        "sleeper_status": candidate.sleeper_status,
+        "adp_movement": _fmt(candidate.adp_movement),
+        "movement_flag": candidate.movement_flag,
         "review_flag": candidate.review_flag,
         "sos": _fmt(candidate.sos),
         "injury": _fmt(candidate.injury),
@@ -319,14 +535,18 @@ def _candidate_row(
 
 
 def _source_note(candidate: CompositeCandidate) -> str:
-    notes: list[str] = []
+    parts: list[str] = []
     if candidate.draftsharks_adp is not None:
-        notes.append(f"DraftSharks Superflex ADP {candidate.draftsharks_adp:g}")
+        parts.append(f"DS:{candidate.draftsharks_adp:g}")
+    if candidate.ffc_2qb_adp is not None:
+        parts.append(f"FFC2QB:{candidate.ffc_2qb_adp:g}")
+    if candidate.ffc_ppr_adp is not None:
+        parts.append(f"FFCPPR:{candidate.ffc_ppr_adp:g}")
     if candidate.existing_adp is not None:
-        notes.append(f"existing {candidate.existing_adp:g}")
+        parts.append(f"prev:{candidate.existing_adp:g}")
     if candidate.review_flag:
-        notes.append(f"review:{candidate.review_flag}")
-    return "; ".join(notes)
+        parts.append(f"review:{candidate.review_flag}")
+    return "; ".join(parts)
 
 
 def _export_adp_pick(candidate: CompositeCandidate) -> float | None:
@@ -441,11 +661,13 @@ def _parse_draftsharks_browser_payload(
         adp_pick = _draftsharks_overall_pick(
             row.get("adp_pick"),
             team_count,
-            rank=row.get("rank") or row.get("overall_rank"),
         )
         if not player or not position or adp_pick is None or adp_pick <= 0:
             continue
         position = "DST" if position == "DEF" else position
+        canonical_pos = _normalize_position(position)
+        if canonical_pos in ("K", "DST") and adp_pick < 100:
+            continue
         rows[_player_key(player, position)] = ProviderRow(
             player=player,
             position=position,
@@ -606,7 +828,7 @@ def _parse_ffc_json_rows(response_json: object) -> dict[tuple[str, str], Provide
         if not isinstance(player, dict):
             continue
         name = _player_name(player)
-        position = str(player.get("position", "")).strip().upper()
+        position = _normalize_position(str(player.get("position", "")))
         adp_pick = _player_adp(player)
         if not name or not position or adp_pick is None:
             continue
@@ -628,7 +850,7 @@ def _parse_ffc_html_rows(html_text: str) -> dict[tuple[str, str], ProviderRow]:
             continue
 
         name = _clean_html_cell(cells[1])
-        position = _clean_html_cell(cells[2]).upper()
+        position = _normalize_position(_clean_html_cell(cells[2]))
         nfl_team = _clean_html_cell(cells[3]).upper()
         adp_pick = _parse_numeric_cell(cells[5])
         if not name or not position or adp_pick is None:
@@ -717,13 +939,16 @@ def _fetch_sleeper_players(settings: Settings) -> dict[tuple[str, str], dict[str
         if not isinstance(player, dict):
             continue
         full_name = _string(player.get("full_name"))
-        position = _string(player.get("position")).upper()
+        position = _normalize_position(_string(player.get("position")))
         if not full_name or not position:
             continue
+        team = _string(player.get("team")) or None
         players[_player_key(full_name, position)] = {
+            "player_id": _string(player.get("player_id")),
             "full_name": full_name,
             "position": position,
-            "team": _string(player.get("team")),
+            "team": team,
+            "status": _string(player.get("status")),
         }
     return players
 
@@ -773,10 +998,19 @@ def _coerce_float(value: object) -> float | None:
     return None
 
 
+def _normalize_position(position: str) -> str:
+    pos = position.strip().upper()
+    if pos == "PK":
+        return "K"
+    if pos == "DEF":
+        return "DST"
+    return pos
+
+
 def _player_key(name: str, position: str) -> tuple[str, str]:
     normalized_name = re.sub(r"[^a-z0-9]+", "", name.casefold())
     normalized_name = normalized_name.removesuffix("jr").removesuffix("sr").removesuffix("iii").removesuffix("ii")
-    return normalized_name, position.strip().upper()
+    return normalized_name, _normalize_position(position)
 
 
 def _team_count(session: Session, league: League) -> int:
@@ -790,6 +1024,11 @@ def _fmt(value: float | None) -> str:
 
 def _string(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _is_snapshot_placeholder(name: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", name.casefold())
+    return "placeholder" in normalized or normalized.startswith("sourcenotsubstantiated")
 
 
 def _repo_root() -> Path:

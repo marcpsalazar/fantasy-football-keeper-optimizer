@@ -93,6 +93,14 @@ export type LeagueSummary = {
   seasonYear: number;
   scoringFormat: string;
   draftType: string;
+  rosterSettings: LeagueRosterSettings;
+};
+
+export type LeagueRosterSettings = {
+  slots: Record<string, number>;
+  allowedPositions: string[];
+  maxPositionCounts: Record<string, number>;
+  benchPositionLimits: Record<string, number>;
 };
 
 export type ActiveSnapshot = {
@@ -101,6 +109,7 @@ export type ActiveSnapshot = {
   source: string;
   snapshotDate: string;
 };
+
 
 export type OptimizerSettingsForm = {
   minimumKeeperValue: number;
@@ -136,6 +145,139 @@ export type NewsHeadline = {
   source: string;
 };
 
+export type MockDraftStatus = "setup" | "in_progress" | "paused" | "complete" | "abandoned";
+
+export type MockDraftPickSource = "user" | "bot" | "keeper_forfeit" | "auto_timeout";
+
+export type MockDraftCreateForm = {
+  adpSnapshotId: string | null;
+  scenarioName: string | null;
+  pickTimerSeconds: 30 | 60 | 90 | 120 | null;
+  defaultPersonality: string;
+  defaultDifficulty: string;
+  teamBotOverrides: Record<string, { personality: string; difficulty: string }>;
+};
+
+export type MockDraftPick = {
+  id: string;
+  sessionId: string;
+  round: number;
+  pickInRound: number;
+  overallPick: number;
+  teamId: string;
+  teamName: string;
+  playerId: string;
+  playerName: string;
+  position: string;
+  nflTeam: string;
+  source: MockDraftPickSource;
+  decisionTimeMs: number | null;
+  botPersonality: string | null;
+  botDifficulty: string | null;
+  reasoningSummary: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MockDraftBoardSlot = {
+  round: number;
+  pickInRound: number;
+  overallPick: number;
+  teamId: string | null;
+  teamName: string;
+  status: "Open" | "Keeper" | "Drafted";
+  pick: MockDraftPick | null;
+};
+
+export type MockDraftAvailablePlayer = {
+  playerId: string;
+  playerName: string;
+  position: string;
+  nflTeam: string;
+  adpPick: number | null;
+  adpRound: number | null;
+  risk: number | null;
+  projection: number | null;
+};
+
+export type MockDraftAnalysis = {
+  id: string;
+  sessionId: string;
+  overallLetterGrade: string;
+  overallNumericScore: number;
+  summary: string;
+  strengths: Record<string, unknown>[];
+  weaknesses: Record<string, unknown>[];
+  pickFeedback: Record<string, unknown>[];
+  whatIfScenarios: Record<string, unknown>[];
+  projectedRankings: Record<string, unknown>;
+  futureAdvice: Record<string, unknown>[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MockDraftRosterNeed = {
+  slot: string;
+  filled: number;
+  target: number;
+  remaining: number;
+};
+
+export type MockDraftStrategyPlan = {
+  summary: string;
+  roundPlan: Record<string, unknown>[];
+  positionPriorities: Record<string, unknown>[];
+  targets: Record<string, unknown>[];
+  fades: Record<string, unknown>[];
+  contingencies: Record<string, unknown>[];
+  generatedAt: string | null;
+  cacheKey: string | null;
+  error: string | null;
+  aiUsed: boolean;
+  model: string | null;
+};
+
+export type MockDraftSession = {
+  id: string;
+  leagueId: string;
+  userId: string | null;
+  userTeamId: string;
+  userTeamName: string;
+  adpSnapshotId: string | null;
+  status: MockDraftStatus;
+  pickTimerSeconds: number | null;
+  botConfig: Record<string, unknown>;
+  keeperContext: Record<string, unknown>;
+  draftType: string;
+  roundCount: number;
+  currentPick: number | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  picks: MockDraftPick[];
+  board: MockDraftBoardSlot[];
+  availablePlayers: MockDraftAvailablePlayer[];
+  rosterNeeds: MockDraftRosterNeed[];
+  strategyPlan: MockDraftStrategyPlan | null;
+  analysis: MockDraftAnalysis | null;
+};
+
+export type MockDraftHistoryRow = {
+  id: string;
+  leagueId: string;
+  userTeamId: string;
+  userTeamName: string;
+  status: MockDraftStatus;
+  draftType: string;
+  roundCount: number;
+  pickTimerSeconds: number | null;
+  completedAt: string | null;
+  createdAt: string;
+  overallLetterGrade: string | null;
+  overallNumericScore: number | null;
+  summary: string | null;
+};
+
 export type WorkspaceData = {
   source: "api" | "mock";
   league: LeagueSummary | null;
@@ -168,6 +310,23 @@ export const defaultSettings: OptimizerSettingsForm = {
   elitePlayerBonus: true,
 };
 
+export const defaultLeagueRosterSettings: LeagueRosterSettings = {
+  slots: {
+    QB: 1,
+    RB: 2,
+    WR: 2,
+    TE: 1,
+    FLEX: 2,
+    SUPERFLEX: 1,
+    K: 1,
+    DST: 1,
+    BENCH: 6,
+  },
+  allowedPositions: ["QB", "RB", "WR", "TE", "K", "DST"],
+  maxPositionCounts: {},
+  benchPositionLimits: {},
+};
+
 export const mockWorkspaceData: WorkspaceData = {
   source: "mock",
   league: {
@@ -176,6 +335,7 @@ export const mockWorkspaceData: WorkspaceData = {
     seasonYear: 2026,
     scoringFormat: "superflex",
     draftType: "snake",
+    rosterSettings: defaultLeagueRosterSettings,
   },
   activeSnapshot: {
     id: "mock-snapshot",
@@ -229,7 +389,15 @@ export async function loadWorkspaceData(): Promise<WorkspaceData | null> {
   }
 
   const league = mapLeague(leagueRow);
-  const [teamsTable, draftTable, rosterTable, snapshotsTable, settingsRow, initialResultsTable, newsTable] =
+  const [
+    teamsTable,
+    draftTable,
+    rosterTable,
+    snapshotsTable,
+    settingsRow,
+    initialResultsTable,
+    newsTable,
+  ] =
     await Promise.all([
       fetchTable(`/api/leagues/${league.id}/teams`),
       fetchTable(`/api/leagues/${league.id}/draft-results`),
@@ -407,14 +575,6 @@ export async function importCsv(
   });
 }
 
-export async function refreshAdpSnapshot(leagueId: string): Promise<void> {
-  await fetchJson(`/api/leagues/${leagueId}/adp/refresh`, {
-    body: JSON.stringify({}),
-    headers: { "content-type": "application/json" },
-    method: "POST",
-  });
-}
-
 export async function importCompositeAdpSnapshot(leagueId: string): Promise<void> {
   await fetchJson(`/api/leagues/${leagueId}/adp/import-composite`, {
     body: JSON.stringify({}),
@@ -499,6 +659,20 @@ export async function saveOptimizerSettings(
   });
 }
 
+export async function saveLeagueRosterSettings(
+  leagueId: string,
+  rosterSettings: LeagueRosterSettings,
+): Promise<LeagueSummary> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}`, {
+    body: JSON.stringify({
+      roster_settings: leagueRosterSettingsPayload(rosterSettings),
+    }),
+    headers: { "content-type": "application/json" },
+    method: "PATCH",
+  });
+  return mapLeague(payload);
+}
+
 export async function setManualOverride(
   leagueId: string,
   teamId: string,
@@ -513,6 +687,113 @@ export async function setManualOverride(
     }),
     headers: { "content-type": "application/json" },
     method: "PUT",
+  });
+}
+
+export async function listMockDrafts(leagueId: string): Promise<MockDraftHistoryRow[]> {
+  const payload = await fetchJson<ApiRow[]>(`/api/leagues/${leagueId}/mock-drafts`);
+  return payload.map(mapMockDraftHistoryRow);
+}
+
+export async function createMockDraft(
+  leagueId: string,
+  form: MockDraftCreateForm,
+): Promise<MockDraftSession> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/mock-drafts`, {
+    body: JSON.stringify({
+      adp_snapshot_id: form.adpSnapshotId,
+      scenario_name: form.scenarioName,
+      pick_timer_seconds: form.pickTimerSeconds,
+      bot_config: {
+        default_personality: form.defaultPersonality,
+        default_difficulty: form.defaultDifficulty,
+        teams: form.teamBotOverrides,
+      },
+    }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapMockDraftSession(payload);
+}
+
+export async function readMockDraft(sessionId: string): Promise<MockDraftSession> {
+  return mapMockDraftSession(await fetchJson<ApiRow>(`/api/mock-drafts/${sessionId}`));
+}
+
+export async function startMockDraft(sessionId: string): Promise<MockDraftSession> {
+  const payload = await fetchJson<{ session: ApiRow }>(`/api/mock-drafts/${sessionId}/start`, {
+    body: JSON.stringify({}),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapMockDraftSession(payload.session);
+}
+
+export async function generateMockDraftStrategyPlan(sessionId: string): Promise<MockDraftSession> {
+  const payload = await fetchJson<{ session: ApiRow }>(`/api/mock-drafts/${sessionId}/strategy-plan`, {
+    body: JSON.stringify({}),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapMockDraftSession(payload.session);
+}
+
+export async function pauseMockDraft(sessionId: string): Promise<MockDraftSession> {
+  const payload = await fetchJson<{ session: ApiRow }>(`/api/mock-drafts/${sessionId}/pause`, {
+    body: JSON.stringify({}),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapMockDraftSession(payload.session);
+}
+
+export async function resumeMockDraft(sessionId: string): Promise<MockDraftSession> {
+  const payload = await fetchJson<{ session: ApiRow }>(`/api/mock-drafts/${sessionId}/resume`, {
+    body: JSON.stringify({}),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapMockDraftSession(payload.session);
+}
+
+export async function endMockDraft(sessionId: string): Promise<MockDraftSession> {
+  const payload = await fetchJson<{ session: ApiRow }>(`/api/mock-drafts/${sessionId}/end`, {
+    body: JSON.stringify({}),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapMockDraftSession(payload.session);
+}
+
+export async function makeMockDraftPick(
+  sessionId: string,
+  playerId: string,
+): Promise<MockDraftSession> {
+  const payload = await fetchJson<{ session: ApiRow }>(`/api/mock-drafts/${sessionId}/pick`, {
+    body: JSON.stringify({ player_id: playerId }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapMockDraftSession(payload.session);
+}
+
+export async function makeMockDraftBotPick(sessionId: string): Promise<MockDraftSession> {
+  const payload = await fetchJson<{ session: ApiRow }>(`/api/mock-drafts/${sessionId}/bot-pick`, {
+    body: JSON.stringify({}),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapMockDraftSession(payload.session);
+}
+
+export async function deleteMockDraft(sessionId: string): Promise<void> {
+  await fetch(`${API_BASE_URL}/api/mock-drafts/${sessionId}`, {
+    credentials: "include",
+    method: "DELETE",
+  }).then(async (response) => {
+    if (!response.ok) {
+      throw new Error(`API ${response.status}: ${await response.text()}`);
+    }
   });
 }
 
@@ -631,7 +912,50 @@ function mapLeague(row: ApiRow): LeagueSummary {
     seasonYear: number(row.season_year),
     scoringFormat: text(row.scoring_format, "superflex"),
     draftType: text(row.draft_type, "snake"),
+    rosterSettings: mapLeagueRosterSettings(row.roster_settings),
   };
+}
+
+function mapLeagueRosterSettings(value: unknown): LeagueRosterSettings {
+  const settings = objectRecord(value);
+  const slots = mapNumberRecord(settings.slots ?? settings.roster_slots);
+  const maxPositionCounts = mapNumberRecord(
+    settings.max_position_counts ?? settings.max_positions ?? settings.position_limits,
+  );
+  const benchPositionLimits = mapNumberRecord(settings.bench_position_limits ?? settings.bench_limits);
+  const allowedPositions = stringArray(settings.allowed_positions).map(normalizePosition).filter(Boolean);
+  return {
+    slots: Object.keys(slots).length ? slots : defaultLeagueRosterSettings.slots,
+    allowedPositions: allowedPositions.length ? allowedPositions : defaultLeagueRosterSettings.allowedPositions,
+    maxPositionCounts,
+    benchPositionLimits,
+  };
+}
+
+function leagueRosterSettingsPayload(settings: LeagueRosterSettings): ApiRow {
+  return {
+    slots: settings.slots,
+    allowed_positions: settings.allowedPositions.map(normalizePosition).filter(Boolean),
+    max_position_counts: settings.maxPositionCounts,
+    bench_position_limits: settings.benchPositionLimits,
+  };
+}
+
+function mapNumberRecord(value: unknown): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const [key, rawValue] of Object.entries(objectRecord(value))) {
+    const normalizedKey = normalizePosition(key);
+    const parsedValue = Math.max(0, Math.floor(number(rawValue, 0)));
+    if (normalizedKey && parsedValue > 0) {
+      result[normalizedKey] = parsedValue;
+    }
+  }
+  return result;
+}
+
+function normalizePosition(position: string): string {
+  const normalized = position.trim().toUpperCase();
+  return normalized === "DEF" || normalized === "D/ST" ? "DST" : normalized;
 }
 
 function mapTeam(row: ApiRow): Team {
@@ -735,6 +1059,7 @@ function mapSnapshot(row: ApiRow): ActiveSnapshot {
   };
 }
 
+
 function mapSettings(row: ApiRow): OptimizerSettingsForm {
   return {
     minimumKeeperValue: number(row.minimum_keeper_value, defaultSettings.minimumKeeperValue),
@@ -814,6 +1139,146 @@ function mapCsvPreviewIssue(row: ApiRow): CsvPreviewIssue {
     field: text(row.field),
     message: text(row.message),
     severity: text(row.severity, "error") === "warning" ? "warning" : "error",
+  };
+}
+
+function mapMockDraftSession(row: ApiRow): MockDraftSession {
+  return {
+    id: text(row.id),
+    leagueId: text(row.league_id),
+    userId: text(row.user_id) || null,
+    userTeamId: text(row.user_team_id),
+    userTeamName: text(row.user_team_name),
+    adpSnapshotId: text(row.adp_snapshot_id) || null,
+    status: text(row.status, "setup") as MockDraftStatus,
+    pickTimerSeconds: nullableNumber(row.pick_timer_seconds),
+    botConfig: objectRecord(row.bot_config),
+    keeperContext: objectRecord(row.keeper_context),
+    draftType: text(row.draft_type, "snake"),
+    roundCount: number(row.round_count),
+    currentPick: nullableNumber(row.current_pick),
+    completedAt: text(row.completed_at) || null,
+    createdAt: text(row.created_at),
+    updatedAt: text(row.updated_at),
+    picks: array(row.picks).map(mapMockDraftPick),
+    board: array(row.board).map(mapMockDraftBoardSlot),
+    availablePlayers: array(row.available_players).map(mapMockDraftAvailablePlayer),
+    rosterNeeds: array(row.roster_needs).map(mapMockDraftRosterNeed),
+    strategyPlan: row.strategy_plan && typeof row.strategy_plan === "object"
+      ? mapMockDraftStrategyPlan(row.strategy_plan as ApiRow)
+      : null,
+    analysis: row.analysis && typeof row.analysis === "object"
+      ? mapMockDraftAnalysis(row.analysis as ApiRow)
+      : null,
+  };
+}
+
+function mapMockDraftPick(row: ApiRow): MockDraftPick {
+  return {
+    id: text(row.id),
+    sessionId: text(row.session_id),
+    round: number(row.round),
+    pickInRound: number(row.pick_in_round),
+    overallPick: number(row.overall_pick),
+    teamId: text(row.team_id),
+    teamName: text(row.team_name),
+    playerId: text(row.player_id),
+    playerName: text(row.player_name),
+    position: text(row.position),
+    nflTeam: text(row.nfl_team),
+    source: text(row.source, "user") as MockDraftPickSource,
+    decisionTimeMs: nullableNumber(row.decision_time_ms),
+    botPersonality: text(row.bot_personality) || null,
+    botDifficulty: text(row.bot_difficulty) || null,
+    reasoningSummary: text(row.reasoning_summary) || null,
+    createdAt: text(row.created_at),
+    updatedAt: text(row.updated_at),
+  };
+}
+
+function mapMockDraftBoardSlot(row: ApiRow): MockDraftBoardSlot {
+  return {
+    round: number(row.round),
+    pickInRound: number(row.pick_in_round),
+    overallPick: number(row.overall_pick),
+    teamId: text(row.team_id) || null,
+    teamName: text(row.team_name),
+    status: text(row.status, "Open") as MockDraftBoardSlot["status"],
+    pick: row.pick && typeof row.pick === "object" ? mapMockDraftPick(row.pick as ApiRow) : null,
+  };
+}
+
+function mapMockDraftAvailablePlayer(row: ApiRow): MockDraftAvailablePlayer {
+  return {
+    playerId: text(row.player_id),
+    playerName: text(row.player_name),
+    position: text(row.position),
+    nflTeam: text(row.nfl_team),
+    adpPick: nullableNumber(row.adp_pick),
+    adpRound: nullableNumber(row.adp_round),
+    risk: nullableNumber(row.risk),
+    projection: nullableNumber(row.projection),
+  };
+}
+
+function mapMockDraftAnalysis(row: ApiRow): MockDraftAnalysis {
+  return {
+    id: text(row.id),
+    sessionId: text(row.session_id),
+    overallLetterGrade: text(row.overall_letter_grade),
+    overallNumericScore: number(row.overall_numeric_score),
+    summary: text(row.summary),
+    strengths: array(row.strengths),
+    weaknesses: array(row.weaknesses),
+    pickFeedback: array(row.pick_feedback),
+    whatIfScenarios: array(row.what_if_scenarios),
+    projectedRankings: objectRecord(row.projected_rankings),
+    futureAdvice: array(row.future_advice),
+    createdAt: text(row.created_at),
+    updatedAt: text(row.updated_at),
+  };
+}
+
+function mapMockDraftRosterNeed(row: ApiRow): MockDraftRosterNeed {
+  return {
+    slot: text(row.slot),
+    filled: number(row.filled),
+    target: number(row.target),
+    remaining: number(row.remaining),
+  };
+}
+
+function mapMockDraftStrategyPlan(row: ApiRow): MockDraftStrategyPlan {
+  return {
+    summary: text(row.summary),
+    roundPlan: array(row.round_plan).map(objectRecord),
+    positionPriorities: array(row.position_priorities).map(objectRecord),
+    targets: array(row.targets).map(objectRecord),
+    fades: array(row.fades).map(objectRecord),
+    contingencies: array(row.contingencies).map(objectRecord),
+    generatedAt: text(row.generated_at) || null,
+    cacheKey: text(row.cache_key) || null,
+    error: text(row.error) || null,
+    aiUsed: Boolean(row.ai_used),
+    model: text(row.model) || null,
+  };
+}
+
+function mapMockDraftHistoryRow(row: ApiRow): MockDraftHistoryRow {
+  return {
+    id: text(row.id),
+    leagueId: text(row.league_id),
+    userTeamId: text(row.user_team_id),
+    userTeamName: text(row.user_team_name),
+    status: text(row.status, "complete") as MockDraftStatus,
+    draftType: text(row.draft_type, "snake"),
+    roundCount: number(row.round_count),
+    pickTimerSeconds: nullableNumber(row.pick_timer_seconds),
+    completedAt: text(row.completed_at) || null,
+    createdAt: text(row.created_at),
+    overallLetterGrade: text(row.overall_letter_grade) || null,
+    overallNumericScore: nullableNumber(row.overall_numeric_score),
+    summary: text(row.summary) || null,
   };
 }
 
@@ -1469,6 +1934,14 @@ function number(value: unknown, fallback = 0): number {
   return fallback;
 }
 
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed = number(value, Number.NaN);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function boolean(value: unknown, fallback = false): boolean {
   if (typeof value === "boolean") {
     return value;
@@ -1478,6 +1951,12 @@ function boolean(value: unknown, fallback = false): boolean {
 
 function array(value: unknown): ApiRow[] {
   return Array.isArray(value) ? (value.filter((item) => item && typeof item === "object") as ApiRow[]) : [];
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function stringArray(value: unknown): string[] {

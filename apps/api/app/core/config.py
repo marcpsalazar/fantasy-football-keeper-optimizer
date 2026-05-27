@@ -18,6 +18,16 @@ class Settings(BaseSettings):
     adp_refresh_url: str | None = None
     adp_refresh_token: str | None = None
     adp_refresh_timeout_seconds: float = 20.0
+    adp_auto_refresh_enabled: bool = False
+    adp_auto_refresh_interval_hours: int = 168
+    adp_auto_refresh_on_startup: bool = True
+    adp_ai_board_size: int = 250
+    adp_ai_extra_candidates: int = 100
+    adp_ai_review_required: bool = True
+    adp_ai_timeout_seconds: float = 180.0
+    adp_ai_max_output_tokens: int = 32000
+    adp_ai_max_jump_warning: float = 60.0
+    adp_ai_max_jump_warning_count: int = 25
     draftsharks_superflex_adp_url: str = "https://www.draftsharks.com/rankings/ppr-superflex"
     fantasy_football_calculator_adp_url: str = "https://fantasyfootballcalculator.com/api/v1/adp"
     sleeper_players_url: str = "https://api.sleeper.app/v1/players/nfl"
@@ -29,6 +39,12 @@ class Settings(BaseSettings):
     session_cookie_samesite: str | None = None
     initial_admin_email: str | None = None
     initial_admin_password: str | None = None
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    mock_draft_ai_enabled: bool = False
+    mock_draft_ai_model: str = "gpt-5.4-mini"
+    mock_draft_ai_timeout_seconds: float = 90.0
+    mock_draft_ai_candidate_limit: int = 40
 
     @property
     def use_secure_session_cookie(self) -> bool:

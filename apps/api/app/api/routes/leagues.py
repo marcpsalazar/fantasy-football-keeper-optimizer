@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from io import StringIO
 from typing import Any, Literal
 import uuid
@@ -14,6 +14,7 @@ from app.db.session import get_session
 from app.core.config import get_settings
 from app.models import (
     ADPEntry,
+    ADPRefreshCandidate,
     ADPSnapshot,
     AppDefaultOptimizerSettings,
     DraftPick,
@@ -37,6 +38,8 @@ from app.services.csv_imports import (
     import_final_rosters_csv,
 )
 from app.services.adp_refresh import ADPRefreshError, refresh_adp_from_api
+from app.services.ai_adp import AIADPError
+from app.services.adp_review import create_ai_adp_refresh_candidate as create_ai_adp_refresh_candidate_service
 from app.services.csv_preview import (
     CSVPreviewError,
     preview_adp_csv,
@@ -77,6 +80,10 @@ class ADPSnapshotCreateRequest(BaseModel):
     format_type: str = "superflex"
     snapshot_date: date
     notes: str | None = None
+
+
+class ADPRefreshCandidateRejectRequest(BaseModel):
+    reason: str | None = None
 
 
 class OptimizerRunRequest(BaseModel):
@@ -393,6 +400,100 @@ def refresh_adp(
     }
 
 
+@router.post(
+    "/leagues/{league_id}/adp/ai-refresh-candidates",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_ai_adp_refresh_candidate(
+    league_id: uuid.UUID,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    league = _require_league(session, league_id)
+    try:
+        candidate = create_ai_adp_refresh_candidate_service(session, league, get_settings())
+    except AIADPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return _adp_refresh_candidate_row(candidate, include_rows=True)
+
+
+@router.get("/leagues/{league_id}/adp/ai-refresh-candidates")
+def list_ai_adp_refresh_candidates(
+    league_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    candidates = session.exec(
+        select(ADPRefreshCandidate)
+        .where(ADPRefreshCandidate.league_id == league_id)
+        .order_by(ADPRefreshCandidate.created_at.desc())
+    ).all()
+    return _table([_adp_refresh_candidate_row(candidate) for candidate in candidates])
+
+
+@router.get("/adp/ai-refresh-candidates/{candidate_id}")
+def read_ai_adp_refresh_candidate(
+    candidate_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    candidate = _require_adp_refresh_candidate(session, candidate_id)
+    return _adp_refresh_candidate_row(candidate, include_rows=True)
+
+
+@router.post("/adp/ai-refresh-candidates/{candidate_id}/approve")
+def approve_ai_adp_refresh_candidate(
+    candidate_id: uuid.UUID,
+    admin: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    candidate = _require_adp_refresh_candidate(session, candidate_id)
+    if candidate.status != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending candidates can be approved")
+    if not candidate.normalized_rows:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Candidate has no ADP rows")
+    try:
+        result = import_adp_csv(session, candidate.league_id, _rows_to_csv_text(candidate.normalized_rows))
+    except CSVImportError as exc:
+        candidate.status = "failed"
+        candidate.error_message = str(exc)
+        session.add(candidate)
+        session.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    candidate.status = "approved"
+    candidate.approved_by_user_id = admin.id if admin else None
+    candidate.approved_at = datetime.now(UTC).isoformat()
+    candidate.error_message = None
+    session.add(candidate)
+    session.commit()
+    session.refresh(candidate)
+    return {
+        **_adp_refresh_candidate_row(candidate),
+        "imported": result.imported,
+        "rows": result.rows,
+    }
+
+
+@router.post("/adp/ai-refresh-candidates/{candidate_id}/reject")
+def reject_ai_adp_refresh_candidate(
+    candidate_id: uuid.UUID,
+    payload: ADPRefreshCandidateRejectRequest | None = None,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    candidate = _require_adp_refresh_candidate(session, candidate_id)
+    if candidate.status != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending candidates can be rejected")
+    candidate.status = "rejected"
+    candidate.error_message = (payload.reason if payload else None) or "Rejected by admin"
+    session.add(candidate)
+    session.commit()
+    session.refresh(candidate)
+    return _adp_refresh_candidate_row(candidate)
+
+
 @router.post("/leagues/{league_id}/adp/import-composite")
 def import_composite_adp(
     league_id: uuid.UUID,
@@ -401,8 +502,8 @@ def import_composite_adp(
 ) -> dict[str, Any]:
     league = _require_league(session, league_id)
     try:
-        composite_rows = build_composite_adp_template_rows(session, league, get_settings())
-        import_rows = [row for row in composite_rows if str(row.get("adp_pick", "")).strip()]
+        composite = build_composite_adp_template_rows(session, league, get_settings())
+        import_rows = [row for row in composite.rows if str(row.get("adp_pick", "")).strip()]
         if not import_rows:
             raise CompositeADPError("Composite ADP build returned no importable rows with ADP values")
         result = import_adp_csv(session, league_id, _rows_to_csv_text(import_rows))
@@ -412,9 +513,24 @@ def import_composite_adp(
     return _table(
         result.rows,
         imported=result.imported,
-        generated=len(composite_rows),
-        skipped_missing_adp=len(composite_rows) - len(import_rows),
+        generated=len(composite.rows),
+        skipped_missing_adp=len(composite.rows) - len(import_rows),
+        coverage=composite.coverage,
     )
+
+
+@router.get("/leagues/{league_id}/adp/coverage-summary")
+def adp_coverage_summary(
+    league_id: uuid.UUID,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    league = _require_league(session, league_id)
+    try:
+        composite = build_composite_adp_template_rows(session, league, get_settings())
+    except CompositeADPError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return composite.coverage
 
 
 @router.post("/leagues/{league_id}/adp/preview")
@@ -801,11 +917,11 @@ def export_adp_template_csv(
 ) -> Response:
     league = _require_league(session, league_id)
     try:
-        rows = build_composite_adp_template_rows(session, league, get_settings())
+        result = build_composite_adp_template_rows(session, league, get_settings())
     except CompositeADPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return _csv_response(
-        rows=rows,
+        rows=result.rows,
         filename=f"adp-template-{league_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv",
     )
 
@@ -998,6 +1114,44 @@ def _adp_snapshot_row(snapshot: ADPSnapshot, *, entry_count: int) -> dict[str, A
         "created_at": snapshot.created_at.isoformat(),
         "updated_at": snapshot.updated_at.isoformat(),
     }
+
+
+def _adp_refresh_candidate_row(
+    candidate: ADPRefreshCandidate,
+    *,
+    include_rows: bool = False,
+) -> dict[str, Any]:
+    row_count = len(candidate.normalized_rows or [])
+    payload: dict[str, Any] = {
+        "id": str(candidate.id),
+        "league_id": str(candidate.league_id),
+        "provider": candidate.provider,
+        "model": candidate.model,
+        "status": candidate.status,
+        "board_size": candidate.board_size,
+        "generated_at": candidate.generated_at,
+        "source_summary": candidate.source_summary,
+        "warnings": candidate.warnings,
+        "warning_count": len(candidate.warnings or []),
+        "row_count": row_count,
+        "error_message": candidate.error_message,
+        "approved_by_user_id": str(candidate.approved_by_user_id) if candidate.approved_by_user_id else None,
+        "approved_at": candidate.approved_at,
+        "created_at": candidate.created_at.isoformat(),
+        "updated_at": candidate.updated_at.isoformat(),
+    }
+    if include_rows:
+        payload["rows"] = candidate.normalized_rows
+    else:
+        payload["preview_rows"] = (candidate.normalized_rows or [])[:8]
+    return payload
+
+
+def _require_adp_refresh_candidate(session: Session, candidate_id: uuid.UUID) -> ADPRefreshCandidate:
+    candidate = session.get(ADPRefreshCandidate, candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ADP refresh candidate not found")
+    return candidate
 
 
 def _manual_override_rows(

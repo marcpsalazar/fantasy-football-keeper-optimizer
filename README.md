@@ -134,6 +134,18 @@ SESSION_COOKIE_SECURE=false
 SESSION_COOKIE_SAMESITE=lax
 INITIAL_ADMIN_EMAIL=admin@example.com
 INITIAL_ADMIN_PASSWORD=change-me
+OPENAI_API_KEY=
+MOCK_DRAFT_AI_ENABLED=false
+MOCK_DRAFT_AI_MODEL=gpt-5.4-mini
+MOCK_DRAFT_AI_TIMEOUT_SECONDS=90
+ADP_PROVIDER=fantasyfootballcalculator
+ADP_AUTO_REFRESH_ENABLED=false
+ADP_AUTO_REFRESH_INTERVAL_HOURS=168
+ADP_AI_BOARD_SIZE=250
+ADP_AI_EXTRA_CANDIDATES=100
+ADP_AI_REVIEW_REQUIRED=true
+ADP_AI_TIMEOUT_SECONDS=180
+ADP_AI_MAX_OUTPUT_TOKENS=32000
 ```
 
 `apps/api/.env` is loaded by FastAPI:
@@ -151,7 +163,29 @@ SESSION_COOKIE_SECURE=false
 SESSION_COOKIE_SAMESITE=lax
 INITIAL_ADMIN_EMAIL=admin@example.com
 INITIAL_ADMIN_PASSWORD=change-me
+OPENAI_API_KEY=
+MOCK_DRAFT_AI_ENABLED=false
+MOCK_DRAFT_AI_MODEL=gpt-5.4-mini
+MOCK_DRAFT_AI_TIMEOUT_SECONDS=90
+ADP_PROVIDER=fantasyfootballcalculator
+ADP_AUTO_REFRESH_ENABLED=false
+ADP_AUTO_REFRESH_INTERVAL_HOURS=168
+ADP_AI_BOARD_SIZE=250
+ADP_AI_EXTRA_CANDIDATES=100
+ADP_AI_REVIEW_REQUIRED=true
+ADP_AI_TIMEOUT_SECONDS=180
+ADP_AI_MAX_OUTPUT_TOKENS=32000
 ```
+
+Mock draft AI is disabled by default. Set `OPENAI_API_KEY` and `MOCK_DRAFT_AI_ENABLED=true`
+on the API service to have bot picks and draft analysis call an OpenAI model. If the model call
+fails or returns an invalid player, the API falls back to the built-in deterministic draft logic.
+
+AI-synthesized ADP is also opt-in. Set `ADP_PROVIDER=ai_synthesized`,
+`ADP_AUTO_REFRESH_ENABLED=true`, and `OPENAI_API_KEY` on the API service to refresh ADP weekly.
+The generated board must pass guardrails before import: exact board size, no duplicate players,
+only `QB/RB/WR/TE/K/DST`, at least one player from every allowed position, valid positive ADP
+picks, contiguous ranks, source notes, and bounded movement warnings versus the prior snapshot.
 
 `apps/web/.env.local` is loaded by Next.js:
 

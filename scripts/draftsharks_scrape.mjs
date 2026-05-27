@@ -20,8 +20,13 @@ const timeoutMs = Number(process.env.DRAFTSHARKS_SCRAPER_TIMEOUT_MS || 90000);
 const startedAt = Date.now();
 
 function emit(payload, exitCode = 0) {
-  process.stdout.write(`${JSON.stringify(payload)}\n`);
-  process.exit(exitCode);
+  // Use process.exitCode + stream end instead of process.exit() so stdout
+  // is fully flushed before the process terminates (process.exit() can
+  // truncate large payloads at the 64KB pipe buffer boundary).
+  process.exitCode = exitCode;
+  process.stdout.write(`${JSON.stringify(payload)}\n`, () => {
+    process.stdout.end();
+  });
 }
 
 function timedOut() {
