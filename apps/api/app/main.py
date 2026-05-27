@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,6 +7,7 @@ from sqlmodel import Session, select
 
 from app.api.routes.auth import router as auth_router
 from app.api.routes.leagues import router as leagues_router
+from app.api.routes.mock_drafts import router as mock_drafts_router
 from app.core.config import get_settings
 from app.models import User
 from app.schemas.health import HealthResponse
@@ -37,7 +39,21 @@ def create_app() -> FastAPI:
                     settings.initial_admin_password,
                 )
 
-        yield
+        adp_refresh_task: asyncio.Task[None] | None = None
+        if settings.adp_auto_refresh_enabled:
+            from app.services.adp_scheduler import weekly_adp_refresh_loop
+
+            adp_refresh_task = asyncio.create_task(weekly_adp_refresh_loop(settings))
+
+        try:
+            yield
+        finally:
+            if adp_refresh_task is not None:
+                adp_refresh_task.cancel()
+                try:
+                    await adp_refresh_task
+                except asyncio.CancelledError:
+                    pass
 
     api = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 
@@ -55,6 +71,7 @@ def create_app() -> FastAPI:
 
     api.include_router(auth_router)
     api.include_router(leagues_router)
+    api.include_router(mock_drafts_router)
 
     return api
 

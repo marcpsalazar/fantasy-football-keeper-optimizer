@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 from app.models import ADPEntry, ADPSnapshot, DraftPick, FinalRosterEntry, League, Player, Team
 
 MAX_ROUND_PICK_ROUND = 30
+SPECIAL_TEAM_MIN_ADP_PICK = 100
 
 
 class CSVImportError(ValueError):
@@ -32,6 +33,8 @@ def import_draft_results_csv(session: Session, league_id: uuid.UUID, csv_text: s
     for row in _read_csv(csv_text):
         team_name = _required(row, "team")
         player_name = _required(row, "player")
+        if _is_garbled_player_name(player_name):
+            raise CSVImportError(f"Player name looks garbled (concatenated/lowercase): '{player_name}'")
         position = _position(_required(row, "position"))
         overall_pick = _int(_required(row, "overall_pick"))
         round_number = _int(_first(row, "round"), _round_for_pick(overall_pick, _team_count(session, league)))
@@ -94,6 +97,8 @@ def import_final_rosters_csv(session: Session, league_id: uuid.UUID, csv_text: s
     for row in _read_csv(csv_text):
         team_name = _required(row, "team")
         player_name = _required(row, "player")
+        if _is_garbled_player_name(player_name):
+            raise CSVImportError(f"Player name looks garbled (concatenated/lowercase): '{player_name}'")
         position = _position(_required(row, "position"))
         roster_status = _first(row, "roster_status", "status") or "Bench"
         season_year = _int(_first(row, "season_year", "season", "year"), league.season_year)
@@ -158,6 +163,10 @@ def import_adp_csv(session: Session, league_id: uuid.UUID, csv_text: str) -> Imp
         raw_adp_pick = _required(row, "adp_pick", "adp", "pick")
         adp_pick = _normalize_adp_pick(raw_adp_pick, team_count)
         adp_round = _float(_first(row, "adp_round", "round"), float(_round_for_pick(adp_pick, team_count)))
+        if _is_placeholder_player_name(player_name):
+            raise CSVImportError(f"ADP import contains a placeholder player row: {player_name}")
+        if _is_implausible_special_team_adp(position, adp_pick):
+            raise CSVImportError(f"{position} ADP is implausibly early: {player_name} at {adp_pick:g}")
 
         snapshot = _get_or_create_adp_snapshot(
             session=session,
@@ -302,10 +311,16 @@ def _get_or_create_player(
             Player.position == position,
         )
     ).all()
-    player = next((candidate for candidate in players if candidate.nfl_team == nfl_team), None)
-    player = player or next((candidate for candidate in players if candidate.nfl_team is None), None)
+    # Prefer exact team match, then no-team entry, then any existing record.
+    # Falling back to any existing record prevents duplicate player rows when
+    # the same player appears with two different nfl_team values in one import.
+    player = (
+        next((c for c in players if c.nfl_team == nfl_team), None)
+        or next((c for c in players if c.nfl_team is None), None)
+        or (players[0] if players else None)
+    )
     if player is not None:
-        if nfl_team and player.nfl_team is None:
+        if nfl_team and player.nfl_team != nfl_team:
             player.nfl_team = nfl_team
         return player
 
@@ -375,7 +390,27 @@ def _required(row: dict[str, str], *names: str) -> str:
 
 
 def _position(position: str) -> str:
-    return position.strip().upper()
+    normalized = position.strip().upper()
+    return "DST" if normalized in {"DEF", "D/ST", "DST"} else normalized
+
+
+def _is_placeholder_player_name(name: str) -> bool:
+    normalized = " ".join(name.strip().lower().replace("_", " ").replace("-", " ").split())
+    return (
+        "placeholder" in normalized
+        or normalized.startswith("source not substantiated")
+        or normalized in {"kickers", "defenses", "quarterbacks", "running backs", "wide receivers", "tight ends"}
+    )
+
+
+def _is_garbled_player_name(name: str) -> bool:
+    """True for names that look like concatenated/garbled imports (no space, all-lowercase, > 6 chars)."""
+    stripped = name.strip()
+    return bool(stripped) and " " not in stripped and stripped == stripped.lower() and len(stripped) > 6
+
+
+def _is_implausible_special_team_adp(position: str, adp_pick: float) -> bool:
+    return _position(position) in {"K", "DST"} and adp_pick < SPECIAL_TEAM_MIN_ADP_PICK
 
 
 def _int(value: str | int | float | None, default: int | None = None) -> int:

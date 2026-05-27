@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from io import StringIO
 from typing import Any, Literal
 import uuid
@@ -14,7 +14,9 @@ from app.db.session import get_session
 from app.core.config import get_settings
 from app.models import (
     ADPEntry,
+    ADPRefreshCandidate,
     ADPSnapshot,
+    AIExplanation,
     AppDefaultOptimizerSettings,
     DraftPick,
     FinalRosterEntry,
@@ -37,6 +39,8 @@ from app.services.csv_imports import (
     import_final_rosters_csv,
 )
 from app.services.adp_refresh import ADPRefreshError, refresh_adp_from_api
+from app.services.ai_adp import AIADPError
+from app.services.adp_review import create_ai_adp_refresh_candidate as create_ai_adp_refresh_candidate_service
 from app.services.csv_preview import (
     CSVPreviewError,
     preview_adp_csv,
@@ -55,6 +59,19 @@ from app.services.optimizer import (
 )
 from app.services.pdf_export import PDFExportError, build_team_outlooks_pdf
 from app.services.auth import require_admin, require_current_user
+from app.services import keeper_explanation_ai
+from app.services.keeper_explanation_ai import (
+    ENTITY_TYPE as KEEPER_EXPLANATION_ENTITY_TYPE,
+    build_explanation_context,
+    explanation_input_hash,
+)
+from app.services import scenario_narrative_ai
+from app.services.scenario_narrative_ai import (
+    ENTITY_TYPE as SCENARIO_NARRATIVE_ENTITY_TYPE,
+    build_narrative_context,
+    narrative_input_hash,
+)
+from app.services.mock_draft_ai import MockDraftAIError
 
 router = APIRouter(
     prefix="/api",
@@ -77,6 +94,10 @@ class ADPSnapshotCreateRequest(BaseModel):
     format_type: str = "superflex"
     snapshot_date: date
     notes: str | None = None
+
+
+class ADPRefreshCandidateRejectRequest(BaseModel):
+    reason: str | None = None
 
 
 class OptimizerRunRequest(BaseModel):
@@ -393,6 +414,100 @@ def refresh_adp(
     }
 
 
+@router.post(
+    "/leagues/{league_id}/adp/ai-refresh-candidates",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_ai_adp_refresh_candidate(
+    league_id: uuid.UUID,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    league = _require_league(session, league_id)
+    try:
+        candidate = create_ai_adp_refresh_candidate_service(session, league, get_settings())
+    except AIADPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return _adp_refresh_candidate_row(candidate, include_rows=True)
+
+
+@router.get("/leagues/{league_id}/adp/ai-refresh-candidates")
+def list_ai_adp_refresh_candidates(
+    league_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    candidates = session.exec(
+        select(ADPRefreshCandidate)
+        .where(ADPRefreshCandidate.league_id == league_id)
+        .order_by(ADPRefreshCandidate.created_at.desc())
+    ).all()
+    return _table([_adp_refresh_candidate_row(candidate) for candidate in candidates])
+
+
+@router.get("/adp/ai-refresh-candidates/{candidate_id}")
+def read_ai_adp_refresh_candidate(
+    candidate_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    candidate = _require_adp_refresh_candidate(session, candidate_id)
+    return _adp_refresh_candidate_row(candidate, include_rows=True)
+
+
+@router.post("/adp/ai-refresh-candidates/{candidate_id}/approve")
+def approve_ai_adp_refresh_candidate(
+    candidate_id: uuid.UUID,
+    admin: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    candidate = _require_adp_refresh_candidate(session, candidate_id)
+    if candidate.status != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending candidates can be approved")
+    if not candidate.normalized_rows:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Candidate has no ADP rows")
+    try:
+        result = import_adp_csv(session, candidate.league_id, _rows_to_csv_text(candidate.normalized_rows))
+    except CSVImportError as exc:
+        candidate.status = "failed"
+        candidate.error_message = str(exc)
+        session.add(candidate)
+        session.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    candidate.status = "approved"
+    candidate.approved_by_user_id = admin.id if admin else None
+    candidate.approved_at = datetime.now(UTC).isoformat()
+    candidate.error_message = None
+    session.add(candidate)
+    session.commit()
+    session.refresh(candidate)
+    return {
+        **_adp_refresh_candidate_row(candidate),
+        "imported": result.imported,
+        "rows": result.rows,
+    }
+
+
+@router.post("/adp/ai-refresh-candidates/{candidate_id}/reject")
+def reject_ai_adp_refresh_candidate(
+    candidate_id: uuid.UUID,
+    payload: ADPRefreshCandidateRejectRequest | None = None,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    candidate = _require_adp_refresh_candidate(session, candidate_id)
+    if candidate.status != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending candidates can be rejected")
+    candidate.status = "rejected"
+    candidate.error_message = (payload.reason if payload else None) or "Rejected by admin"
+    session.add(candidate)
+    session.commit()
+    session.refresh(candidate)
+    return _adp_refresh_candidate_row(candidate)
+
+
 @router.post("/leagues/{league_id}/adp/import-composite")
 def import_composite_adp(
     league_id: uuid.UUID,
@@ -401,8 +516,8 @@ def import_composite_adp(
 ) -> dict[str, Any]:
     league = _require_league(session, league_id)
     try:
-        composite_rows = build_composite_adp_template_rows(session, league, get_settings())
-        import_rows = [row for row in composite_rows if str(row.get("adp_pick", "")).strip()]
+        composite = build_composite_adp_template_rows(session, league, get_settings())
+        import_rows = [row for row in composite.rows if str(row.get("adp_pick", "")).strip()]
         if not import_rows:
             raise CompositeADPError("Composite ADP build returned no importable rows with ADP values")
         result = import_adp_csv(session, league_id, _rows_to_csv_text(import_rows))
@@ -412,9 +527,24 @@ def import_composite_adp(
     return _table(
         result.rows,
         imported=result.imported,
-        generated=len(composite_rows),
-        skipped_missing_adp=len(composite_rows) - len(import_rows),
+        generated=len(composite.rows),
+        skipped_missing_adp=len(composite.rows) - len(import_rows),
+        coverage=composite.coverage,
     )
+
+
+@router.get("/leagues/{league_id}/adp/coverage-summary")
+def adp_coverage_summary(
+    league_id: uuid.UUID,
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    league = _require_league(session, league_id)
+    try:
+        composite = build_composite_adp_template_rows(session, league, get_settings())
+    except CompositeADPError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return composite.coverage
 
 
 @router.post("/leagues/{league_id}/adp/preview")
@@ -625,7 +755,127 @@ def compare_optimizer_scenarios(
     except OptimizerInputError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    return _scenario_comparison_payload(comparisons)
+    base_payload = _scenario_comparison_payload(comparisons)
+    all_teams = session.exec(select(Team).where(Team.league_id == league_id)).all()
+    user_team_id = _resolve_user_team_id(user, all_teams)
+    narrative = _load_scenario_narrative(
+        session,
+        league_id,
+        user_id=_user_id(user),
+        scenario_rows=base_payload["scenarios"],
+        user_team_id=user_team_id,
+        teams=all_teams,
+    )
+    base_payload["narrative"] = narrative
+    return base_payload
+
+
+@router.get("/leagues/{league_id}/optimizer/scenarios/narrative")
+def get_scenario_narrative(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+    app_settings=Depends(get_settings),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    existing = session.exec(
+        select(AIExplanation).where(
+            AIExplanation.entity_type == SCENARIO_NARRATIVE_ENTITY_TYPE,
+            AIExplanation.league_id == league_id,
+            AIExplanation.user_id == _user_id(user),
+        )
+        .order_by(AIExplanation.created_at.desc())
+    ).first()
+    return {"narrative": existing.content if existing else None}
+
+
+@router.post("/leagues/{league_id}/optimizer/scenarios/narrative")
+def generate_scenario_narrative(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+    app_settings=Depends(get_settings),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    try:
+        comparisons = run_scenario_comparison(
+            session,
+            league_id,
+            user_id=_user_id(user),
+            persist=False,
+        )
+    except OptimizerInputError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    base_payload = _scenario_comparison_payload(comparisons)
+    scenario_rows: list[dict[str, Any]] = base_payload["scenarios"]
+
+    if not scenario_rows:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No scenario data available. Run scenarios first.",
+        )
+
+    league = session.get(League, league_id)
+    teams = session.exec(select(Team).where(Team.league_id == league_id)).all()
+    user_team_id = _resolve_user_team_id(user, teams)
+    user_team_context = _build_user_team_context(scenario_rows, user_team_id, teams)
+
+    summaries = _narrative_summaries(scenario_rows, user_team_context)
+    rec_hash = narrative_input_hash(
+        league_id=league_id,
+        user_id=_user_id(user),
+        scenario_summaries=summaries,
+    )
+    existing = session.exec(
+        select(AIExplanation).where(
+            AIExplanation.entity_type == SCENARIO_NARRATIVE_ENTITY_TYPE,
+            AIExplanation.input_hash == rec_hash,
+        )
+    ).first()
+    if existing is not None:
+        return {"narrative": existing.content}
+
+    if not scenario_narrative_ai.is_enabled(app_settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scenario narrative AI is not enabled. Set SCENARIO_NARRATIVE_AI_ENABLED=true.",
+        )
+
+    context = build_narrative_context(
+        scoring_format=league.scoring_format if league else "ppr",
+        draft_type=league.draft_type if league else "snake",
+        team_count=len(teams),
+        scenarios=scenario_rows,
+        user_team_context=user_team_context,
+    )
+    try:
+        result = scenario_narrative_ai.generate_scenario_narrative(
+            settings=app_settings, context=context
+        )
+    except MockDraftAIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI narrative failed: {exc}",
+        ) from exc
+
+    content = {
+        "summary": result.summary,
+        "best_fit": result.best_fit,
+        "tradeoffs": result.tradeoffs,
+        "decision_notes": result.decision_notes,
+    }
+    record = AIExplanation(
+        league_id=league_id,
+        user_id=_user_id(user),
+        entity_type=SCENARIO_NARRATIVE_ENTITY_TYPE,
+        input_hash=rec_hash,
+        model=app_settings.scenario_narrative_model,
+        content=content,
+    )
+    session.add(record)
+    session.commit()
+    return {"narrative": content}
 
 
 @router.get("/leagues/{league_id}/scenario-selections")
@@ -770,6 +1020,121 @@ def read_optimizer_results(
     return _optimizer_table(session, recommendations)
 
 
+@router.get("/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation")
+def get_keeper_explanation(
+    league_id: uuid.UUID,
+    recommendation_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    recommendation = _require_recommendation(session, recommendation_id, league_id, user)
+    rec_hash = explanation_input_hash(
+        league_id=recommendation.league_id,
+        user_id=recommendation.user_id,
+        player_id=recommendation.player_id,
+        scenario_name=recommendation.scenario_name,
+        keeper_cost_pick=recommendation.keeper_cost_pick,
+        adp_pick=recommendation.adp_pick,
+        keeper_score=recommendation.keeper_score,
+    )
+    existing = session.exec(
+        select(AIExplanation).where(
+            AIExplanation.entity_type == KEEPER_EXPLANATION_ENTITY_TYPE,
+            AIExplanation.input_hash == rec_hash,
+        )
+    ).first()
+    if existing is None:
+        return {"recommendation_id": str(recommendation_id), "ai_explanation": None}
+    return {"recommendation_id": str(recommendation_id), "ai_explanation": existing.content}
+
+
+@router.post("/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation")
+def generate_keeper_explanation(
+    league_id: uuid.UUID,
+    recommendation_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+    settings=Depends(get_settings),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    recommendation = _require_recommendation(session, recommendation_id, league_id, user)
+    player = session.get(Player, recommendation.player_id)
+    league = session.get(League, recommendation.league_id)
+    team_count = session.exec(
+        select(Team).where(Team.league_id == recommendation.league_id)
+    ).all()
+
+    rec_hash = explanation_input_hash(
+        league_id=recommendation.league_id,
+        user_id=recommendation.user_id,
+        player_id=recommendation.player_id,
+        scenario_name=recommendation.scenario_name,
+        keeper_cost_pick=recommendation.keeper_cost_pick,
+        adp_pick=recommendation.adp_pick,
+        keeper_score=recommendation.keeper_score,
+    )
+    existing = session.exec(
+        select(AIExplanation).where(
+            AIExplanation.entity_type == KEEPER_EXPLANATION_ENTITY_TYPE,
+            AIExplanation.input_hash == rec_hash,
+        )
+    ).first()
+    if existing is not None:
+        return {"recommendation_id": str(recommendation_id), "ai_explanation": existing.content}
+
+    if not keeper_explanation_ai.is_enabled(settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Keeper explanation AI is not enabled. Set KEEPER_EXPLANATION_AI_ENABLED=true.",
+        )
+
+    context = build_explanation_context(
+        player_name=player.full_name if player else "Unknown",
+        position=player.position if player else "?",
+        nfl_team=player.nfl_team if player else None,
+        keeper_cost_pick=recommendation.keeper_cost_pick,
+        keeper_cost_round=recommendation.keeper_cost_round,
+        adp_pick=recommendation.adp_pick,
+        adp_round=recommendation.adp_round,
+        keeper_value=recommendation.keeper_value,
+        keeper_score=recommendation.keeper_score,
+        is_recommended=recommendation.is_recommended,
+        is_eligible=recommendation.is_eligible,
+        scenario_name=recommendation.scenario_name,
+        scoring_format=league.scoring_format if league else "ppr",
+        draft_type=league.draft_type if league else "snake",
+        team_count=len(team_count),
+    )
+    try:
+        result = keeper_explanation_ai.generate_keeper_explanation(settings=settings, context=context)
+    except MockDraftAIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI explanation failed: {exc}",
+        ) from exc
+
+    content = {
+        "short_reason": result.short_reason,
+        "value_explanation": result.value_explanation,
+        "risk_note": result.risk_note,
+        "opportunity_cost": result.opportunity_cost,
+        "decision": result.decision,
+    }
+    record = AIExplanation(
+        league_id=recommendation.league_id,
+        user_id=recommendation.user_id,
+        entity_type=KEEPER_EXPLANATION_ENTITY_TYPE,
+        entity_id=recommendation.id,
+        input_hash=rec_hash,
+        model=settings.keeper_explanation_model,
+        content=content,
+    )
+    session.add(record)
+    session.commit()
+    return {"recommendation_id": str(recommendation_id), "ai_explanation": content}
+
+
 @router.get("/leagues/{league_id}/exports/keeper-recommendations.csv")
 def export_keeper_recommendations_csv(
     league_id: uuid.UUID,
@@ -801,11 +1166,11 @@ def export_adp_template_csv(
 ) -> Response:
     league = _require_league(session, league_id)
     try:
-        rows = build_composite_adp_template_rows(session, league, get_settings())
+        result = build_composite_adp_template_rows(session, league, get_settings())
     except CompositeADPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return _csv_response(
-        rows=rows,
+        rows=result.rows,
         filename=f"adp-template-{league_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv",
     )
 
@@ -998,6 +1363,44 @@ def _adp_snapshot_row(snapshot: ADPSnapshot, *, entry_count: int) -> dict[str, A
         "created_at": snapshot.created_at.isoformat(),
         "updated_at": snapshot.updated_at.isoformat(),
     }
+
+
+def _adp_refresh_candidate_row(
+    candidate: ADPRefreshCandidate,
+    *,
+    include_rows: bool = False,
+) -> dict[str, Any]:
+    row_count = len(candidate.normalized_rows or [])
+    payload: dict[str, Any] = {
+        "id": str(candidate.id),
+        "league_id": str(candidate.league_id),
+        "provider": candidate.provider,
+        "model": candidate.model,
+        "status": candidate.status,
+        "board_size": candidate.board_size,
+        "generated_at": candidate.generated_at,
+        "source_summary": candidate.source_summary,
+        "warnings": candidate.warnings,
+        "warning_count": len(candidate.warnings or []),
+        "row_count": row_count,
+        "error_message": candidate.error_message,
+        "approved_by_user_id": str(candidate.approved_by_user_id) if candidate.approved_by_user_id else None,
+        "approved_at": candidate.approved_at,
+        "created_at": candidate.created_at.isoformat(),
+        "updated_at": candidate.updated_at.isoformat(),
+    }
+    if include_rows:
+        payload["rows"] = candidate.normalized_rows
+    else:
+        payload["preview_rows"] = (candidate.normalized_rows or [])[:8]
+    return payload
+
+
+def _require_adp_refresh_candidate(session: Session, candidate_id: uuid.UUID) -> ADPRefreshCandidate:
+    candidate = session.get(ADPRefreshCandidate, candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ADP refresh candidate not found")
+    return candidate
 
 
 def _manual_override_rows(
@@ -1244,6 +1647,26 @@ def _require_user(session: Session, user_id: uuid.UUID) -> User:
     return user
 
 
+def _require_recommendation(
+    session: Session,
+    recommendation_id: uuid.UUID,
+    league_id: uuid.UUID,
+    user: User | None,
+) -> KeeperRecommendation:
+    recommendation = session.get(KeeperRecommendation, recommendation_id)
+    if recommendation is None or recommendation.league_id != league_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recommendation not found",
+        )
+    if recommendation.user_id != _user_id(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
+    return recommendation
+
+
 def _resolve_optimizer_settings(
     session: Session,
     league_id: uuid.UUID,
@@ -1334,12 +1757,40 @@ def _optimizer_table(
         else {}
     )
 
+    input_hashes = {
+        recommendation.id: explanation_input_hash(
+            league_id=recommendation.league_id,
+            user_id=recommendation.user_id,
+            player_id=recommendation.player_id,
+            scenario_name=recommendation.scenario_name,
+            keeper_cost_pick=recommendation.keeper_cost_pick,
+            adp_pick=recommendation.adp_pick,
+            keeper_score=recommendation.keeper_score,
+        )
+        for recommendation in recommendations
+    }
+    hash_to_explanation = (
+        {
+            exp.input_hash: exp
+            for exp in session.exec(
+                select(AIExplanation).where(
+                    AIExplanation.entity_type == KEEPER_EXPLANATION_ENTITY_TYPE,
+                    AIExplanation.input_hash.in_(set(input_hashes.values())),
+                )
+            ).all()
+        }
+        if input_hashes
+        else {}
+    )
+
     rows = []
     for recommendation in recommendations:
         team = teams.get(recommendation.team_id)
         player = players.get(recommendation.player_id)
         override = overrides.get((recommendation.team_id, recommendation.player_id))
         adp_entry = adp_entries.get((recommendation.adp_snapshot_id, recommendation.player_id))
+        rec_hash = input_hashes.get(recommendation.id)
+        explanation = hash_to_explanation.get(rec_hash) if rec_hash else None
         rows.append(
             {
                 "id": str(recommendation.id),
@@ -1369,6 +1820,7 @@ def _optimizer_table(
                 "manual_override": override.override_type if override else "auto",
                 "override_notes": override.notes if override else None,
                 "reason": recommendation.reason,
+                "ai_explanation": explanation.content if explanation else None,
             }
         )
 
@@ -1430,7 +1882,10 @@ def _user_id(user: User | None) -> uuid.UUID | None:
     return user.id if user is not None else None
 
 
-def _scenario_comparison_payload(comparisons: list[ScenarioComparison]) -> dict[str, Any]:
+def _scenario_comparison_payload(
+    comparisons: list[ScenarioComparison],
+    narrative: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     team_names = sorted(
         {
             team.team_name
@@ -1480,7 +1935,123 @@ def _scenario_comparison_payload(comparisons: list[ScenarioComparison]) -> dict[
         "team_names": team_names,
         "scenario_names": [row["scenario_name"] for row in scenario_rows],
         "scenarios": scenario_rows,
+        "narrative": narrative,
     }
+
+
+def _resolve_user_team_id(
+    user: User | None,
+    teams: list[Team],
+) -> uuid.UUID | None:
+    if user is None:
+        return None
+    for team in teams:
+        if team.user_id == user.id:
+            return team.id
+    return None
+
+
+def _build_user_team_context(
+    scenario_rows: list[dict[str, Any]],
+    user_team_id: uuid.UUID | None,
+    teams: list[Team],
+) -> dict[str, Any] | None:
+    if user_team_id is None:
+        return None
+    team_name = next((t.name for t in teams if t.id == user_team_id), None)
+    if team_name is None:
+        return None
+    user_team_id_str = str(user_team_id)
+    scenarios = []
+    for row in scenario_rows:
+        team_data = next(
+            (t for t in row["teams"] if str(t.get("team_id")) == user_team_id_str),
+            None,
+        )
+        if team_data is None:
+            continue
+        scenarios.append({
+            "scenario_name": row["scenario_name"],
+            "your_keepers": [
+                {
+                    "player": k.get("player_name", ""),
+                    "position": k.get("position", ""),
+                }
+                for k in team_data.get("selected_keepers", [])
+            ],
+            "your_picks_forfeited": team_data.get("picks_forfeited", []),
+            "your_strategic_notes": team_data.get("strategic_notes", ""),
+        })
+    if not scenarios:
+        return None
+
+    # Annotate scenarios that share an identical keeper set with another scenario.
+    # Keeper scores differ across scenarios because each uses different weights, so
+    # score comparisons between identical sets are meaningless — flag this for the AI.
+    keeper_sets: dict[str, frozenset[str]] = {
+        s["scenario_name"]: frozenset(k["player"] for k in s["your_keepers"])
+        for s in scenarios
+    }
+    for s in scenarios:
+        identical = sorted(
+            name for name, other in keeper_sets.items()
+            if name != s["scenario_name"] and other == keeper_sets[s["scenario_name"]]
+        )
+        if identical:
+            s["identical_keepers_to"] = identical
+
+    return {"team_name": team_name, "scenarios": scenarios}
+
+
+def _narrative_summaries(
+    scenario_rows: list[dict[str, Any]],
+    user_team_context: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if user_team_context is not None:
+        return [
+            {
+                "scenario_name": s["scenario_name"],
+                "your_keeper_count": len(s["your_keepers"]),
+                "your_keepers": sorted(k["player"] for k in s["your_keepers"]),
+                "your_picks_forfeited": sorted(s.get("your_picks_forfeited", [])),
+            }
+            for s in user_team_context["scenarios"]
+        ]
+    return [
+        {
+            "scenario_name": row["scenario_name"],
+            "total_keeper_score": round(row["total_keeper_score"], 2),
+            "team_count": len(row["teams"]),
+            "keeper_count": sum(len(t["selected_keepers"]) for t in row["teams"]),
+        }
+        for row in scenario_rows
+    ]
+
+
+def _load_scenario_narrative(
+    session: Session,
+    league_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    scenario_rows: list[dict[str, Any]],
+    user_team_id: uuid.UUID | None = None,
+    teams: list[Team] | None = None,
+) -> dict[str, Any] | None:
+    if not scenario_rows:
+        return None
+    user_team_context = _build_user_team_context(scenario_rows, user_team_id, teams or [])
+    summaries = _narrative_summaries(scenario_rows, user_team_context)
+    rec_hash = narrative_input_hash(
+        league_id=league_id,
+        user_id=user_id,
+        scenario_summaries=summaries,
+    )
+    existing = session.exec(
+        select(AIExplanation).where(
+            AIExplanation.entity_type == SCENARIO_NARRATIVE_ENTITY_TYPE,
+            AIExplanation.input_hash == rec_hash,
+        )
+    ).first()
+    return existing.content if existing else None
 
 
 def _table(rows: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:

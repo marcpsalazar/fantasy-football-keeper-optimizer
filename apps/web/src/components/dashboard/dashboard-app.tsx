@@ -3,14 +3,17 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   Ban,
+  Bot,
   BookOpen,
   CalendarDays,
   CheckCircle2,
+  ChevronRight,
   ClipboardList,
   Download,
   FileText,
   Gauge,
   GitCompare,
+  History,
   KeyRound,
   LogOut,
   ListChecks,
@@ -46,6 +49,7 @@ import {
   type ADPEntry,
   type DraftPick,
   type FinalRosterEntry,
+  type KeeperExplanation,
   type KeeperRecommendation,
   type Outlook,
   type ScenarioComparison,
@@ -59,30 +63,43 @@ import {
   changeOwnPassword,
   countDraftRounds,
   createAdminUser,
+  createMockDraft,
   createTeam,
   deleteAdminUser,
+  deleteMockDraft,
   deleteTeam,
   downloadAdpTemplate,
+  endMockDraft,
   exportUrl,
+  generateKeeperExplanation,
+  generateScenarioNarrative,
+  generateMockDraftStrategyPlan,
   hydrateTeams,
   importCompositeAdpSnapshot,
   importCsv,
   getCurrentUser,
   listAdminUsers,
+  listMockDrafts,
   loadWorkspaceData,
   loadScenarioSelections,
   login,
   logout,
   mockWorkspaceData,
+  makeMockDraftBotPick,
+  makeMockDraftPick,
+  pauseMockDraft,
   previewCsv,
-  refreshAdpSnapshot,
+  readMockDraft,
+  resumeMockDraft,
   recommendScenarioSelections,
   resetAdminUserPassword,
   runOptimizer,
   runScenarioComparison,
   saveOptimizerSettings,
+  saveLeagueRosterSettings,
   saveScenarioSelection,
   setManualOverride,
+  startMockDraft,
   updateProfile,
   updateAdminUser,
   updateLeagueCalendarSettings,
@@ -94,9 +111,15 @@ import {
   type CsvPreviewResult,
   type DraftImpactPick,
   type LeagueCalendarSettings,
+  type LeagueRosterSettings,
   type ManualOverrideType,
+  type MockDraftAvailablePlayer,
+  type MockDraftCreateForm,
+  type MockDraftHistoryRow,
+  type MockDraftSession,
   type NewsHeadline,
   type OptimizerSettingsForm,
+  type ScenarioNarrative,
   type UserForm,
   type WorkspaceData,
 } from "@/lib/api";
@@ -114,7 +137,8 @@ type ViewId =
   | "recommendations"
   | "scenarios"
   | "outlooks"
-  | "draft-impact";
+  | "draft-impact"
+  | "mock-draft";
 
 type NavItem = {
   id: ViewId;
@@ -129,6 +153,7 @@ const navItems: NavItem[] = [
   { id: "recommendations", label: "Keeper Recommendations", icon: Trophy },
   { id: "scenarios", label: "Scenario Comparison", icon: GitCompare },
   { id: "draft-impact", label: "Draft Impact", icon: ClipboardList },
+  { id: "mock-draft", label: "Mock Draft", icon: Bot },
   { id: "outlooks", label: "Team Outlook", icon: ShieldCheck },
   { id: "teams", label: "Teams", icon: Users },
   { id: "draft", label: "Draft Results", icon: ClipboardList },
@@ -140,6 +165,22 @@ const navItems: NavItem[] = [
 const formatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
+
+const mockDraftPersonalities = [
+  "Balanced",
+  "Aggressive",
+  "Conservative",
+  "QB Lover",
+  "RB Heavy",
+  "WR Heavy",
+  "Value Hunter",
+  "Need Based",
+  "Chaos",
+] as const;
+
+const mockDraftDifficulties = ["Easy", "Medium", "Hard"] as const;
+const rosterPlayerPositions = ["QB", "RB", "WR", "TE", "K", "DST"] as const;
+const rosterSlotPositions = ["QB", "RB", "WR", "TE", "FLEX", "SUPERFLEX", "K", "DST", "BENCH"] as const;
 
 type DashboardDecision = {
   detail: string;
@@ -423,10 +464,10 @@ type DashboardContextValue = {
   previewCsvText: (kind: CsvImportKind, csvText: string) => Promise<void>;
   importCsvText: (kind: CsvImportKind, csvText: string) => Promise<void>;
   runOptimizerNow: () => Promise<void>;
-  refreshAdpNow: () => Promise<void>;
   runScenariosNow: () => Promise<void>;
   saveSettings: (settings: OptimizerSettingsForm) => Promise<void>;
   saveLeagueCalendarSettings: (settings: LeagueCalendarSettings) => Promise<void>;
+  saveRosterSettings: (settings: LeagueRosterSettings) => Promise<void>;
   downloadAdpTemplateNow: () => Promise<void>;
   importCompositeAdpNow: () => Promise<void>;
   createUserNow: (form: UserForm) => Promise<void>;
@@ -781,24 +822,6 @@ export function DashboardApp() {
     }
   }, [refreshData, requireLeagueId, settings]);
 
-  const refreshAdpNow = React.useCallback(async () => {
-    const leagueId = requireLeagueId();
-    if (!leagueId) {
-      return;
-    }
-    setIsBusy(true);
-    try {
-      await refreshAdpSnapshot(leagueId);
-      await refreshData();
-      setStatusMessage("ADP refreshed from the configured API source.");
-    } catch {
-      setApiStatus("error");
-      setStatusMessage("ADP refresh failed. Check the configured ADP API source.");
-    } finally {
-      setIsBusy(false);
-    }
-  }, [refreshData, requireLeagueId]);
-
   const downloadAdpTemplateNow = React.useCallback(async () => {
     const leagueId = requireLeagueId();
     if (!leagueId) {
@@ -966,8 +989,9 @@ export function DashboardApp() {
     setIsBusy(true);
     try {
       await saveOptimizerSettings(leagueId, settings);
-      const scenarioComparisons = await runScenarioComparison(leagueId);
-      setWorkspace((current) => ({ ...current, scenarioComparisons }));
+      const { comparisons: scenarioComparisons, narrative: scenarioNarrative } =
+        await runScenarioComparison(leagueId);
+      setWorkspace((current) => ({ ...current, scenarioComparisons, scenarioNarrative }));
       setApiStatus("live");
       setStatusMessage("Optimizer settings applied and scenario comparison completed.");
     } catch {
@@ -1022,6 +1046,27 @@ export function DashboardApp() {
       }
     },
     [requireLeagueId],
+  );
+
+  const saveRosterSettings = React.useCallback(
+    async (nextSettings: LeagueRosterSettings) => {
+      const leagueId = requireLeagueId();
+      if (!leagueId) {
+        return;
+      }
+      setIsBusy(true);
+      try {
+        await saveLeagueRosterSettings(leagueId, nextSettings);
+        await refreshData();
+        setStatusMessage("League roster settings saved.");
+      } catch {
+        setApiStatus("error");
+        setStatusMessage("Saving league roster settings failed.");
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [refreshData, requireLeagueId],
   );
 
   const setManualOverrideNow = React.useCallback(
@@ -1088,7 +1133,6 @@ export function DashboardApp() {
       updateProfileAvatarNow,
       updateProfileAliasNow,
       changePasswordNow,
-      refreshAdpNow,
       setSelectedScenarioForTeam,
       previewCsvText,
       importCsvText,
@@ -1096,6 +1140,7 @@ export function DashboardApp() {
       runScenariosNow,
       saveLeagueCalendarSettings,
       saveSettings,
+      saveRosterSettings,
       setManualOverrideNow,
       exportRecommendations,
     }),
@@ -1117,7 +1162,6 @@ export function DashboardApp() {
       logoutNow,
       previewCsvText,
       refreshData,
-      refreshAdpNow,
       resetDisplayAndRefresh,
       updateProfileAvatarNow,
       updateProfileAliasNow,
@@ -1125,6 +1169,7 @@ export function DashboardApp() {
       runScenariosNow,
       saveLeagueCalendarSettings,
       saveSettings,
+      saveRosterSettings,
       resetUserPasswordNow,
       selectedScenarioByTeam,
       setManualOverrideNow,
@@ -1319,6 +1364,7 @@ export function DashboardApp() {
             {activeView === "scenarios" && <ScenarioComparisonPage />}
             {activeView === "outlooks" && <TeamOutlooksPage />}
             {activeView === "draft-impact" && <DraftImpactPage />}
+            {activeView === "mock-draft" && <MockDraftPage />}
           </div>
         </section>
       </div>
@@ -2542,6 +2588,19 @@ function AdminPage({
 
       <div className="flex items-center gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+          <SlidersHorizontal className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-zinc-950">League Settings</h2>
+          <p className="mt-1 text-sm text-zinc-600">
+            Configure roster slots, bench limits, and draftable position caps.
+          </p>
+        </div>
+      </div>
+      <LeagueRosterSettingsPanel />
+
+      <div className="flex items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
           <Upload className="size-5" aria-hidden="true" />
         </div>
         <div className="min-w-0">
@@ -2635,6 +2694,143 @@ function LeagueCalendarSettingsPanel() {
       </CardContent>
     </Card>
   );
+}
+
+function LeagueRosterSettingsPanel() {
+  const { data, isBusy, saveRosterSettings } = useDashboard();
+  const leagueSettings = data.league?.rosterSettings;
+  const [form, setForm] = React.useState<LeagueRosterSettings>(
+    leagueSettings ?? {
+      slots: {},
+      allowedPositions: [],
+      maxPositionCounts: {},
+      benchPositionLimits: {},
+    },
+  );
+
+  React.useEffect(() => {
+    if (leagueSettings) {
+      setForm(leagueSettings);
+    }
+  }, [leagueSettings]);
+
+  const updateSlot = (position: string, value: string) => {
+    setForm((current) => ({
+      ...current,
+      slots: { ...current.slots, [position]: normalizeRosterSettingNumber(value) },
+    }));
+  };
+  const updatePositionLimit = (
+    key: "maxPositionCounts" | "benchPositionLimits",
+    position: string,
+    value: string,
+  ) => {
+    setForm((current) => {
+      const next = { ...current[key] };
+      const parsed = normalizeRosterSettingNumber(value);
+      if (parsed > 0) {
+        next[position] = parsed;
+      } else {
+        delete next[position];
+      }
+      return { ...current, [key]: next };
+    });
+  };
+  const toggleAllowedPosition = (position: string, checked: boolean) => {
+    setForm((current) => {
+      const allowed = new Set(current.allowedPositions);
+      if (checked) {
+        allowed.add(position);
+      } else {
+        allowed.delete(position);
+      }
+      return { ...current, allowedPositions: Array.from(allowed) };
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Roster Rules</CardTitle>
+        <CardDescription>
+          Mock drafts use these settings to size the draft, allow player positions, and reject invalid picks.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="grid gap-4 lg:grid-cols-3">
+          <SettingsGroup title="Roster Slots">
+            {rosterSlotPositions.map((position) => (
+              <NumberField
+                key={position}
+                label={position}
+                min={0}
+                value={form.slots[position] ?? 0}
+                onChange={(value) => updateSlot(position, value)}
+              />
+            ))}
+          </SettingsGroup>
+
+          <SettingsGroup title="Draftable Positions">
+            <div className="grid gap-2">
+              {rosterPlayerPositions.map((position) => (
+                <label
+                  className="flex items-center justify-between gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  key={position}
+                >
+                  <span className="font-medium text-zinc-700">{position}</span>
+                  <input
+                    checked={form.allowedPositions.includes(position)}
+                    className="size-4 accent-emerald-700"
+                    onChange={(event) => toggleAllowedPosition(position, event.target.checked)}
+                    type="checkbox"
+                  />
+                </label>
+              ))}
+            </div>
+          </SettingsGroup>
+
+          <SettingsGroup title="Position Caps">
+            {rosterPlayerPositions.map((position) => (
+              <NumberField
+                description="0 means no explicit cap."
+                key={position}
+                label={`Max ${position} Drafted`}
+                min={0}
+                value={form.maxPositionCounts[position] ?? 0}
+                onChange={(value) => updatePositionLimit("maxPositionCounts", position, value)}
+              />
+            ))}
+          </SettingsGroup>
+        </div>
+
+        <SettingsGroup title="Bench Position Limits">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            {rosterPlayerPositions.map((position) => (
+              <NumberField
+                description="0 means no bench cap."
+                key={position}
+                label={`${position} Bench Max`}
+                min={0}
+                value={form.benchPositionLimits[position] ?? 0}
+                onChange={(value) => updatePositionLimit("benchPositionLimits", position, value)}
+              />
+            ))}
+          </div>
+        </SettingsGroup>
+
+        <div className="flex justify-end">
+          <Button disabled={isBusy || data.source !== "api" || !data.league?.id} onClick={() => saveRosterSettings(form)}>
+            <Save className="size-4" aria-hidden="true" />
+            Save League Settings
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function normalizeRosterSettingNumber(value: string): number {
+  return Math.max(0, Math.floor(Number(value) || 0));
 }
 
 const emptyUserForm: UserForm = {
@@ -3218,31 +3414,22 @@ function ADPInputPage({
     <div className={cn("grid gap-5", isAdmin && "xl:grid-cols-[minmax(340px,0.7fr)_minmax(0,1.3fr)]")}>
       {isAdmin ? <Card>
         <CardHeader>
-          <CardTitle>ADP Input</CardTitle>
+          <CardTitle>ADP</CardTitle>
           <CardDescription>
-            Build or import a composite PPR and superflex ADP snapshot from the current source data.
+            Fetch live rankings from DraftSharks and Fantasy Football Calculator and import them as the active ADP snapshot.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            <Button
-              disabled={isBusy || data.source !== "api" || !data.league?.id}
-              onClick={importCompositeAdpNow}
-            >
-              <RefreshCw className="size-4" aria-hidden="true" />
-              Import Composite ADP
-            </Button>
-            <Button
-              disabled={isBusy || data.source !== "api" || !data.league?.id}
-              onClick={downloadAdpTemplateNow}
-              variant="outline"
-            >
-              <Download className="size-4" aria-hidden="true" />
-              Build Composite ADP CSV
-            </Button>
-          </div>
+          <Button
+            className="w-full"
+            disabled={isBusy || data.source !== "api" || !data.league?.id}
+            onClick={importCompositeAdpNow}
+          >
+            <RefreshCw className="size-4" aria-hidden="true" />
+            Update ADP
+          </Button>
           <div className="grid gap-2">
-            <Label htmlFor="adp-source">Source</Label>
+            <Label htmlFor="adp-source">Active Source</Label>
             <Input
               id="adp-source"
               value={data.activeSnapshot?.source ?? "No ADP snapshot loaded"}
@@ -3253,17 +3440,34 @@ function ADPInputPage({
             <Label htmlFor="adp-date">Snapshot Date</Label>
             <Input id="adp-date" type="date" value={data.activeSnapshot?.snapshotDate ?? ""} readOnly />
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="adp-csv">CSV</Label>
-            <Textarea id="adp-csv" value={csvText} onChange={(event) => setCsvText(event.target.value)} />
-          </div>
-          <CsvPreviewActions
-            disabled={isBusy}
-            onImport={() => importCsvText("adp", csvText)}
-            onPreview={() => previewCsvText("adp", csvText)}
-            preview={csvPreviews.adp}
-          />
-          <CsvPreviewSummary preview={csvPreviews.adp} />
+          <details className="group">
+            <summary className="flex cursor-pointer select-none items-center gap-1.5 text-sm font-medium text-zinc-500 hover:text-zinc-800">
+              <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />
+              Manual CSV override
+            </summary>
+            <div className="mt-3 space-y-3 border-l-2 border-zinc-100 pl-4">
+              <Button
+                disabled={isBusy || data.source !== "api" || !data.league?.id}
+                onClick={downloadAdpTemplateNow}
+                size="sm"
+                variant="outline"
+              >
+                <Download className="size-4" aria-hidden="true" />
+                Download Composite CSV
+              </Button>
+              <div className="grid gap-2">
+                <Label htmlFor="adp-csv">CSV</Label>
+                <Textarea id="adp-csv" value={csvText} onChange={(event) => setCsvText(event.target.value)} />
+              </div>
+              <CsvPreviewActions
+                disabled={isBusy}
+                onImport={() => importCsvText("adp", csvText)}
+                onPreview={() => previewCsvText("adp", csvText)}
+                preview={csvPreviews.adp}
+              />
+              <CsvPreviewSummary preview={csvPreviews.adp} />
+            </div>
+          </details>
         </CardContent>
       </Card> : null}
 
@@ -3463,7 +3667,12 @@ function KeeperRecommendationsPage() {
   return (
     <PagePanel
       title="Keeper Recommendations"
-      description="Optimizer output with value, score, eligibility, and selection reason."
+      description={
+        <>
+          Optimizer output with value, score, eligibility, and selection reason.{" "}
+          <span className="text-emerald-700">Click a player name for an AI explanation.</span>
+        </>
+      }
       action={
         <div className="flex flex-wrap gap-2">
           <Button disabled={isBusy} onClick={() => exportRecommendations("xlsx")} variant="outline">
@@ -3501,6 +3710,31 @@ function ScenarioComparisonPage() {
     selectedScenarioByTeam,
     setSelectedScenarioForTeam,
   } = useDashboard();
+  const [localNarrative, setLocalNarrative] = React.useState<ScenarioNarrative | null>(
+    data.scenarioNarrative,
+  );
+  const [narrativeLoading, setNarrativeLoading] = React.useState(false);
+  const [narrativeError, setNarrativeError] = React.useState(false);
+
+  React.useEffect(() => {
+    setLocalNarrative(data.scenarioNarrative);
+  }, [data.scenarioNarrative]);
+
+  const handleGenerateNarrative = React.useCallback(async () => {
+    const leagueId = data.league?.id;
+    if (!leagueId) return;
+    setNarrativeLoading(true);
+    setNarrativeError(false);
+    try {
+      const result = await generateScenarioNarrative(leagueId);
+      setLocalNarrative(result);
+    } catch {
+      setNarrativeError(true);
+    } finally {
+      setNarrativeLoading(false);
+    }
+  }, [data.league?.id]);
+
   const teams = React.useMemo(
     () =>
       data.teams
@@ -3520,6 +3754,13 @@ function ScenarioComparisonPage() {
 
   return (
     <div className="space-y-5">
+      <ScenarioNarrativePanel
+        narrative={localNarrative}
+        loading={narrativeLoading}
+        error={narrativeError}
+        onGenerate={handleGenerateNarrative}
+        disabled={isBusy || narrativeLoading}
+      />
       <div className="grid gap-3 xl:grid-cols-5">
         {data.scenarioComparisons.map((scenario) => (
           <ScenarioSummaryCard key={scenario.scenarioName} scenario={scenario} />
@@ -3713,6 +3954,1994 @@ function DraftImpactPage() {
   );
 }
 
+function MockDraftPage() {
+  const { currentUser, data, isBusy } = useDashboard();
+  const leagueId = data.source === "api" ? data.league?.id : null;
+  const userTeam = data.teams.find(
+    (team) => team.id === currentUser?.teamId || team.name === currentUser?.teamName,
+  );
+  const [form, setForm] = React.useState<MockDraftCreateForm>({
+    adpSnapshotId: data.activeSnapshot?.id ?? null,
+    scenarioName: null,
+    pickTimerSeconds: 60,
+    defaultPersonality: "Balanced",
+    defaultDifficulty: "Medium",
+    teamBotOverrides: {},
+  });
+  const [history, setHistory] = React.useState<MockDraftHistoryRow[]>([]);
+  const [activeSession, setActiveSession] = React.useState<MockDraftSession | null>(null);
+  const [selectedComparisonIds, setSelectedComparisonIds] = React.useState<string[]>([]);
+  const [comparisonSessions, setComparisonSessions] = React.useState<MockDraftSession[]>([]);
+  const [playerSearch, setPlayerSearch] = React.useState("");
+  const [positionFilter, setPositionFilter] = React.useState("ALL");
+  const [selectedPlayer, setSelectedPlayer] = React.useState<MockDraftAvailablePlayer | null>(null);
+  const [timeRemaining, setTimeRemaining] = React.useState<number | null>(null);
+  const [timerNotice, setTimerNotice] = React.useState("");
+  const timerAlertSecondRef = React.useRef<number | null>(null);
+  const userTurnAlertKeyRef = React.useRef<string | null>(null);
+  const [autoScrollBoard, setAutoScrollBoard] = React.useState(true);
+  const [isAutoAdvancingBots, setIsAutoAdvancingBots] = React.useState(false);
+  const isAutoAdvancingBotsRef = React.useRef(false);
+  const [isDraftWorkspaceOpen, setIsDraftWorkspaceOpen] = React.useState(false);
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [strategyGenerationMessage, setStrategyGenerationMessage] = React.useState("");
+  const [errorMessage, setErrorMessage] = React.useState("");
+
+  React.useEffect(() => {
+    setForm((current) => ({
+      ...current,
+      adpSnapshotId: data.activeSnapshot?.id ?? null,
+      teamBotOverrides: Object.fromEntries(
+        Object.entries(current.teamBotOverrides).filter(([teamId]) =>
+          data.teams.some((team) => team.id === teamId),
+        ),
+      ),
+    }));
+  }, [data.activeSnapshot?.id, data.teams]);
+
+  const refreshHistory = React.useCallback(async () => {
+    if (!leagueId) {
+      setHistory([]);
+      return;
+    }
+    setIsLoading(true);
+    try {
+      setHistory(await listMockDrafts(leagueId));
+      setErrorMessage("");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Loading mock draft history failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [leagueId]);
+
+  React.useEffect(() => {
+    void refreshHistory();
+  }, [refreshHistory]);
+
+  React.useEffect(() => {
+    setSelectedComparisonIds((current) =>
+      current.filter((sessionId) => history.some((row) => row.id === sessionId)),
+    );
+    setComparisonSessions((current) =>
+      current.filter((session) => history.some((row) => row.id === session.id)),
+    );
+  }, [history]);
+
+  const startNewSession = React.useCallback(async () => {
+    if (!leagueId) {
+      setErrorMessage("Live league data is required.");
+      return;
+    }
+    setIsLoading(true);
+    setStrategyGenerationMessage("Generating strategy...");
+    try {
+      const session = await createMockDraft(leagueId, form);
+      setActiveSession(session);
+      setIsDraftWorkspaceOpen(true);
+      setErrorMessage("");
+      await refreshHistory();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Creating mock draft failed.");
+    } finally {
+      setStrategyGenerationMessage("");
+      setIsLoading(false);
+    }
+  }, [form, leagueId, refreshHistory]);
+
+  const startActiveSession = React.useCallback(async () => {
+    if (!activeSession) {
+      return;
+    }
+    setIsLoading(true);
+    try {
+      setActiveSession(await startMockDraft(activeSession.id));
+      setErrorMessage("");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Starting mock draft failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeSession]);
+
+  const generateStrategyPlan = React.useCallback(async () => {
+    if (!activeSession) {
+      return;
+    }
+    setIsLoading(true);
+    setStrategyGenerationMessage("Regenerating strategy...");
+    try {
+      setActiveSession(await generateMockDraftStrategyPlan(activeSession.id));
+      setErrorMessage("");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Generating strategy plan failed.");
+    } finally {
+      setStrategyGenerationMessage("");
+      setIsLoading(false);
+    }
+  }, [activeSession]);
+
+  const pauseSession = React.useCallback(async () => {
+    if (!activeSession) {
+      return;
+    }
+    setIsLoading(true);
+    try {
+      setActiveSession(await pauseMockDraft(activeSession.id));
+      setErrorMessage("");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Pausing mock draft failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeSession]);
+
+  const resumeSession = React.useCallback(async () => {
+    if (!activeSession) {
+      return;
+    }
+    setIsLoading(true);
+    try {
+      setActiveSession(await resumeMockDraft(activeSession.id));
+      setErrorMessage("");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Resuming mock draft failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeSession]);
+
+  const endSession = React.useCallback(async () => {
+    if (!activeSession) {
+      return;
+    }
+    if (!window.confirm("End this mock draft? Incomplete mock drafts are excluded from history.")) {
+      return;
+    }
+    setIsLoading(true);
+    try {
+      setActiveSession(await endMockDraft(activeSession.id));
+      setErrorMessage("");
+      await refreshHistory();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Ending mock draft failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeSession, refreshHistory]);
+
+  const advanceBotPick = React.useCallback(async () => {
+    if (!activeSession) {
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const nextSession = await makeMockDraftBotPick(activeSession.id);
+      setActiveSession(nextSession);
+      setErrorMessage("");
+      if (nextSession.status === "complete") {
+        await refreshHistory();
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Bot pick failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeSession, refreshHistory]);
+
+  const draftPlayer = React.useCallback(
+    async (playerId: string) => {
+      if (!activeSession) {
+        return;
+      }
+      setIsLoading(true);
+      try {
+        const pickableSession =
+          activeSession.status === "paused"
+            ? await resumeMockDraft(activeSession.id)
+            : activeSession;
+        const nextSession = await makeMockDraftPick(pickableSession.id, playerId);
+        setActiveSession(nextSession);
+        setTimerNotice("");
+        setErrorMessage("");
+        if (nextSession.status === "complete") {
+          await refreshHistory();
+        }
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Drafting player failed.");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [activeSession, refreshHistory],
+  );
+
+  const openHistorySession = React.useCallback(async (sessionId: string) => {
+    setIsLoading(true);
+    try {
+      setActiveSession(await readMockDraft(sessionId));
+      setIsDraftWorkspaceOpen(true);
+      setErrorMessage("");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Opening mock draft failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const prepareRerun = React.useCallback((session: MockDraftSession) => {
+    const botConfig = session.botConfig;
+    const defaultPersonality =
+      typeof botConfig.default_personality === "string"
+        ? botConfig.default_personality
+        : "Balanced";
+    const defaultDifficulty =
+      typeof botConfig.default_difficulty === "string"
+        ? botConfig.default_difficulty
+        : "Medium";
+    const teamBotOverrides = objectEntries(botConfig.teams).reduce<
+      Record<string, { personality: string; difficulty: string }>
+    >((overrides, [teamId, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return overrides;
+      }
+      const config = value as Record<string, unknown>;
+      overrides[teamId] = {
+        personality:
+          typeof config.personality === "string" ? config.personality : defaultPersonality,
+        difficulty:
+          typeof config.difficulty === "string" ? config.difficulty : defaultDifficulty,
+      };
+      return overrides;
+    }, {});
+    setForm({
+      adpSnapshotId: session.adpSnapshotId,
+      scenarioName:
+        typeof session.keeperContext.scenario_name === "string"
+          ? session.keeperContext.scenario_name
+          : null,
+      pickTimerSeconds:
+        session.pickTimerSeconds === 30 ||
+        session.pickTimerSeconds === 60 ||
+        session.pickTimerSeconds === 90 ||
+        session.pickTimerSeconds === 120
+          ? session.pickTimerSeconds
+          : null,
+      defaultPersonality,
+      defaultDifficulty,
+      teamBotOverrides,
+    });
+    setActiveSession(null);
+    setIsDraftWorkspaceOpen(false);
+    setErrorMessage("");
+  }, []);
+
+  const rerunFromHistory = React.useCallback(
+    async (sessionId: string) => {
+      setIsLoading(true);
+      try {
+        prepareRerun(await readMockDraft(sessionId));
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Preparing rerun failed.");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [prepareRerun],
+  );
+
+  const toggleComparison = React.useCallback((sessionId: string) => {
+    setSelectedComparisonIds((current) => {
+      if (current.includes(sessionId)) {
+        return current.filter((id) => id !== sessionId);
+      }
+      return [...current, sessionId].slice(-4);
+    });
+  }, []);
+
+  const loadComparison = React.useCallback(async () => {
+    if (!selectedComparisonIds.length) {
+      setComparisonSessions([]);
+      return;
+    }
+    setIsLoading(true);
+    try {
+      setComparisonSessions(await Promise.all(selectedComparisonIds.map((id) => readMockDraft(id))));
+      setErrorMessage("");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Loading comparison failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedComparisonIds]);
+
+  const deleteHistorySession = React.useCallback(
+    async (sessionId: string) => {
+      if (!window.confirm("Delete this completed mock draft? This removes its saved recap and analysis.")) {
+        return;
+      }
+      setIsLoading(true);
+      try {
+        await deleteMockDraft(sessionId);
+        setHistory((current) => current.filter((row) => row.id !== sessionId));
+        setSelectedComparisonIds((current) => current.filter((id) => id !== sessionId));
+        setComparisonSessions((current) => current.filter((session) => session.id !== sessionId));
+        setActiveSession((current) => (current?.id === sessionId ? null : current));
+        setErrorMessage("");
+        await refreshHistory();
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Deleting mock draft failed.");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [refreshHistory],
+  );
+
+  const keeperCount = data.keeperRecommendations.filter(
+    (recommendation) =>
+      recommendation.status === "Recommended" &&
+      (!userTeam || recommendation.teamId === userTeam.id || recommendation.team === userTeam.name),
+  ).length;
+  const currentSlot = activeSession?.board.find((slot) => slot.overallPick === activeSession.currentPick) ?? null;
+  const isUserTurn = Boolean(
+    activeSession?.status === "in_progress" &&
+      currentSlot &&
+      (currentSlot.teamId === activeSession.userTeamId || currentSlot.teamName === activeSession.userTeamName),
+  );
+  const isUserPickSlot = Boolean(
+    activeSession &&
+      currentSlot &&
+      (activeSession.status === "in_progress" || activeSession.status === "paused") &&
+      (currentSlot.teamId === activeSession.userTeamId || currentSlot.teamName === activeSession.userTeamName),
+  );
+  const isBotTurn = Boolean(
+    activeSession?.status === "in_progress" &&
+      currentSlot &&
+      currentSlot.teamId !== activeSession.userTeamId &&
+      currentSlot.teamName !== activeSession.userTeamName,
+  );
+  React.useEffect(() => {
+    if (!activeSession || !isBotTurn || isAutoAdvancingBotsRef.current) {
+      return;
+    }
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      isAutoAdvancingBotsRef.current = true;
+      setIsAutoAdvancingBots(true);
+      try {
+        const nextSession = await makeMockDraftBotPick(activeSession.id);
+        if (cancelled) {
+          return;
+        }
+        setActiveSession(nextSession);
+        setErrorMessage("");
+        if (nextSession.status === "complete") {
+          await refreshHistory();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMessage(error instanceof Error ? error.message : "Bot pick failed.");
+        }
+      } finally {
+        isAutoAdvancingBotsRef.current = false;
+        setIsAutoAdvancingBots(false);
+      }
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeSession, isBotTurn, refreshHistory]);
+
+  const timerKey = `${activeSession?.id ?? "none"}:${activeSession?.currentPick ?? "none"}:${activeSession?.status ?? "none"}`;
+  React.useEffect(() => {
+    if (isUserTurn && activeSession?.pickTimerSeconds) {
+      setTimeRemaining(activeSession.pickTimerSeconds);
+      setTimerNotice("");
+      timerAlertSecondRef.current = null;
+      return;
+    }
+    setTimeRemaining(null);
+    timerAlertSecondRef.current = null;
+    if (!isUserTurn) {
+      setTimerNotice("");
+    }
+  }, [activeSession?.pickTimerSeconds, isUserTurn, timerKey]);
+
+  React.useEffect(() => {
+    if (!isUserTurn || timeRemaining === null || activeSession?.status !== "in_progress") {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      setTimeRemaining((current) => {
+        if (current === null) {
+          return current;
+        }
+        return Math.max(0, current - 1);
+      });
+    }, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [activeSession?.status, isUserTurn, timeRemaining]);
+
+  React.useEffect(() => {
+    if (!isUserTurn || timeRemaining !== 0 || activeSession?.status !== "in_progress") {
+      return;
+    }
+    setTimerNotice("Timer expired. Draft paused; choose a player to continue.");
+    void pauseSession();
+  }, [activeSession?.status, isUserTurn, pauseSession, timeRemaining]);
+
+  React.useEffect(() => {
+    if (
+      !isUserTurn ||
+      activeSession?.status !== "in_progress" ||
+      timeRemaining === null ||
+      timeRemaining > 10 ||
+      timeRemaining <= 0 ||
+      timerAlertSecondRef.current === timeRemaining
+    ) {
+      return;
+    }
+    timerAlertSecondRef.current = timeRemaining;
+    playDraftTimerAlert();
+  }, [activeSession?.status, isUserTurn, timeRemaining]);
+
+  React.useEffect(() => {
+    if (!isUserTurn || activeSession?.status !== "in_progress") {
+      return;
+    }
+    const alertKey = `${activeSession.id}:${activeSession.currentPick ?? "none"}`;
+    if (userTurnAlertKeyRef.current === alertKey) {
+      return;
+    }
+    userTurnAlertKeyRef.current = alertKey;
+    playDraftTurnAlert();
+  }, [activeSession?.currentPick, activeSession?.id, activeSession?.status, isUserTurn]);
+
+  const positionOptions = React.useMemo(
+    () =>
+      Array.from(new Set(activeSession?.availablePlayers.map((player) => player.position).filter(Boolean) ?? []))
+        .sort((a, b) => a.localeCompare(b)),
+    [activeSession?.availablePlayers],
+  );
+  const filteredPlayers = React.useMemo(() => {
+    const query = playerSearch.trim().toLowerCase();
+    return (activeSession?.availablePlayers ?? [])
+      .filter((player) => positionFilter === "ALL" || player.position === positionFilter)
+      .filter((player) => {
+        if (!query) {
+          return true;
+        }
+        return [player.playerName, player.position, player.nflTeam]
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+      })
+      .slice(0, 80);
+  }, [activeSession?.availablePlayers, playerSearch, positionFilter]);
+  const userRoster = React.useMemo(() => {
+    if (!activeSession) {
+      return [];
+    }
+    return activeSession.picks.filter(
+      (pick) =>
+        pick.teamId === activeSession.userTeamId ||
+        pick.teamName === activeSession.userTeamName,
+    );
+  }, [activeSession]);
+  const lastBotPick = React.useMemo(() => {
+    return activeSession?.picks.slice().reverse().find((pick) => pick.source === "bot") ?? null;
+  }, [activeSession?.picks]);
+  const rosterCounts = React.useMemo(() => {
+    return userRoster.reduce<Record<string, number>>((counts, pick) => {
+      const position = pick.position || "UNK";
+      counts[position] = (counts[position] ?? 0) + 1;
+      return counts;
+    }, {});
+  }, [userRoster]);
+  const positionsAtLimit = React.useMemo(() => {
+    const maxCounts = data.league?.rosterSettings?.maxPositionCounts ?? {};
+    const limited = new Set<string>();
+    for (const [pos, cap] of Object.entries(maxCounts)) {
+      if (cap > 0 && (rosterCounts[pos] ?? 0) >= cap) {
+        limited.add(pos);
+      }
+    }
+    return limited;
+  }, [data.league?.rosterSettings?.maxPositionCounts, rosterCounts]);
+  const timerLabel =
+    timerNotice
+      ? "Expired"
+      : activeSession?.pickTimerSeconds && timeRemaining !== null
+      ? `${timeRemaining}s`
+      : activeSession?.pickTimerSeconds
+        ? `${activeSession.pickTimerSeconds}s`
+        : "No limit";
+  const isTimerCritical = isUserTurn && timeRemaining !== null && timeRemaining <= 10;
+
+  return (
+    <PagePanel
+      title="Mock Draft"
+      description="League-specific draft setup, saved results, and recap history."
+      action={
+        <Button disabled={isBusy || isLoading || !leagueId} onClick={refreshHistory} variant="outline">
+          <RefreshCw className="mr-2 size-4" aria-hidden="true" />
+          Refresh
+        </Button>
+      }
+    >
+      <div className="space-y-5">
+        <div className="grid gap-3 sm:grid-cols-4">
+          <MetricStrip label="User Team" value={userTeam?.name ?? "Unassigned"} />
+          <MetricStrip label="Selected Keepers" value={keeperCount.toString()} />
+          <MetricStrip label="ADP Snapshot" value={data.activeSnapshot?.name ?? "Not loaded"} />
+          <MetricStrip label="Completed Mocks" value={history.length.toString()} />
+        </div>
+
+        {errorMessage ? (
+          <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+            {errorMessage}
+          </div>
+        ) : null}
+
+        {strategyGenerationMessage ? <StrategyGenerationDialog message={strategyGenerationMessage} /> : null}
+
+        <div className="grid gap-5">
+          <section className="rounded-md border border-zinc-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-zinc-950">Setup</h2>
+                <p className="text-sm text-zinc-500">{userTeam?.name ?? "No assigned team"}</p>
+              </div>
+              <Badge variant={leagueId ? "success" : "warning"}>{leagueId ? "API" : "Mock"}</Badge>
+            </div>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <label className="space-y-2 text-sm">
+                <span className="font-medium text-zinc-700">Timer</span>
+                <select
+                  className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
+                  value={form.pickTimerSeconds ?? "none"}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      pickTimerSeconds:
+                        event.target.value === "none"
+                          ? null
+                          : (Number(event.target.value) as 30 | 60 | 90 | 120),
+                    }))
+                  }
+                >
+                  <option value="none">No limit</option>
+                  <option value="30">30 seconds</option>
+                  <option value="60">60 seconds</option>
+                  <option value="90">90 seconds</option>
+                  <option value="120">120 seconds</option>
+                </select>
+              </label>
+
+              <label className="space-y-2 text-sm">
+                <span className="font-medium text-zinc-700">Bot Personality</span>
+                <select
+                  className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
+                  value={form.defaultPersonality}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, defaultPersonality: event.target.value }))
+                  }
+                >
+                  {mockDraftPersonalities.map((personality) => (
+                    <option key={personality} value={personality}>
+                      {personality}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-2 text-sm">
+                <span className="font-medium text-zinc-700">Bot Difficulty</span>
+                <select
+                  className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
+                  value={form.defaultDifficulty}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, defaultDifficulty: event.target.value }))
+                  }
+                >
+                  {mockDraftDifficulties.map((difficulty) => (
+                    <option key={difficulty} value={difficulty}>
+                      {difficulty}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="mt-5 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-zinc-950">Team Bot Overrides</h3>
+                  <p className="text-xs text-zinc-500">Unset teams use the global bot settings.</p>
+                </div>
+                <Badge variant="info">
+                  {Object.keys(form.teamBotOverrides).length} custom
+                </Badge>
+              </div>
+              <div className="mt-3 max-h-72 space-y-2 overflow-auto pr-1">
+                {data.teams
+                  .filter((team) => team.id !== userTeam?.id)
+                  .map((team) => {
+                    const override = form.teamBotOverrides[team.id];
+                    return (
+                      <div
+                        className="grid gap-2 rounded-md border border-zinc-200 bg-white p-2 sm:grid-cols-[minmax(0,1fr)_150px_130px_auto]"
+                        key={team.id}
+                      >
+                        <div className="min-w-0 self-center">
+                          <p className="truncate text-sm font-medium text-zinc-950">{team.name}</p>
+                          <p className="text-xs text-zinc-500">
+                            Slot {team.draftSlot || "-"}
+                          </p>
+                        </div>
+                        <select
+                          className="h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm"
+                          value={override?.personality ?? form.defaultPersonality}
+                          onChange={(event) =>
+                            setTeamBotOverride(
+                              setForm,
+                              team.id,
+                              event.target.value,
+                              override?.difficulty ?? form.defaultDifficulty,
+                              form,
+                            )
+                          }
+                        >
+                          {mockDraftPersonalities.map((personality) => (
+                            <option key={personality} value={personality}>
+                              {personality}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          className="h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm"
+                          value={override?.difficulty ?? form.defaultDifficulty}
+                          onChange={(event) =>
+                            setTeamBotOverride(
+                              setForm,
+                              team.id,
+                              override?.personality ?? form.defaultPersonality,
+                              event.target.value,
+                              form,
+                            )
+                          }
+                        >
+                          {mockDraftDifficulties.map((difficulty) => (
+                            <option key={difficulty} value={difficulty}>
+                              {difficulty}
+                            </option>
+                          ))}
+                        </select>
+                        <Button
+                          disabled={!override}
+                          onClick={() =>
+                            setForm((current) => {
+                              const next = { ...current.teamBotOverrides };
+                              delete next[team.id];
+                              return { ...current, teamBotOverrides: next };
+                            })
+                          }
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                        >
+                          Reset
+                        </Button>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Button disabled={isBusy || isLoading || !leagueId || !userTeam} onClick={startNewSession}>
+                <Play className="mr-2 size-4" aria-hidden="true" />
+                Create Draft Room
+              </Button>
+              {activeSession ? (
+                <Button onClick={() => setIsDraftWorkspaceOpen(true)} type="button" variant="outline">
+                  Open Active Draft
+                </Button>
+              ) : null}
+            </div>
+          </section>
+        </div>
+
+        {activeSession && isDraftWorkspaceOpen ? (
+          <div
+            aria-label="Mock Draft Room"
+            aria-modal="true"
+            className="fixed inset-0 z-50 bg-zinc-950/60 p-3 sm:p-5"
+            role="dialog"
+          >
+            <div className="flex h-full flex-col overflow-hidden rounded-md bg-white shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h2 className="text-base font-semibold text-zinc-950">Mock Draft Room</h2>
+                    {isUserTurn && activeSession.pickTimerSeconds ? (
+                      <div
+                        aria-live="polite"
+                        className={cn(
+                          "rounded-md border px-3 py-1.5 text-sm font-semibold tabular-nums",
+                          isTimerCritical
+                            ? "border-red-300 bg-red-50 text-red-700"
+                            : "border-emerald-200 bg-emerald-50 text-emerald-800",
+                        )}
+                        role="timer"
+                      >
+                        {timerLabel}
+                      </div>
+                    ) : null}
+                  </div>
+                  <p className="text-sm text-zinc-500">
+                    {activeSession.currentPick
+                      ? `Pick ${activeSession.currentPick}: ${currentSlot?.teamName ?? "Current team"}`
+                      : "Draft complete"}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={activeSession.status === "in_progress" ? "success" : "default"}>
+                    {activeSession.status.replace("_", " ")}
+                  </Badge>
+                  <Button onClick={() => setIsDraftWorkspaceOpen(false)} size="sm" variant="ghost">
+                    <X className="mr-2 size-4" aria-hidden="true" />
+                    Close
+                  </Button>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto p-4">
+                <div className="space-y-5">
+                  <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.75fr)]">
+                    <div className="space-y-5">
+                    <MockDraftStrategyPanel
+                      disabled={isBusy || isLoading}
+                      onGenerate={generateStrategyPlan}
+                      onStart={startActiveSession}
+                      session={activeSession}
+                    />
+
+                    <section className="rounded-md border border-zinc-200 bg-white p-4">
+                      <div className="grid gap-3 sm:grid-cols-4">
+                        <MetricStrip label="Board Picks" value={activeSession.board.length.toString()} />
+                        <MetricStrip label="Drafted" value={activeSession.picks.length.toString()} />
+                        <MetricStrip label="Available" value={activeSession.availablePlayers.length.toString()} />
+                        <MetricStrip label="Timer" value={timerLabel} />
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button
+                          disabled={isBusy || isLoading || activeSession.status !== "setup"}
+                          onClick={startActiveSession}
+                          variant="default"
+                        >
+                          <Play className="mr-2 size-4" aria-hidden="true" />
+                          Start Draft
+                        </Button>
+                        <Button
+                          disabled={isBusy || isLoading || isAutoAdvancingBots || !isBotTurn}
+                          onClick={advanceBotPick}
+                          variant="outline"
+                        >
+                          <Bot className="mr-2 size-4" aria-hidden="true" />
+                          Bot Pick
+                        </Button>
+                        <Button
+                          disabled={isBusy || isLoading || activeSession.status !== "in_progress"}
+                          onClick={pauseSession}
+                          variant="outline"
+                        >
+                          Pause
+                        </Button>
+                        <Button
+                          disabled={isBusy || isLoading || activeSession.status !== "paused"}
+                          onClick={resumeSession}
+                          variant="outline"
+                        >
+                          Resume
+                        </Button>
+                        <Button
+                          disabled={
+                            isBusy ||
+                            isLoading ||
+                            activeSession.status === "complete" ||
+                            activeSession.status === "abandoned"
+                          }
+                          onClick={endSession}
+                          variant="outline"
+                        >
+                          End
+                        </Button>
+                      </div>
+                      <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
+                        {activeSession.status === "paused"
+                          ? "Draft paused."
+                          : activeSession.status === "setup"
+                            ? "Review the strategy plan, then start the draft."
+                            : isUserTurn
+                            ? "Your team is on the clock."
+                            : isAutoAdvancingBots
+                              ? "Bot pick is being generated."
+                              : isBotTurn
+                                ? `${currentSlot?.teamName ?? "A bot team"} is on the clock; bot pick will run automatically.`
+                                : activeSession.status === "complete"
+                                  ? activeSession.analysis?.summary ?? "Draft complete."
+                                  : "Draft is ready."}
+                        {lastBotPick?.reasoningSummary ? (
+                          <p className="mt-2 text-xs text-zinc-500">{lastBotPick.reasoningSummary}</p>
+                        ) : null}
+                        {timerNotice ? (
+                          <p className="mt-2 text-xs font-medium text-amber-700">{timerNotice}</p>
+                        ) : null}
+                      </div>
+                    </section>
+
+                  </div>
+
+                  <div className="space-y-5">
+                    <section className="rounded-md border border-zinc-200 bg-white p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h2 className="text-base font-semibold text-zinc-950">Available Players</h2>
+                          <p className="text-sm text-zinc-500">
+                            {isUserPickSlot ? "Select a player for your pick." : "Visible player pool from current ADP."}
+                          </p>
+                        </div>
+                        <Badge variant={isUserPickSlot ? "success" : "default"}>
+                          {isUserPickSlot ? "User pick" : "Locked"}
+                        </Badge>
+                      </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px]">
+                <Input
+                  placeholder="Search players"
+                  value={playerSearch}
+                  onChange={(event) => setPlayerSearch(event.target.value)}
+                />
+                <select
+                  className="h-10 rounded-md border border-zinc-300 bg-white px-3 text-sm"
+                  value={positionFilter}
+                  onChange={(event) => setPositionFilter(event.target.value)}
+                >
+                  <option value="ALL">All positions</option>
+                  {positionOptions.map((position) => (
+                    <option key={position} value={position}>
+                      {position}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="mt-3 max-h-[390px] overflow-auto rounded-md border border-zinc-200">
+                <table className="w-full min-w-[560px] text-left text-xs">
+                  <thead className="sticky top-0 border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500">
+                    <tr>
+                      <th className="py-1.5 pl-2 pr-2">Player</th>
+                      <th className="py-1.5 pr-2">Pos</th>
+                      <th className="py-1.5 pr-2">NFL</th>
+                      <th className="py-1.5 pr-2">ADP</th>
+                      <th className="py-1.5 pr-2">Proj</th>
+                      <th className="py-1.5 pr-2">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {filteredPlayers.map((player, index) => {
+                      const value =
+                        activeSession.currentPick && player.adpPick !== null
+                          ? player.adpPick - activeSession.currentPick
+                          : null;
+                      return (
+                        <tr key={player.playerId}>
+                          <td className="py-1.5 pl-2 pr-2">
+                            <div className="flex items-center gap-2">
+                              <Button
+                                disabled={isBusy || isLoading || !isUserPickSlot || positionsAtLimit.has(player.position)}
+                                onClick={() => void draftPlayer(player.playerId)}
+                                size="sm"
+                                title={positionsAtLimit.has(player.position) ? `${player.position} draft limit reached` : undefined}
+                              >
+                                Draft
+                              </Button>
+                              <button
+                                className="min-w-0 truncate text-left font-medium text-zinc-950 underline-offset-2 hover:text-emerald-800 hover:underline"
+                                onClick={() => setSelectedPlayer(player)}
+                                type="button"
+                              >
+                                <span className="mr-1 text-zinc-400">{index + 1}.</span>
+                                {player.playerName}
+                              </button>
+                            </div>
+                          </td>
+                          <td className="py-1.5 pr-2">
+                            <PositionBadge position={player.position} />
+                          </td>
+                          <td className="py-1.5 pr-2 text-zinc-600">{player.nflTeam || "-"}</td>
+                          <td className="py-1.5 pr-2 text-zinc-600">
+                            {player.adpPick === null ? "-" : formatter.format(player.adpPick)}
+                          </td>
+                          <td className="py-1.5 pr-2 text-zinc-600">
+                            {player.projection === null ? "-" : formatter.format(player.projection)}
+                          </td>
+                          <td className="py-1.5 pr-2 text-zinc-600">
+                            {value === null ? "-" : formatter.format(value)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {!filteredPlayers.length ? (
+                      <tr>
+                        <td className="py-5 pl-3 text-zinc-500" colSpan={6}>
+                          No available players match the current filters.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+                    </section>
+
+                    <section className="rounded-md border border-zinc-200 bg-white p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h2 className="text-base font-semibold text-zinc-950">{activeSession.userTeamName}</h2>
+                          <p className="text-sm text-zinc-500">Drafted roster</p>
+                        </div>
+                        <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+                          {Object.entries(rosterCounts)
+                            .sort(([left], [right]) => left.localeCompare(right))
+                            .map(([position, count]) => `${position}: ${count}`)
+                            .join("  ") || "No drafted positions yet."}
+                        </div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        {activeSession.rosterNeeds.map((need) => {
+                          const isCapHit = need.remaining > 0 && positionsAtLimit.has(need.slot);
+                          return (
+                            <div
+                              className={cn(
+                                "rounded-md border px-2 py-1.5",
+                                isCapHit
+                                  ? "border-rose-200 bg-rose-50"
+                                  : need.remaining > 0
+                                  ? "border-amber-200 bg-amber-50"
+                                  : "border-emerald-200 bg-emerald-50",
+                              )}
+                              key={need.slot}
+                              title={isCapHit ? `${need.slot} draft limit reached` : undefined}
+                            >
+                              <p className="truncate text-[10px] font-semibold uppercase text-zinc-500">{need.slot}</p>
+                              <p className={cn("mt-0.5 text-sm font-semibold", isCapHit ? "text-rose-700" : "text-zinc-950")}>
+                                {need.filled}/{need.target}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-3 max-h-64 space-y-2 overflow-auto">
+                        {userRoster.map((pick) => (
+                          <div
+                            className="flex items-center justify-between gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs"
+                            key={pick.id}
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate font-medium text-zinc-950">{pick.playerName}</p>
+                              <p className="text-zinc-500">Pick {pick.overallPick}</p>
+                            </div>
+                            <PositionBadge position={pick.position} />
+                          </div>
+                        ))}
+                        {!userRoster.length ? (
+                          <div className="rounded-md border border-dashed border-zinc-300 p-4 text-sm text-zinc-500">
+                            No drafted players yet.
+                          </div>
+                        ) : null}
+                      </div>
+                    </section>
+                  </div>
+                </div>
+                  <section className="rounded-md border border-zinc-200 bg-white p-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-base font-semibold text-zinc-950">Draft Board</h2>
+                        <p className="text-sm text-zinc-500">Current pick stays highlighted as the draft advances.</p>
+                      </div>
+                      <label className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">
+                        <input
+                          checked={autoScrollBoard}
+                          className="size-4 accent-emerald-700"
+                          onChange={(event) => setAutoScrollBoard(event.target.checked)}
+                          type="checkbox"
+                        />
+                        Auto-scroll
+                      </label>
+                    </div>
+                    <MockDraftBoardPreview
+                      autoScroll={autoScrollBoard}
+                      session={activeSession}
+                      currentUser={currentUser}
+                    />
+                  </section>
+
+                  {activeSession.status === "complete" ? (
+                    <MockDraftRecap
+                      session={activeSession}
+                      currentUser={currentUser}
+                      onRerun={() => prepareRerun(activeSession)}
+                    />
+                  ) : null}
+                </div>
+              </div>
+            </div>
+            {selectedPlayer ? (
+              <MockDraftPlayerDialog
+                currentPick={activeSession.currentPick}
+                disabled={isBusy || isLoading || !isUserPickSlot}
+                onClose={() => setSelectedPlayer(null)}
+                onDraft={() => {
+                  const playerId = selectedPlayer.playerId;
+                  setSelectedPlayer(null);
+                  void draftPlayer(playerId);
+                }}
+                player={selectedPlayer}
+              />
+            ) : null}
+          </div>
+        ) : null}
+
+        <section className="rounded-md border border-zinc-200 bg-white p-4">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <History className="size-4 text-zinc-500" aria-hidden="true" />
+              <h2 className="text-base font-semibold text-zinc-950">History</h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                disabled={isBusy || isLoading || selectedComparisonIds.length < 2}
+                onClick={loadComparison}
+                size="sm"
+                variant="outline"
+              >
+                Compare Selected
+              </Button>
+              <Button
+                disabled={!selectedComparisonIds.length && !comparisonSessions.length}
+                onClick={() => {
+                  setSelectedComparisonIds([]);
+                  setComparisonSessions([]);
+                }}
+                size="sm"
+                variant="ghost"
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[840px] text-left text-sm">
+              <thead className="border-b border-zinc-200 text-xs uppercase text-zinc-500">
+                <tr>
+                  <th className="py-2 pr-4">Compare</th>
+                  <th className="py-2 pr-4">Completed</th>
+                  <th className="py-2 pr-4">Team</th>
+                  <th className="py-2 pr-4">Rounds</th>
+                  <th className="py-2 pr-4">Timer</th>
+                  <th className="py-2 pr-4">Grade</th>
+                  <th className="py-2 pr-4">Summary</th>
+                  <th className="py-2 pr-0 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {history.map((row) => (
+                  <tr key={row.id}>
+                    <td className="py-3 pr-4">
+                      <input
+                        aria-label={`Compare mock draft ${row.id}`}
+                        checked={selectedComparisonIds.includes(row.id)}
+                        className="size-4 rounded border-zinc-300"
+                        onChange={() => toggleComparison(row.id)}
+                        type="checkbox"
+                      />
+                    </td>
+                    <td className="py-3 pr-4 text-zinc-700">{formatMockDraftDate(row.completedAt)}</td>
+                    <td className="py-3 pr-4 font-medium text-zinc-950">{row.userTeamName}</td>
+                    <td className="py-3 pr-4 text-zinc-700">{row.roundCount}</td>
+                    <td className="py-3 pr-4 text-zinc-700">
+                      {row.pickTimerSeconds ? `${row.pickTimerSeconds}s` : "No limit"}
+                    </td>
+                    <td className="py-3 pr-4">
+                      {row.overallLetterGrade ? (
+                        <Badge variant="info">
+                          {row.overallLetterGrade}
+                          {row.overallNumericScore !== null ? ` ${row.overallNumericScore}` : ""}
+                        </Badge>
+                      ) : null}
+                    </td>
+                    <td className="max-w-[360px] truncate py-3 pr-4 text-zinc-600">{row.summary}</td>
+                    <td className="py-3 pr-0">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          disabled={isBusy || isLoading}
+                          onClick={() => void openHistorySession(row.id)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          Open
+                        </Button>
+                        <Button
+                          disabled={isBusy || isLoading}
+                          onClick={() => void rerunFromHistory(row.id)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          Rerun
+                        </Button>
+                        <Button
+                          disabled={isBusy || isLoading}
+                          onClick={() => void deleteHistorySession(row.id)}
+                          size="sm"
+                          variant="destructive"
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!history.length ? (
+                  <tr>
+                    <td className="py-5 text-zinc-500" colSpan={8}>
+                      No completed mock drafts.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+          {comparisonSessions.length ? (
+            <MockDraftComparison sessions={comparisonSessions} />
+          ) : null}
+        </section>
+      </div>
+    </PagePanel>
+  );
+}
+
+function MockDraftStrategyPanel({
+  disabled,
+  onGenerate,
+  onStart,
+  session,
+}: {
+  disabled: boolean;
+  onGenerate: () => void;
+  onStart: () => void;
+  session: MockDraftSession;
+}) {
+  const plan = session.strategyPlan;
+  const currentRound = session.currentPick
+    ? session.board.find((slot) => slot.overallPick === session.currentPick)?.round
+    : null;
+  const currentRoundPlan = plan?.roundPlan.find(
+    (item) => strategyNumber(item.round) === currentRound,
+  );
+  const liveAdvice = buildLiveStrategyAdvice(session);
+  const priorities = buildLivePositionPriorities(session, plan?.positionPriorities ?? []);
+  const topTargets = buildLiveTargets(session, plan?.targets ?? []);
+
+  return (
+    <section className="rounded-md border border-zinc-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-zinc-950">Strategy Coach</h2>
+          <p className="text-sm text-zinc-500">
+            {plan?.aiUsed ? `AI plan from ${plan.model ?? "model"}` : "Cached draft plan"}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {session.status === "setup" ? (
+            <Button disabled={disabled} onClick={onStart} size="sm">
+              <Play className="mr-2 size-4" aria-hidden="true" />
+              Start Draft
+            </Button>
+          ) : null}
+          <Button
+            disabled={disabled || !["setup", "paused"].includes(session.status)}
+            onClick={onGenerate}
+            size="sm"
+            variant="outline"
+          >
+            <RefreshCw className="mr-2 size-4" aria-hidden="true" />
+            Regenerate
+          </Button>
+        </div>
+      </div>
+
+      {plan ? (
+        <div className="mt-4 space-y-4">
+          <p className="text-sm leading-6 text-zinc-700">{plan.summary}</p>
+          {plan.error ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              AI plan fell back to deterministic guidance: {plan.error}
+            </div>
+          ) : null}
+
+          {liveAdvice ? (
+            <div className="rounded-md border border-sky-200 bg-sky-50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-sky-950">
+                  Live guidance: {liveAdvice.priority}
+                </p>
+                <Badge variant="info">Updates after picks</Badge>
+              </div>
+              <p className="mt-1 text-sm text-sky-900">{liveAdvice.detail}</p>
+              {liveAdvice.targets.length ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {liveAdvice.targets.map((player) => (
+                    <span
+                      className="rounded-md border border-sky-200 bg-white px-2 py-1 text-xs text-sky-900"
+                      key={player.playerId}
+                    >
+                      {player.playerName}
+                      {player.position ? ` ${player.position}` : ""}
+                      {player.adpPick ? `, ADP ${player.adpPick}` : ""}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {currentRoundPlan ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-emerald-950">
+                  Round {currentRound}: {strategyText(currentRoundPlan.priority)}
+                </p>
+                <Badge variant="success">Current round</Badge>
+              </div>
+              <p className="mt-1 text-sm text-emerald-900">{strategyText(currentRoundPlan.notes)}</p>
+              <p className="mt-1 text-xs text-emerald-800">
+                Avoid: {strategyText(currentRoundPlan.avoid)}
+              </p>
+            </div>
+          ) : null}
+
+          <div className="grid gap-3 lg:grid-cols-3">
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <h3 className="text-sm font-semibold text-zinc-950">Priorities</h3>
+              <div className="mt-2 space-y-2">
+                {priorities.map((item, index) => (
+                  <div
+                    className="flex items-start justify-between gap-2 text-sm"
+                    key={`${strategyText(item.position)}-${index}`}
+                  >
+                    <span className="font-medium text-zinc-800">{strategyText(item.position)}</span>
+                    <span className="text-right text-zinc-600">{strategyText(item.priority)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 lg:col-span-2">
+              <h3 className="text-sm font-semibold text-zinc-950">Targets</h3>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {topTargets.map((item, index) => (
+                  <div
+                    className="rounded-md border border-zinc-200 bg-white p-2"
+                    key={`${item.playerId}-${index}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-sm font-medium text-zinc-950">
+                        {item.playerName}
+                      </p>
+                      <PositionBadge position={item.position} />
+                    </div>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {item.reason}
+                      {item.acceptableRange ? ` Range ${item.acceptableRange}` : ""}
+                    </p>
+                  </div>
+                ))}
+                {!topTargets.length ? (
+                  <p className="rounded-md border border-dashed border-zinc-300 bg-white p-3 text-sm text-zinc-500 sm:col-span-2">
+                    No current targets remain from the strategy plan.
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">
+          No strategy plan is attached to this draft yet.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MockDraftBoardPreview({
+  autoScroll,
+  session,
+  currentUser,
+}: {
+  autoScroll: boolean;
+  session: MockDraftSession;
+  currentUser: AuthUser | null;
+}) {
+  const currentPickRef = React.useRef<HTMLDivElement | null>(null);
+  const boardScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const rounds = React.useMemo(() => {
+    const grouped = new Map<number, MockDraftSession["board"]>();
+    for (const slot of session.board) {
+      grouped.set(slot.round, [...(grouped.get(slot.round) ?? []), slot]);
+    }
+    return Array.from(grouped.entries())
+      .sort(([left], [right]) => left - right)
+      .map(([round, slots]) => ({
+        round,
+        slots: slots.slice().sort((left, right) => left.pickInRound - right.pickInRound),
+      }));
+  }, [session.board]);
+  React.useEffect(() => {
+    if (!autoScroll || !session.currentPick) {
+      return;
+    }
+    const container = boardScrollRef.current;
+    const currentPick = currentPickRef.current;
+    if (!container || !currentPick) {
+      return;
+    }
+    const containerRect = container.getBoundingClientRect();
+    const pickRect = currentPick.getBoundingClientRect();
+    const left =
+      container.scrollLeft +
+      pickRect.left -
+      containerRect.left -
+      container.clientWidth / 2 +
+      currentPick.clientWidth / 2;
+    const top =
+      container.scrollTop +
+      pickRect.top -
+      containerRect.top -
+      container.clientHeight / 2 +
+      currentPick.clientHeight / 2;
+    container.scrollTo({
+      behavior: "smooth",
+      left: Math.max(0, left),
+      top: Math.max(0, top),
+    });
+  }, [autoScroll, session.currentPick]);
+
+  return (
+    <div ref={boardScrollRef} className="max-h-[560px] space-y-3 overflow-auto pb-2 pr-2">
+      {rounds.map(({ round, slots }) => (
+        <div className="min-w-[1420px]" key={round}>
+          <div className="mb-1 flex items-center gap-2">
+            <span className="rounded-md bg-zinc-900 px-2 py-1 text-xs font-semibold text-white">
+              Round {round}
+            </span>
+          </div>
+          <div
+            className="grid gap-2"
+            style={{ gridTemplateColumns: `repeat(${slots.length}, minmax(156px, 1fr))` }}
+          >
+            {slots.map((slot) => {
+              const isUserTeam =
+                slot.teamId === currentUser?.teamId || slot.teamName === currentUser?.teamName;
+              const isCurrentPick = slot.overallPick === session.currentPick;
+              return (
+                <div
+                  className={cn(
+                    "min-h-28 rounded-md border p-3 text-xs",
+                    slot.status === "Keeper"
+                      ? "border-rose-200 bg-rose-50 text-rose-950"
+                      : slot.status === "Drafted"
+                        ? "border-sky-200 bg-sky-50 text-sky-950"
+                        : "border-zinc-200 bg-zinc-50 text-zinc-800",
+                    isUserTeam && "border-emerald-300 bg-emerald-50 ring-1 ring-emerald-200",
+                    isCurrentPick && "border-amber-400 bg-amber-50 ring-2 ring-amber-300",
+                  )}
+                  key={slot.overallPick}
+                  ref={isCurrentPick ? currentPickRef : undefined}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">{slot.overallPick}</span>
+                    <span className="text-[10px] uppercase text-zinc-500">{slot.status}</span>
+                  </div>
+                  <p className="mt-1 truncate font-medium">{slot.teamName}</p>
+                  <p className="mt-1 line-clamp-2 text-zinc-600">
+                    {slot.pick ? `${slot.pick.playerName} ${slot.pick.position ? `(${slot.pick.position})` : ""}` : "Open"}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StrategyGenerationDialog({ message }: { message: string }) {
+  return (
+    <div
+      aria-label="Strategy generation in progress"
+      aria-modal="true"
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/55 p-4"
+      role="dialog"
+    >
+      <div
+        aria-live="polite"
+        className="flex w-full max-w-sm items-center gap-3 rounded-md border border-zinc-200 bg-white p-4 shadow-xl"
+        role="status"
+      >
+        <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-700">
+          <RefreshCw className="size-5 animate-spin" aria-hidden="true" />
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-950">{message}</h3>
+          <p className="mt-1 text-sm text-zinc-500">Waiting for the AI response.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function playDraftTimerAlert() {
+  playToneSequence([{ frequency: 880, start: 0, duration: 0.18, peak: 0.12 }]);
+}
+
+function playDraftTurnAlert() {
+  playToneSequence([
+    { frequency: 660, start: 0, duration: 0.16, peak: 0.11 },
+    { frequency: 880, start: 0.18, duration: 0.2, peak: 0.13 },
+  ]);
+}
+
+function playToneSequence(
+  tones: { frequency: number; start: number; duration: number; peak: number }[],
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const audioWindow = window as typeof window & {
+    webkitAudioContext?: typeof AudioContext;
+  };
+  const AudioContextClass = window.AudioContext ?? audioWindow.webkitAudioContext;
+  if (!AudioContextClass) {
+    return;
+  }
+  try {
+    const context = new AudioContextClass();
+    let latestStop = context.currentTime;
+    for (const tone of tones) {
+      const start = context.currentTime + tone.start;
+      const stop = start + tone.duration;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = tone.frequency;
+      gain.gain.setValueAtTime(0.001, start);
+      gain.gain.exponentialRampToValueAtTime(tone.peak, start + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.001, stop);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(start);
+      oscillator.stop(stop);
+      latestStop = Math.max(latestStop, stop);
+    }
+    window.setTimeout(() => {
+      void context.close();
+    }, Math.max(250, (latestStop - context.currentTime) * 1000 + 80));
+  } catch {
+    // Browsers can block audio until the page has received a user gesture.
+  }
+}
+
+function MockDraftPlayerDialog({
+  currentPick,
+  disabled,
+  onClose,
+  onDraft,
+  player,
+}: {
+  currentPick: number | null;
+  disabled: boolean;
+  onClose: () => void;
+  onDraft: () => void;
+  player: MockDraftAvailablePlayer;
+}) {
+  const value =
+    currentPick && player.adpPick !== null
+      ? player.adpPick - currentPick
+      : null;
+  const valueLabel =
+    value === null
+      ? "No ADP edge"
+      : value >= 12
+        ? "Strong value"
+        : value >= 0
+          ? "Fair value"
+          : "Reach";
+  return (
+    <div
+      aria-label={`${player.playerName} details`}
+      aria-modal="true"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/50 p-4"
+      role="dialog"
+    >
+      <div className="w-full max-w-lg rounded-md bg-white shadow-xl">
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-200 p-4">
+          <div className="min-w-0">
+            <h3 className="truncate text-lg font-semibold text-zinc-950">{player.playerName}</h3>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <PositionBadge position={player.position} />
+              <Badge variant="info">{player.nflTeam || "FA"}</Badge>
+              <Badge variant={value !== null && value >= 0 ? "success" : "warning"}>{valueLabel}</Badge>
+            </div>
+          </div>
+          <Button onClick={onClose} size="sm" variant="ghost">
+            <X className="size-4" aria-hidden="true" />
+          </Button>
+        </div>
+
+        <div className="grid gap-3 p-4 sm:grid-cols-2">
+          <MetricStrip
+            label="Projected Points"
+            value={player.projection === null ? "-" : formatter.format(player.projection)}
+          />
+          <MetricStrip
+            label="ADP Pick"
+            value={player.adpPick === null ? "-" : formatter.format(player.adpPick)}
+          />
+          <MetricStrip
+            label="ADP Round"
+            value={player.adpRound === null ? "-" : formatter.format(player.adpRound)}
+          />
+          <MetricStrip
+            label="Pick Value"
+            value={value === null ? "-" : formatter.format(value)}
+          />
+          <MetricStrip
+            label="Risk"
+            value={player.risk === null ? "-" : formatter.format(player.risk)}
+          />
+          <MetricStrip label="Position" value={player.position || "-"} />
+        </div>
+
+        <div className="border-t border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-700">
+          <p>
+            {player.projection === null
+              ? "Projection data is unavailable for this player."
+              : `${player.projection.toFixed(1)} projected fantasy points are available from the active ADP snapshot.`}
+          </p>
+          <p className="mt-2">
+            {value === null
+              ? "No current-pick value can be calculated without ADP and pick context."
+              : value >= 0
+                ? `This player is ${formatter.format(value)} picks past market cost at the current pick.`
+                : `This player is ${formatter.format(Math.abs(value))} picks ahead of market cost at the current pick.`}
+          </p>
+        </div>
+
+        <div className="flex justify-end gap-2 p-4">
+          <Button onClick={onClose} variant="outline">
+            Close
+          </Button>
+          <Button disabled={disabled} onClick={onDraft}>
+            Draft
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MockDraftRecap({
+  session,
+  currentUser,
+  onRerun,
+}: {
+  session: MockDraftSession;
+  currentUser: AuthUser | null;
+  onRerun: () => void;
+}) {
+  const analysis = session.analysis;
+  const userRoster = session.picks.filter(
+    (pick) => pick.teamId === session.userTeamId || pick.teamName === session.userTeamName,
+  );
+  const bestPickFeedback = analysis?.pickFeedback
+    .slice()
+    .sort((left, right) => feedbackValue(right) - feedbackValue(left))
+    .slice(0, 6) ?? [];
+  const projected = analysis?.projectedRankings ?? {};
+  const componentScores = projected.component_scores as Record<string, unknown> | undefined;
+
+  return (
+    <section className="rounded-md border border-zinc-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-zinc-950">Recap</h2>
+          <p className="text-sm text-zinc-500">{formatMockDraftDate(session.completedAt)}</p>
+        </div>
+        <div className="flex flex-wrap items-start gap-2">
+          <Button onClick={() => exportMockDraftRecapCsv(session)} variant="outline">
+            <Download className="mr-2 size-4" aria-hidden="true" />
+            Export CSV
+          </Button>
+          <Button onClick={onRerun} variant="outline">
+            <RotateCcw className="mr-2 size-4" aria-hidden="true" />
+            Rerun Setup
+          </Button>
+          {analysis ? (
+            <div className="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-right">
+              <p className="text-xs font-semibold uppercase text-sky-700">Grade</p>
+              <p className="text-2xl font-semibold text-sky-950">
+                {analysis.overallLetterGrade} {analysis.overallNumericScore}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {analysis ? (
+        <p className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm leading-6 text-zinc-700">
+          {analysis.summary}
+        </p>
+      ) : null}
+
+      <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="rounded-md border border-zinc-200 p-4">
+          <h3 className="text-sm font-semibold text-zinc-950">Final Roster</h3>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {userRoster.map((pick) => (
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm" key={pick.id}>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="min-w-0 truncate font-medium text-zinc-950">{pick.playerName}</p>
+                  <PositionBadge position={pick.position} />
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Pick {pick.overallPick} · {pick.source.replace("_", " ")}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-md border border-zinc-200 p-4">
+          <h3 className="text-sm font-semibold text-zinc-950">Pick Feedback</h3>
+          <div className="mt-3 space-y-2">
+            {bestPickFeedback.map((feedback, index) => (
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm" key={index}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-zinc-950">
+                      {String(feedback.player_name ?? "Unknown player")}
+                    </p>
+                    <p className="text-xs text-zinc-500">{formatFeedbackContext(feedback)}</p>
+                  </div>
+                  <Badge variant={feedbackValue(feedback) >= 0 ? "success" : "warning"}>
+                    {formatFeedbackValue(feedback)}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs text-zinc-600">{String(feedback.summary ?? "")}</p>
+              </div>
+            ))}
+            {!bestPickFeedback.length ? (
+              <p className="rounded-md border border-dashed border-zinc-300 p-4 text-sm text-zinc-500">
+                No pick feedback saved.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-5 xl:grid-cols-2">
+        <RecapList title="Strengths" items={analysis?.strengths ?? []} variant="success" />
+        <RecapList title="Weaknesses" items={analysis?.weaknesses ?? []} variant="warning" />
+      </div>
+
+      {analysis ? (
+        <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.25fr)]">
+          <div className="rounded-md border border-zinc-200 p-4">
+            <h3 className="text-sm font-semibold text-zinc-950">Projection</h3>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <MetricStrip
+                label="Finish"
+                value={String(projected.projected_finish ?? "-")}
+              />
+              <MetricStrip
+                label="Playoff Tier"
+                value={String(projected.playoff_odds_tier ?? "TBD")}
+              />
+              <MetricStrip
+                label="Value"
+                value={String(componentScores?.value_score ?? "-")}
+              />
+              <MetricStrip
+                label="Roster"
+                value={String(componentScores?.roster_construction_score ?? "-")}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-md border border-zinc-200 p-4">
+            <h3 className="text-sm font-semibold text-zinc-950">What-If Scenarios</h3>
+            <div className="mt-3 grid gap-2 lg:grid-cols-3">
+              {analysis.whatIfScenarios.map((scenario, index) => (
+                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm" key={index}>
+                  <p className="font-medium text-zinc-950">{String(scenario.name ?? "Scenario")}</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Changed picks: {String(scenario.changed_picks ?? 0)} · Score delta:{" "}
+                    {String(scenario.score_delta ?? 0)}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-zinc-600">
+                    {String(scenario.recommendation ?? "")}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {analysis?.futureAdvice.length ? (
+        <div className="mt-5">
+          <RecapList title="Future Advice" items={analysis.futureAdvice} variant="success" />
+        </div>
+      ) : null}
+
+      <div className="mt-5">
+        <h3 className="mb-3 text-sm font-semibold text-zinc-950">Final Board</h3>
+        <MockDraftBoardPreview autoScroll={false} session={session} currentUser={currentUser} />
+      </div>
+    </section>
+  );
+}
+
+function MockDraftComparison({ sessions }: { sessions: MockDraftSession[] }) {
+  return (
+    <div className="mt-5 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-zinc-950">Comparison</h3>
+        <Button onClick={() => exportMockDraftComparisonCsv(sessions)} size="sm" variant="outline">
+          <Download className="mr-2 size-4" aria-hidden="true" />
+          Export CSV
+        </Button>
+      </div>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[920px] text-left text-sm">
+          <thead className="border-b border-zinc-200 text-xs uppercase text-zinc-500">
+            <tr>
+              <th className="py-2 pr-4">Completed</th>
+              <th className="py-2 pr-4">Grade</th>
+              <th className="py-2 pr-4">Value</th>
+              <th className="py-2 pr-4">Roster</th>
+              <th className="py-2 pr-4">Balance</th>
+              <th className="py-2 pr-4">Finish</th>
+              <th className="py-2 pr-4">Timer</th>
+              <th className="py-2 pr-4">Bots</th>
+              <th className="py-2 pr-0">Overrides</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-200">
+            {sessions.map((session) => {
+              const projected = session.analysis?.projectedRankings ?? {};
+              const components = projected.component_scores as Record<string, unknown> | undefined;
+              return (
+                <tr key={session.id}>
+                  <td className="py-3 pr-4 text-zinc-700">{formatMockDraftDate(session.completedAt)}</td>
+                  <td className="py-3 pr-4">
+                    <Badge variant="info">
+                      {session.analysis?.overallLetterGrade ?? "-"}{" "}
+                      {session.analysis?.overallNumericScore ?? ""}
+                    </Badge>
+                  </td>
+                  <td className="py-3 pr-4 text-zinc-700">{String(components?.value_score ?? "-")}</td>
+                  <td className="py-3 pr-4 text-zinc-700">
+                    {String(components?.roster_construction_score ?? "-")}
+                  </td>
+                  <td className="py-3 pr-4 text-zinc-700">
+                    {String(components?.positional_balance_score ?? "-")}
+                  </td>
+                  <td className="py-3 pr-4 text-zinc-700">
+                    {String(projected.projected_finish ?? "-")}
+                  </td>
+                  <td className="py-3 pr-4 text-zinc-700">
+                    {session.pickTimerSeconds ? `${session.pickTimerSeconds}s` : "No limit"}
+                  </td>
+                  <td className="py-3 pr-4 text-zinc-700">
+                    {String(session.botConfig.default_personality ?? "Balanced")} /{" "}
+                    {String(session.botConfig.default_difficulty ?? "Medium")}
+                  </td>
+                  <td className="py-3 pr-0 text-zinc-700">{countTeamBotOverrides(session.botConfig)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function RecapList({
+  title,
+  items,
+  variant,
+}: {
+  title: string;
+  items: Record<string, unknown>[];
+  variant: "success" | "warning";
+}) {
+  return (
+    <div className="rounded-md border border-zinc-200 p-4">
+      <h3 className="text-sm font-semibold text-zinc-950">{title}</h3>
+      <div className="mt-3 space-y-2">
+        {items.map((item, index) => (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm" key={index}>
+            <Badge variant={variant}>{String(item.label ?? title)}</Badge>
+            <p className="mt-2 text-zinc-600">{String(item.detail ?? "")}</p>
+          </div>
+        ))}
+        {!items.length ? (
+          <p className="rounded-md border border-dashed border-zinc-300 p-4 text-sm text-zinc-500">
+            No {title.toLowerCase()} saved.
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function feedbackValue(feedback: Record<string, unknown>): number {
+  const value = feedback.value_vs_adp;
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function formatFeedbackValue(feedback: Record<string, unknown>): string {
+  const value = feedbackValue(feedback);
+  if (value === 0) {
+    return "ADP even";
+  }
+  return `${value > 0 ? "+" : ""}${formatter.format(value)}`;
+}
+
+function formatFeedbackContext(feedback: Record<string, unknown>): string {
+  const source = String(feedback.source ?? "");
+  if (source === "keeper_forfeit") {
+    return `Keeper cost pick ${String(feedback.keeper_cost_pick ?? feedback.overall_pick ?? "-")} · ADP ${String(feedback.adp_pick ?? "-")}`;
+  }
+  return `Draft pick ${String(feedback.overall_pick ?? "-")} · ADP ${String(feedback.adp_pick ?? "-")}`;
+}
+
+function exportMockDraftRecapCsv(session: MockDraftSession) {
+  const analysis = session.analysis;
+  const projected = analysis?.projectedRankings ?? {};
+  const components = projected.component_scores as Record<string, unknown> | undefined;
+  const rows: Record<string, string | number | null>[] = [
+    {
+      section: "summary",
+      completed_at: session.completedAt,
+      team: session.userTeamName,
+      grade: analysis?.overallLetterGrade ?? null,
+      score: analysis?.overallNumericScore ?? null,
+      projected_finish: csvScalar(projected.projected_finish),
+      value_score: csvScalar(components?.value_score),
+      roster_score: csvScalar(components?.roster_construction_score),
+      balance_score: csvScalar(components?.positional_balance_score),
+      summary: analysis?.summary ?? null,
+    },
+    ...session.picks
+      .filter((pick) => pick.teamId === session.userTeamId || pick.teamName === session.userTeamName)
+      .map((pick) => ({
+        section: "roster",
+        overall_pick: pick.overallPick,
+        round: pick.round,
+        player: pick.playerName,
+        position: pick.position,
+        source: pick.source,
+      })),
+    ...(analysis?.pickFeedback ?? []).map((feedback) => ({
+      section: "pick_feedback",
+      overall_pick: csvScalar(feedback.overall_pick),
+      player: csvScalar(feedback.player_name),
+      position: csvScalar(feedback.position),
+      grade: csvScalar(feedback.grade),
+      adp_pick: csvScalar(feedback.adp_pick),
+      value_vs_adp: csvScalar(feedback.value_vs_adp),
+      summary: csvScalar(feedback.summary),
+    })),
+  ];
+  downloadCsv(`mock-draft-recap-${session.id}.csv`, rows);
+}
+
+function exportMockDraftComparisonCsv(sessions: MockDraftSession[]) {
+  const rows = sessions.map((session) => {
+    const projected = session.analysis?.projectedRankings ?? {};
+    const components = projected.component_scores as Record<string, unknown> | undefined;
+    return {
+      session_id: session.id,
+      completed_at: session.completedAt,
+      team: session.userTeamName,
+      grade: session.analysis?.overallLetterGrade ?? null,
+      score: session.analysis?.overallNumericScore ?? null,
+      value_score: csvScalar(components?.value_score),
+      roster_score: csvScalar(components?.roster_construction_score),
+      balance_score: csvScalar(components?.positional_balance_score),
+      projected_finish: csvScalar(projected.projected_finish),
+      timer_seconds: session.pickTimerSeconds,
+      rounds: session.roundCount,
+      default_personality: csvScalar(session.botConfig.default_personality ?? "Balanced"),
+      default_difficulty: csvScalar(session.botConfig.default_difficulty ?? "Medium"),
+      team_bot_overrides: countTeamBotOverrides(session.botConfig),
+      summary: session.analysis?.summary ?? null,
+    };
+  });
+  downloadCsv("mock-draft-comparison.csv", rows);
+}
+
+function downloadCsv(filename: string, rows: Record<string, string | number | null | undefined>[]) {
+  const headers = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
+  const csvText = [
+    headers.join(","),
+    ...rows.map((row) => headers.map((header) => csvEscape(row[header])).join(",")),
+  ].join("\n");
+  const blob = new Blob([csvText], { type: "text/csv;charset=utf-8" });
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(downloadUrl);
+}
+
+function csvEscape(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  const textValue = String(value);
+  return /[",\n]/.test(textValue) ? `"${textValue.replaceAll('"', '""')}"` : textValue;
+}
+
+function csvScalar(value: unknown): string | number | null {
+  if (typeof value === "string" || typeof value === "number") {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return String(value);
+}
+
 function DraftBoardPreview({
   currentUser,
   picks,
@@ -3791,6 +6020,99 @@ function ConnectionBadge({ status }: { status: ApiStatus }) {
   }[status];
   const variant = status === "live" ? "success" : status === "loading" ? "info" : "warning";
   return <Badge variant={variant}>{label}</Badge>;
+}
+
+function ScenarioNarrativePanel({
+  narrative,
+  loading,
+  error,
+  onGenerate,
+  disabled,
+}: {
+  narrative: ScenarioNarrative | null;
+  loading: boolean;
+  error: boolean;
+  onGenerate: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
+        <div className="min-w-0">
+          <CardTitle>AI Scenario Analysis</CardTitle>
+          <CardDescription>
+            AI-generated summary comparing tradeoffs across keeper presets.
+          </CardDescription>
+        </div>
+        <Button disabled={disabled} onClick={onGenerate} variant="outline" size="sm">
+          <Bot className="size-4" aria-hidden="true" />
+          {loading ? "Generating…" : narrative ? "Regenerate" : "Generate Analysis"}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {loading && (
+          <div className="flex items-center gap-2 text-sm text-zinc-500">
+            <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
+            Analyzing scenarios…
+          </div>
+        )}
+        {error && !loading && (
+          <p className="text-sm text-red-600">Failed to generate analysis. Please try again.</p>
+        )}
+        {!loading && !error && !narrative && (
+          <p className="text-sm text-zinc-500">
+            Click &ldquo;Generate Analysis&rdquo; to get an AI-powered comparison of your keeper
+            presets.
+          </p>
+        )}
+        {!loading && narrative && (
+          <div className="space-y-4">
+            <p className="text-sm leading-6 text-zinc-700">{narrative.summary}</p>
+            {narrative.best_fit && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase text-zinc-500">Best Fit</span>
+                <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
+                  {narrative.best_fit}
+                </Badge>
+              </div>
+            )}
+            {narrative.tradeoffs.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase text-zinc-500">Tradeoffs</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {narrative.tradeoffs.map((t) => (
+                    <div
+                      key={t.scenario}
+                      className="rounded-md border border-zinc-100 bg-zinc-50 p-3 text-sm"
+                    >
+                      <p className="font-medium text-zinc-800">{t.scenario}</p>
+                      {t.benefit && <p className="mt-1 text-emerald-700">{t.benefit}</p>}
+                      {t.cost && <p className="mt-0.5 text-red-600">{t.cost}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {narrative.decision_notes.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase text-zinc-500">Decision Notes</p>
+                <ul className="space-y-1">
+                  {narrative.decision_notes.map((note, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-zinc-600">
+                      <span className="mt-0.5 text-emerald-500" aria-hidden="true">
+                        •
+                      </span>
+                      {note}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function ScenarioSummaryCard({ scenario }: { scenario: ScenarioComparison }) {
@@ -3877,7 +6199,42 @@ function KeeperRecommendationsTable({
   showOverrides?: boolean;
   teamCount?: number;
 }) {
-  const { currentUser } = useDashboard();
+  const { currentUser, data: workspaceData } = useDashboard();
+  const leagueId = workspaceData.league?.id;
+  const [loadingIds, setLoadingIds] = React.useState<Set<string>>(new Set());
+  const [errorIds, setErrorIds] = React.useState<Set<string>>(new Set());
+  const [localExplanations, setLocalExplanations] = React.useState<
+    Record<string, KeeperExplanation>
+  >({});
+  const [selectedRec, setSelectedRec] = React.useState<KeeperRecommendation | null>(null);
+
+  const handleGenerateExplanation = React.useCallback(
+    async (rec: KeeperRecommendation) => {
+      if (!leagueId || !rec.id) return;
+      setLoadingIds((prev) => new Set(prev).add(rec.id!));
+      setErrorIds((prev) => {
+        const next = new Set(prev);
+        next.delete(rec.id!);
+        return next;
+      });
+      try {
+        const explanation = await generateKeeperExplanation(leagueId, rec.id);
+        if (explanation) {
+          setLocalExplanations((prev) => ({ ...prev, [rec.id!]: explanation }));
+        }
+      } catch {
+        setErrorIds((prev) => new Set(prev).add(rec.id!));
+      } finally {
+        setLoadingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(rec.id!);
+          return next;
+        });
+      }
+    },
+    [leagueId],
+  );
+
   const columns = React.useMemo<ColumnDef<KeeperRecommendation>[]>(
     () => [
       {
@@ -3892,7 +6249,30 @@ function KeeperRecommendationsTable({
         ),
       },
       { accessorKey: "scenario", header: "Scenario" },
-      { accessorKey: "player", header: "Player" },
+      {
+        accessorKey: "player",
+        header: "Player",
+        cell: ({ row }) => {
+          const rec = row.original;
+          return (
+            <button
+              className="text-left font-medium text-zinc-900 hover:text-emerald-700 hover:underline focus-visible:underline focus:outline-none"
+              onClick={() => {
+                setSelectedRec(rec);
+                const hasExplanation = rec.id
+                  ? !!(localExplanations[rec.id] ?? rec.aiExplanation)
+                  : !!rec.aiExplanation;
+                if (!hasExplanation && rec.id && !loadingIds.has(rec.id) && !errorIds.has(rec.id)) {
+                  handleGenerateExplanation(rec);
+                }
+              }}
+              type="button"
+            >
+              {rec.player}
+            </button>
+          );
+        },
+      },
       {
         accessorKey: "position",
         header: "Pos",
@@ -3937,7 +6317,16 @@ function KeeperRecommendationsTable({
       },
       { accessorKey: "reason", header: "Reason" },
     ],
-    [currentUser, onOverride, teamCount],
+    [
+      currentUser,
+      errorIds,
+      handleGenerateExplanation,
+      loadingIds,
+      localExplanations,
+      onOverride,
+      setSelectedRec,
+      teamCount,
+    ],
   );
 
   const visibleColumns = compact
@@ -3946,15 +6335,32 @@ function KeeperRecommendationsTable({
       ? columns
       : columns.filter((column) => column.id !== "manualOverride");
 
+  const modalRec = selectedRec;
+  const modalExplanation = modalRec?.id
+    ? (localExplanations[modalRec.id] ?? modalRec.aiExplanation ?? null)
+    : (modalRec?.aiExplanation ?? null);
+
   return (
-    <DataTable
-      columns={visibleColumns}
-      data={data}
-      resetSignal={resetSignal}
-      scrollBody={!compact}
-      tableId="keeper-recommendations"
-      teamFilter={{ columnId: "team" }}
-    />
+    <>
+      <DataTable
+        columns={visibleColumns}
+        data={data}
+        resetSignal={resetSignal}
+        scrollBody={!compact}
+        tableId="keeper-recommendations"
+        teamFilter={{ columnId: "team" }}
+      />
+      {modalRec && (
+        <KeeperExplanationModal
+          rec={modalRec}
+          explanation={modalExplanation}
+          isLoading={modalRec.id ? loadingIds.has(modalRec.id) : false}
+          hasError={modalRec.id ? errorIds.has(modalRec.id) : false}
+          onClose={() => setSelectedRec(null)}
+          onRetry={() => handleGenerateExplanation(modalRec)}
+        />
+      )}
+    </>
   );
 }
 
@@ -3973,6 +6379,120 @@ function ManualOverrideHeader() {
       <span className="text-center text-[10px] font-semibold uppercase leading-[0.95] text-zinc-500">
         Exclude
       </span>
+    </div>
+  );
+}
+
+const EXPLANATION_DECISION_STYLES: Record<KeeperExplanation["decision"], string> = {
+  "strong keep": "bg-emerald-100 text-emerald-800",
+  "lean keep": "bg-blue-100 text-blue-800",
+  "toss-up": "bg-amber-100 text-amber-800",
+  avoid: "bg-red-100 text-red-800",
+};
+
+function KeeperExplanationModal({
+  rec,
+  explanation,
+  isLoading,
+  hasError,
+  onClose,
+  onRetry,
+}: {
+  rec: KeeperRecommendation;
+  explanation: KeeperExplanation | null;
+  isLoading: boolean;
+  hasError: boolean;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  React.useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const decisionStyle = explanation
+    ? (EXPLANATION_DECISION_STYLES[explanation.decision] ?? "bg-zinc-100 text-zinc-700")
+    : null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="relative w-full max-w-md rounded-xl bg-white shadow-xl">
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-100 px-5 py-4">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase text-zinc-500">
+              {rec.team} · {rec.scenario}
+            </p>
+            <h2 className="truncate text-lg font-semibold text-zinc-950">{rec.player}</h2>
+            <div className="mt-1.5 flex items-center gap-2">
+              <PositionBadge position={rec.position} />
+              {explanation && decisionStyle && (
+                <span
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+                    decisionStyle,
+                  )}
+                >
+                  {explanation.decision}
+                </span>
+              )}
+            </div>
+          </div>
+          <button
+            aria-label="Close"
+            className="shrink-0 rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="px-5 py-4">
+          {isLoading && (
+            <div className="flex items-center gap-2 text-sm text-zinc-500">
+              <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
+              Generating explanation…
+            </div>
+          )}
+          {hasError && !isLoading && (
+            <div className="space-y-2">
+              <p className="text-sm text-red-600">Failed to generate explanation.</p>
+              <button className="text-sm text-zinc-600 underline" onClick={onRetry} type="button">
+                Try again
+              </button>
+            </div>
+          )}
+          {!isLoading && !hasError && !explanation && (
+            <p className="text-sm text-zinc-400">No explanation available.</p>
+          )}
+          {!isLoading && explanation && (
+            <div className="space-y-3 text-sm">
+              <p className="text-zinc-700">{explanation.short_reason}</p>
+              {explanation.value_explanation && (
+                <div>
+                  <p className="font-semibold text-zinc-800">Value</p>
+                  <p className="text-zinc-600">{explanation.value_explanation}</p>
+                </div>
+              )}
+              {explanation.risk_note && (
+                <div>
+                  <p className="font-semibold text-zinc-800">Risk</p>
+                  <p className="text-zinc-600">{explanation.risk_note}</p>
+                </div>
+              )}
+              {explanation.opportunity_cost && (
+                <div>
+                  <p className="font-semibold text-zinc-800">Opportunity Cost</p>
+                  <p className="text-zinc-600">{explanation.opportunity_cost}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -4213,7 +6733,7 @@ function PagePanel({
   children,
 }: {
   title: string;
-  description: string;
+  description: React.ReactNode;
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -4407,6 +6927,221 @@ function formatNewsDate(value: string): string {
     return value;
   }
   return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function formatMockDraftDate(value: string | null): string {
+  if (!value) {
+    return "Not complete";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function strategyText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value);
+}
+
+function strategyNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+type LiveTarget = {
+  playerId: string;
+  playerName: string;
+  position: string;
+  reason: string;
+  acceptableRange: string;
+};
+
+function buildLivePositionPriorities(
+  session: MockDraftSession,
+  planPriorities: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const liveNeeds = session.rosterNeeds
+    .filter((need) => need.remaining > 0)
+    .filter((need) => !["BENCH"].includes(need.slot))
+    .map((need) => ({
+      position: need.slot,
+      priority: ["K", "DST", "DEF"].includes(need.slot) ? "low" : "high",
+      reason: `${need.remaining} ${need.slot} slot${need.remaining === 1 ? "" : "s"} still open.`,
+    }));
+  const livePositions = new Set(liveNeeds.map((need) => need.position));
+  const remainingPlanPriorities = planPriorities.filter(
+    (item) => !livePositions.has(strategyText(item.position)),
+  );
+  return [...liveNeeds, ...remainingPlanPriorities].slice(0, 5);
+}
+
+function buildLiveTargets(
+  session: MockDraftSession,
+  planTargets: Record<string, unknown>[],
+): LiveTarget[] {
+  const availableById = new Map(session.availablePlayers.map((player) => [player.playerId, player]));
+  const availableByNamePosition = new Map(
+    session.availablePlayers.map((player) => [targetKey(player.playerName, player.position), player]),
+  );
+  const targets: LiveTarget[] = [];
+  for (const item of planTargets) {
+    const playerId = strategyText(item.player_id);
+    const playerName = strategyText(item.player_name);
+    const position = strategyText(item.position);
+    const available =
+      availableById.get(playerId) ??
+      availableByNamePosition.get(targetKey(playerName, position));
+    if (!available) {
+      continue;
+    }
+    targets.push({
+      playerId: available.playerId,
+      playerName: available.playerName,
+      position: available.position,
+      reason: strategyText(item.reason) || liveTargetReason(available, session.currentPick),
+      acceptableRange: strategyText(item.acceptable_range),
+    });
+  }
+  const existingIds = new Set(targets.map((target) => target.playerId));
+  const liveAdvice = buildLiveStrategyAdvice(session);
+  for (const player of liveAdvice?.targets ?? []) {
+    if (existingIds.has(player.playerId)) {
+      continue;
+    }
+    targets.push({
+      playerId: player.playerId,
+      playerName: player.playerName,
+      position: player.position,
+      reason: liveTargetReason(player, session.currentPick),
+      acceptableRange: "",
+    });
+  }
+  return targets.slice(0, 4);
+}
+
+function targetKey(playerName: string, position: string): string {
+  return `${playerName.trim().toLowerCase()}|${position.trim().toUpperCase()}`;
+}
+
+function liveTargetReason(player: MockDraftAvailablePlayer, currentPick: number | null): string {
+  if (player.adpPick !== null && currentPick !== null) {
+    const value = player.adpPick - currentPick;
+    if (value >= 0) {
+      return `${formatter.format(value)} picks past market cost.`;
+    }
+    return `${formatter.format(Math.abs(value))} picks ahead of market cost.`;
+  }
+  return "Available fit for current roster needs.";
+}
+
+function buildLiveStrategyAdvice(session: MockDraftSession): {
+  priority: string;
+  detail: string;
+  targets: MockDraftAvailablePlayer[];
+} | null {
+  if (session.status === "complete" || session.status === "abandoned") {
+    return null;
+  }
+  const currentSlot = session.currentPick
+    ? session.board.find((slot) => slot.overallPick === session.currentPick)
+    : null;
+  const baseNeeds = session.rosterNeeds.filter(
+    (need) =>
+      need.remaining > 0 &&
+      !["BENCH", "FLEX", "SUPERFLEX", "K", "DST", "DEF"].includes(need.slot),
+  );
+  const flexNeed = session.rosterNeeds.find((need) => need.slot === "FLEX" && need.remaining > 0);
+  const superflexNeed = session.rosterNeeds.find(
+    (need) => need.slot === "SUPERFLEX" && need.remaining > 0,
+  );
+  const lateSpecialTeamNeed = currentSlot && currentSlot.round >= Math.max(13, session.roundCount - 2)
+    ? session.rosterNeeds.find((need) => ["K", "DST", "DEF"].includes(need.slot) && need.remaining > 0)
+    : null;
+
+  let priorityPositions = baseNeeds.map((need) => need.slot);
+  let priority = priorityPositions.length
+    ? `Fill ${priorityPositions.slice(0, 3).join("/")}`
+    : "Best value";
+  let detail = priorityPositions.length
+    ? `Your roster still needs ${baseNeeds
+        .map((need) => `${need.remaining} ${need.slot}`)
+        .join(", ")} before leaning into bench depth.`
+    : "Core starter slots are mostly covered; lean into ADP value and upside.";
+
+  if (!priorityPositions.length && superflexNeed) {
+    priorityPositions = ["QB", "RB", "WR"];
+    priority = "Fill Superflex";
+    detail = "Superflex is still open; prioritize QB value first, then strong RB/WR value.";
+  } else if (!priorityPositions.length && flexNeed) {
+    priorityPositions = ["RB", "WR", "TE"];
+    priority = "Fill Flex";
+    detail = "Flex is still open; prioritize RB/WR volume, with TE only on a clear value fall.";
+  } else if (!priorityPositions.length && lateSpecialTeamNeed) {
+    priorityPositions = [lateSpecialTeamNeed.slot === "DEF" ? "DST" : lateSpecialTeamNeed.slot];
+    priority = `Fill ${priorityPositions[0]}`;
+    detail = "It is late enough to address the remaining special-teams roster slot.";
+  }
+
+  const positionSet = new Set(priorityPositions.map((position) => (position === "DEF" ? "DST" : position)));
+  const targets = session.availablePlayers
+    .filter((player) => positionSet.size === 0 || positionSet.has(player.position === "DEF" ? "DST" : player.position))
+    .filter((player) => {
+      const normalized = player.position === "DEF" ? "DST" : player.position;
+      return !["K", "DST"].includes(normalized) || (currentSlot?.round ?? 1) >= Math.max(13, session.roundCount - 2);
+    })
+    .slice(0, 4);
+
+  if (currentSlot && currentSlot.teamId !== session.userTeamId) {
+    detail = `${currentSlot.teamName || "A bot team"} is on the clock. ${detail}`;
+  }
+
+  return { priority, detail, targets };
+}
+
+function setTeamBotOverride(
+  setForm: React.Dispatch<React.SetStateAction<MockDraftCreateForm>>,
+  teamId: string,
+  personality: string,
+  difficulty: string,
+  form: MockDraftCreateForm,
+) {
+  setForm((current) => {
+    const next = { ...current.teamBotOverrides };
+    if (personality === form.defaultPersonality && difficulty === form.defaultDifficulty) {
+      delete next[teamId];
+    } else {
+      next[teamId] = { personality, difficulty };
+    }
+    return { ...current, teamBotOverrides: next };
+  });
+}
+
+function objectEntries(value: unknown): [string, unknown][] {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? Object.entries(value as Record<string, unknown>)
+    : [];
+}
+
+function countTeamBotOverrides(botConfig: Record<string, unknown>): number {
+  return objectEntries(botConfig.teams).length;
 }
 
 function ScoreHelpTile({ label, text }: { label: string; text: string }) {

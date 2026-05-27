@@ -35,7 +35,16 @@ export type ADPEntry = {
   trend: string;
 };
 
+export type KeeperExplanation = {
+  short_reason: string;
+  value_explanation: string;
+  risk_note: string;
+  opportunity_cost: string;
+  decision: "strong keep" | "lean keep" | "toss-up" | "avoid";
+};
+
 export type KeeperRecommendation = {
+  id?: string;
   teamId?: string;
   playerId?: string;
   team: string;
@@ -52,6 +61,7 @@ export type KeeperRecommendation = {
   status: "Recommended" | "Eligible" | "Excluded";
   manualOverride?: "auto" | "force_keep" | "exclude";
   reason: string;
+  aiExplanation?: KeeperExplanation | null;
 };
 
 export type Outlook = {
@@ -91,6 +101,19 @@ export type ScenarioComparison = {
   totalKeeperScore: number;
   strategicNotes: string;
   teams: ScenarioTeamResult[];
+};
+
+export type ScenarioNarrativeTradeoff = {
+  scenario: string;
+  benefit: string;
+  cost: string;
+};
+
+export type ScenarioNarrative = {
+  summary: string;
+  best_fit: string;
+  tradeoffs: ScenarioNarrativeTradeoff[];
+  decision_notes: string[];
 };
 
 export const teams: Team[] = [

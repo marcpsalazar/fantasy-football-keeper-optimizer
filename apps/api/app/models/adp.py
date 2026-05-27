@@ -2,13 +2,14 @@ import uuid
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, Relationship
 
 from app.models.base import TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.league import League
+    from app.models.mock_draft import MockDraftSession
     from app.models.player import Player
 
 
@@ -36,6 +37,7 @@ class ADPSnapshot(TimestampMixin, table=True):
 
     league: "League" = Relationship(back_populates="adp_snapshots")
     entries: list["ADPEntry"] = Relationship(back_populates="snapshot")
+    mock_draft_sessions: list["MockDraftSession"] = Relationship(back_populates="adp_snapshot")
 
 
 class ADPEntry(TimestampMixin, table=True):
@@ -62,3 +64,21 @@ class ADPEntry(TimestampMixin, table=True):
 
     snapshot: "ADPSnapshot" = Relationship(back_populates="entries")
     player: "Player" = Relationship(back_populates="adp_entries")
+
+
+class ADPRefreshCandidate(TimestampMixin, table=True):
+    __tablename__ = "adp_refresh_candidates"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    league_id: uuid.UUID = Field(foreign_key="leagues.id", index=True)
+    provider: str = Field(index=True, max_length=80)
+    model: str | None = Field(default=None, max_length=120)
+    status: str = Field(default="pending", index=True, max_length=40)
+    board_size: int = Field(default=250)
+    generated_at: str = Field(index=True, max_length=80)
+    source_summary: str | None = Field(default=None, max_length=1000)
+    warnings: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    normalized_rows: list[dict[str, object]] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    error_message: str | None = Field(default=None, max_length=1000)
+    approved_by_user_id: uuid.UUID | None = Field(default=None, foreign_key="users.id", index=True)
+    approved_at: str | None = Field(default=None, max_length=80)

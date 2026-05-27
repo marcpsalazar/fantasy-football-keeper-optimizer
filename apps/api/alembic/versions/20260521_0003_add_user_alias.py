@@ -18,10 +18,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("users")}
+    if "alias" in columns:
+        return
     with op.batch_alter_table("users") as batch_op:
         batch_op.add_column(sa.Column("alias", sa.String(length=120), nullable=True))
 
 
 def downgrade() -> None:
+    columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("users")}
+    if "alias" not in columns:
+        return
     with op.batch_alter_table("users") as batch_op:
         batch_op.drop_column("alias")

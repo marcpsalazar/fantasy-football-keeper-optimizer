@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.auth import User
     from app.models.draft import DraftPick
     from app.models.keeper import KeeperCandidate
+    from app.models.mock_draft import MockDraftPick, MockDraftSession
     from app.models.optimizer import (
         KeeperRecommendation,
         ManualOverride,
@@ -53,6 +54,7 @@ class League(TimestampMixin, table=True):
     manual_overrides: list["ManualOverride"] = Relationship(back_populates="league")
     keeper_recommendations: list["KeeperRecommendation"] = Relationship(back_populates="league")
     scenario_selections: list["TeamScenarioSelection"] = Relationship(back_populates="league")
+    mock_draft_sessions: list["MockDraftSession"] = Relationship(back_populates="league")
 
 
 class Team(TimestampMixin, table=True):
@@ -73,3 +75,5 @@ class Team(TimestampMixin, table=True):
     final_roster_entries: list["FinalRosterEntry"] = Relationship(back_populates="team")
     manual_overrides: list["ManualOverride"] = Relationship(back_populates="team")
     keeper_recommendations: list["KeeperRecommendation"] = Relationship(back_populates="team")
+    mock_draft_sessions: list["MockDraftSession"] = Relationship(back_populates="user_team")
+    mock_draft_picks: list["MockDraftPick"] = Relationship(back_populates="team")

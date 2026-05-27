@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 
 from app.core.config import Settings
 from app.models import League, Team
+from app.services.ai_adp import AIADPError, board_to_csv, build_ai_adp_board
 from app.services.csv_imports import CSVImportError, ImportResult, import_adp_csv
 
 
@@ -40,6 +41,8 @@ def refresh_adp_from_api(
         return _refresh_from_fantasy_football_calculator(session, league, settings)
     if provider == "fantasynerds":
         return _refresh_from_fantasy_nerds(session, league, settings)
+    if provider in {"ai_synthesized", "ai", "openai"}:
+        return _refresh_from_ai_synthesized(session, league, settings)
     if provider == "csv_url":
         return _refresh_from_csv_url(session, league_id, settings)
     raise ADPRefreshError(f"Unsupported ADP provider: {provider}")
@@ -176,6 +179,23 @@ def _refresh_from_csv_url(
     return ADPRefreshResult(
         provider="csv_url",
         source_url=settings.adp_refresh_url,
+        import_result=import_result,
+    )
+
+
+def _refresh_from_ai_synthesized(
+    session: Session,
+    league: League,
+    settings: Settings,
+) -> ADPRefreshResult:
+    try:
+        board = build_ai_adp_board(session, league, settings)
+        import_result = import_adp_csv(session, league.id, board_to_csv(board, league))
+    except (AIADPError, CSVImportError) as exc:
+        raise ADPRefreshError(str(exc)) from exc
+    return ADPRefreshResult(
+        provider="ai_synthesized",
+        source_url=board.source_url,
         import_result=import_result,
     )
 

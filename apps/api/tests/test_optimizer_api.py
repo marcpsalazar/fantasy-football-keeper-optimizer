@@ -1,6 +1,8 @@
 from collections.abc import Generator
-from datetime import UTC, datetime
+from contextlib import contextmanager
+from datetime import UTC, date, datetime
 import json
+import uuid
 
 from fastapi import Response
 from fastapi.testclient import TestClient
@@ -9,18 +11,44 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
 import app.models  # noqa: F401
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.db.session import get_session
 from app.main import create_app, ensure_initial_admin_user
-from app.models import User
+from app.models import (
+    ADPEntry,
+    ADPSnapshot,
+    DraftPick,
+    FinalRosterEntry,
+    KeeperRecommendation,
+    Player,
+    User,
+)
 from app.services.auth import clear_session_cookie, hash_password, set_session_cookie, verify_password
 import app.services.auth as auth_service
+from app.services.adp_refresh import refresh_adp_from_api
+from app.services.ai_adp import AIADPBoard, AIADPError, AIADPRow, _dedupe_and_trim_board, _validate_board
 from app.services.composite_adp import ProviderFetchResult, _parse_draftsharks_browser_payload
+import app.services.mock_draft_ai as mock_draft_ai
+import app.services.mock_draft as mock_draft_service
 import app.services.news_feed as news_feed
+import app.services.keeper_explanation_ai as keeper_explanation_ai
+from app.services.keeper_explanation_ai import (
+    KeeperExplanationResult,
+    explanation_input_hash,
+)
+import app.services.scenario_narrative_ai as scenario_narrative_ai
+from app.services.scenario_narrative_ai import (
+    ScenarioNarrativeResult,
+    narrative_input_hash,
+)
+
+
+def _test_settings(**overrides: object) -> Settings:
+    return Settings(_env_file=None, **overrides)
 
 
 @pytest.fixture
-def client() -> Generator[TestClient, None, None]:
+def client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -32,8 +60,11 @@ def client() -> Generator[TestClient, None, None]:
         with Session(engine) as session:
             yield session
 
+    monkeypatch.setattr("app.main.get_settings", lambda: _test_settings())
+    monkeypatch.setattr("app.services.mock_draft.get_settings", lambda: _test_settings())
     app = create_app()
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_settings] = lambda: _test_settings()
 
     with TestClient(app) as test_client:
         yield test_client
@@ -60,6 +91,15 @@ def _create_admin_and_login(client: TestClient) -> dict[str, str]:
     )
     assert login_response.status_code == 200
     return response.json()
+
+
+@contextmanager
+def _session_from_client(client: TestClient) -> Generator[Session, None, None]:
+    session_generator = client.app.dependency_overrides[get_session]()
+    try:
+        yield next(session_generator)
+    finally:
+        session_generator.close()
 
 
 def test_auth_requires_login_after_user_exists(client: TestClient) -> None:
@@ -139,7 +179,7 @@ def test_session_cookie_is_not_secure_by_default_in_development(
     monkeypatch.setattr(
         auth_service,
         "get_settings",
-        lambda: Settings(environment="development", session_secret="test-secret"),
+        lambda: _test_settings(environment="development", session_secret="test-secret"),
     )
     response = Response()
 
@@ -160,7 +200,7 @@ def test_session_cookie_is_secure_by_default_in_production(
     monkeypatch.setattr(
         auth_service,
         "get_settings",
-        lambda: Settings(environment="production", session_secret="test-secret"),
+        lambda: _test_settings(environment="production", session_secret="test-secret"),
     )
     response = Response()
 
@@ -183,7 +223,7 @@ def test_session_cookie_secure_setting_overrides_environment(
     monkeypatch.setattr(
         auth_service,
         "get_settings",
-        lambda: Settings(
+        lambda: _test_settings(
             environment="production",
             session_cookie_secure=False,
             session_secret="test-secret",
@@ -205,7 +245,7 @@ def test_session_cookie_samesite_setting_overrides_environment(
     monkeypatch.setattr(
         auth_service,
         "get_settings",
-        lambda: Settings(
+        lambda: _test_settings(
             environment="production",
             session_cookie_samesite="lax",
             session_secret="test-secret",
@@ -222,7 +262,7 @@ def test_session_cookie_samesite_setting_overrides_environment(
 
 
 def test_settings_normalizes_railway_postgresql_database_url() -> None:
-    settings = Settings(database_url="postgresql://keeper:secret@host.railway.internal:5432/keeper")
+    settings = _test_settings(database_url="postgresql://keeper:secret@host.railway.internal:5432/keeper")
 
     assert (
         settings.sqlalchemy_database_url
@@ -231,10 +271,10 @@ def test_settings_normalizes_railway_postgresql_database_url() -> None:
 
 
 def test_settings_keeps_explicit_sqlalchemy_and_sqlite_database_urls() -> None:
-    postgres_settings = Settings(
+    postgres_settings = _test_settings(
         database_url="postgresql+psycopg://keeper:secret@localhost:5432/keeper"
     )
-    sqlite_settings = Settings(database_url="sqlite:////tmp/keeper_optimizer_dev.db")
+    sqlite_settings = _test_settings(database_url="sqlite:////tmp/keeper_optimizer_dev.db")
 
     assert (
         postgres_settings.sqlalchemy_database_url
@@ -391,6 +431,883 @@ def test_team_management_is_admin_only_and_can_assign_users(client: TestClient) 
     assert delete_response.status_code == 204
 
 
+def test_mock_draft_session_prefills_keeper_and_runs_controls(client: TestClient) -> None:
+    admin = _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "Mock Draft League",
+            "season_year": 2026,
+            "draft_type": "snake",
+            "roster_settings": {
+                "slots": {"QB": 1, "RB": 1},
+                "allowed_positions": ["QB", "RB", "WR"],
+            },
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "User Team", "draft_slot": 1, "user_id": admin["id"]},
+    )
+    assert team_response.status_code == 201
+    user_team_id = team_response.json()["id"]
+    bot_team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "Bot Team", "draft_slot": 2},
+    )
+    assert bot_team_response.status_code == 201
+
+    with _session_from_client(client) as session:
+        snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="Mock ADP",
+            source="test",
+            format_type="superflex",
+            snapshot_date=date(2026, 5, 1),
+        )
+        players = [
+            Player(full_name="Keeper QB", position="QB", nfl_team="KC"),
+            Player(full_name="Bot RB", position="RB", nfl_team="ATL"),
+            Player(full_name="Bot WR", position="WR", nfl_team="DET"),
+            Player(full_name="User RB", position="RB", nfl_team="NYJ"),
+        ]
+        session.add(snapshot)
+        for player in players:
+            session.add(player)
+        session.commit()
+        for index, player in enumerate(players, start=1):
+            session.add(
+                ADPEntry(
+                    snapshot_id=snapshot.id,
+                    player_id=player.id,
+                    position=player.position,
+                    adp_pick=float(index),
+                )
+            )
+        session.add(
+            KeeperRecommendation(
+                league_id=uuid.UUID(league_id),
+                user_id=uuid.UUID(admin["id"]),
+                team_id=uuid.UUID(user_team_id),
+                player_id=players[0].id,
+                adp_snapshot_id=snapshot.id,
+                scenario_name="Default",
+                keeper_cost_round=1,
+                adp_pick=1,
+                adp_round=1,
+                keeper_value=10,
+                keeper_score=20,
+                is_recommended=True,
+            )
+        )
+        session.commit()
+        snapshot_id = str(snapshot.id)
+
+    create_response = client.post(
+        f"/api/leagues/{league_id}/mock-drafts",
+        json={"adp_snapshot_id": snapshot_id, "round_count": 2, "pick_timer_seconds": 60},
+    )
+    assert create_response.status_code == 201
+    draft = create_response.json()
+    assert draft["status"] == "setup"
+    assert draft["round_count"] == 2
+    assert draft["user_team_id"] == user_team_id
+    assert draft["board"][0]["status"] == "Keeper"
+    assert draft["board"][0]["pick"]["player_name"] == "Keeper QB"
+    assert draft["current_pick"] == 2
+
+    start_response = client.post(f"/api/mock-drafts/{draft['id']}/start")
+    assert start_response.status_code == 200
+    assert start_response.json()["session"]["status"] == "in_progress"
+
+    bot_response = client.post(f"/api/mock-drafts/{draft['id']}/bot-pick")
+    assert bot_response.status_code == 200
+    assert bot_response.json()["pick"]["source"] == "bot"
+    assert bot_response.json()["pick"]["player_name"] == "Bot RB"
+
+    pause_response = client.post(f"/api/mock-drafts/{draft['id']}/pause")
+    assert pause_response.status_code == 200
+    assert pause_response.json()["session"]["status"] == "paused"
+    resume_response = client.post(f"/api/mock-drafts/{draft['id']}/resume")
+    assert resume_response.status_code == 200
+    assert resume_response.json()["session"]["status"] == "in_progress"
+
+    complete_response = client.post(f"/api/mock-drafts/{draft['id']}/complete", json={"force": True})
+    assert complete_response.status_code == 200
+    completed = complete_response.json()["session"]
+    assert completed["status"] == "complete"
+    assert completed["analysis"]["overall_letter_grade"]
+    assert completed["analysis"]["pick_feedback"][0]["player_name"] == "Keeper QB"
+    assert completed["analysis"]["what_if_scenarios"]
+    assert completed["analysis"]["projected_rankings"]["component_scores"]["value_score"] >= 0
+    assert completed["analysis"]["future_advice"]
+
+    history_response = client.get(f"/api/leagues/{league_id}/mock-drafts")
+    assert history_response.status_code == 200
+    assert [row["id"] for row in history_response.json()] == [draft["id"]]
+
+
+def test_mock_draft_bot_uses_ai_decision_when_enabled(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin = _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "AI Bot Mock League",
+            "season_year": 2026,
+            "draft_type": "snake",
+            "roster_settings": {
+                "slots": {"QB": 1},
+                "allowed_positions": ["QB"],
+            },
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    user_team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "User Team", "draft_slot": 1, "user_id": admin["id"]},
+    )
+    assert user_team_response.status_code == 201
+    bot_team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "Bot Team", "draft_slot": 2},
+    )
+    assert bot_team_response.status_code == 201
+
+    with _session_from_client(client) as session:
+        snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="AI Bot ADP",
+            source="test",
+            format_type="superflex",
+            snapshot_date=date(2026, 5, 1),
+        )
+        user_qb = Player(full_name="User QB", position="QB", nfl_team="BUF")
+        model_qb = Player(full_name="Model QB", position="QB", nfl_team="KC")
+        fallback_qb = Player(full_name="Fallback QB", position="QB", nfl_team="CIN")
+        session.add(snapshot)
+        session.add(user_qb)
+        session.add(model_qb)
+        session.add(fallback_qb)
+        session.commit()
+        for index, player in enumerate([user_qb, fallback_qb, model_qb], start=1):
+            session.add(
+                ADPEntry(
+                    snapshot_id=snapshot.id,
+                    player_id=player.id,
+                    position=player.position,
+                    adp_pick=float(index),
+                )
+            )
+        session.commit()
+        snapshot_id = str(snapshot.id)
+        user_qb_id = str(user_qb.id)
+        model_qb_id = model_qb.id
+
+    monkeypatch.setattr("app.services.mock_draft.mock_draft_ai.is_enabled", lambda settings: True)
+
+    def choose_bot_player(**kwargs: object) -> mock_draft_ai.AIBotPickDecision:
+        context = kwargs["context"]
+        assert isinstance(context, dict)
+        assert context["candidate_players"]
+        return mock_draft_ai.AIBotPickDecision(
+            player_id=model_qb_id,
+            reasoning_summary="Chose the model-preferred quarterback for roster fit.",
+            confidence=0.83,
+        )
+
+    monkeypatch.setattr("app.services.mock_draft.mock_draft_ai.choose_bot_player", choose_bot_player)
+
+    create_response = client.post(
+        f"/api/leagues/{league_id}/mock-drafts",
+        json={"adp_snapshot_id": snapshot_id},
+    )
+    assert create_response.status_code == 201
+    draft_id = create_response.json()["id"]
+    assert client.post(f"/api/mock-drafts/{draft_id}/start").status_code == 200
+    user_pick = client.post(f"/api/mock-drafts/{draft_id}/pick", json={"player_id": user_qb_id})
+    assert user_pick.status_code == 200
+
+    bot_response = client.post(f"/api/mock-drafts/{draft_id}/bot-pick")
+
+    assert bot_response.status_code == 200
+    pick = bot_response.json()["pick"]
+    assert pick["player_name"] == "Model QB"
+    assert pick["reasoning_summary"].startswith("AI: Chose the model-preferred quarterback")
+
+
+def test_mock_draft_analysis_uses_ai_narrative_when_enabled(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin = _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "AI Analysis Mock League",
+            "season_year": 2026,
+            "roster_settings": {"slots": {"QB": 1}, "allowed_positions": ["QB"]},
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "User Team", "draft_slot": 1, "user_id": admin["id"]},
+    )
+    assert team_response.status_code == 201
+
+    with _session_from_client(client) as session:
+        snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="AI Analysis ADP",
+            source="test",
+            format_type="superflex",
+            snapshot_date=date(2026, 5, 1),
+        )
+        player = Player(full_name="Analysis QB", position="QB", nfl_team="PHI")
+        session.add(snapshot)
+        session.add(player)
+        session.commit()
+        session.add(
+            ADPEntry(
+                snapshot_id=snapshot.id,
+                player_id=player.id,
+                position=player.position,
+                adp_pick=1,
+            )
+        )
+        session.commit()
+        snapshot_id = str(snapshot.id)
+        player_id = str(player.id)
+
+    monkeypatch.setattr("app.services.mock_draft.mock_draft_ai.is_enabled", lambda settings: True)
+
+    def generate_draft_analysis(**kwargs: object) -> mock_draft_ai.AIAnalysisDecision:
+        context = kwargs["context"]
+        assert isinstance(context, dict)
+        assert context["user_pick_feedback"][0]["player_name"] == "Analysis QB"
+        return mock_draft_ai.AIAnalysisDecision(
+            summary="AI says this build is clean and value-aware.",
+            strengths=[{"label": "AI strength", "detail": "Roster construction matched the format."}],
+            weaknesses=[{"label": "AI weakness", "detail": "Depth still needs pressure testing."}],
+            what_if_scenarios=[
+                {
+                    "name": "AI scenario",
+                    "changed_picks": 1,
+                    "score_delta": 2,
+                    "recommendation": "Try one alternate early-round path.",
+                }
+            ],
+            future_advice=[{"label": "AI advice", "detail": "Compare this against a value-only run."}],
+        )
+
+    monkeypatch.setattr(
+        "app.services.mock_draft.mock_draft_ai.generate_draft_analysis",
+        generate_draft_analysis,
+    )
+
+    create_response = client.post(
+        f"/api/leagues/{league_id}/mock-drafts",
+        json={"adp_snapshot_id": snapshot_id},
+    )
+    assert create_response.status_code == 201
+    draft_id = create_response.json()["id"]
+    assert client.post(f"/api/mock-drafts/{draft_id}/start").status_code == 200
+    assert client.post(f"/api/mock-drafts/{draft_id}/pick", json={"player_id": player_id}).status_code == 200
+
+    complete_response = client.post(f"/api/mock-drafts/{draft_id}/complete", json={"force": True})
+
+    assert complete_response.status_code == 200
+    analysis = complete_response.json()["session"]["analysis"]
+    assert analysis["summary"] == "AI says this build is clean and value-aware."
+    assert analysis["strengths"][0]["label"] == "AI strength"
+    assert analysis["projected_rankings"]["ai_analysis_used"] is True
+
+
+def test_mock_draft_ai_json_parser_accepts_fenced_json() -> None:
+    parsed = mock_draft_ai._loads_json_object('```json\n{"summary":"ok"}\n```')
+
+    assert parsed == {"summary": "ok"}
+
+
+def test_mock_draft_ai_json_parser_extracts_prefaced_json() -> None:
+    parsed = mock_draft_ai._loads_json_object('Here is the plan:\n{"summary":"ok"}')
+
+    assert parsed == {"summary": "ok"}
+
+
+def test_mock_draft_create_includes_strategy_plan(client: TestClient) -> None:
+    admin = _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "Strategy Mock League",
+            "season_year": 2026,
+            "draft_type": "snake",
+            "roster_settings": {
+                "slots": {"QB": 1, "RB": 1, "WR": 1},
+                "allowed_positions": ["QB", "RB", "WR"],
+            },
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "User Team", "draft_slot": 1, "user_id": admin["id"]},
+    )
+    assert team_response.status_code == 201
+
+    with _session_from_client(client) as session:
+        snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="Strategy ADP",
+            source="test",
+            format_type="superflex",
+            snapshot_date=date(2026, 5, 1),
+        )
+        players = [
+            Player(full_name="Strategy QB", position="QB", nfl_team="BUF"),
+            Player(full_name="Strategy RB", position="RB", nfl_team="ATL"),
+            Player(full_name="Strategy WR", position="WR", nfl_team="DET"),
+        ]
+        session.add(snapshot)
+        for player in players:
+            session.add(player)
+        session.commit()
+        for index, player in enumerate(players, start=1):
+            session.add(
+                ADPEntry(
+                    snapshot_id=snapshot.id,
+                    player_id=player.id,
+                    position=player.position,
+                    adp_pick=float(index),
+                )
+            )
+        session.commit()
+        snapshot_id = str(snapshot.id)
+
+    create_response = client.post(
+        f"/api/leagues/{league_id}/mock-drafts",
+        json={"adp_snapshot_id": snapshot_id},
+    )
+
+    assert create_response.status_code == 201
+    plan = create_response.json()["strategy_plan"]
+    assert plan["summary"]
+    assert plan["round_plan"]
+    assert plan["targets"][0]["player_name"] == "Strategy QB"
+    assert plan["ai_used"] is False
+    assert plan["cache_key"]
+
+
+def test_mock_draft_strategy_plan_uses_ai_when_enabled(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin = _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "AI Strategy Mock League",
+            "season_year": 2026,
+            "roster_settings": {"slots": {"QB": 1}, "allowed_positions": ["QB"]},
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "User Team", "draft_slot": 1, "user_id": admin["id"]},
+    )
+    assert team_response.status_code == 201
+
+    with _session_from_client(client) as session:
+        snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="AI Strategy ADP",
+            source="test",
+            format_type="superflex",
+            snapshot_date=date(2026, 5, 1),
+        )
+        player = Player(full_name="AI Strategy QB", position="QB", nfl_team="PHI")
+        session.add(snapshot)
+        session.add(player)
+        session.commit()
+        session.add(
+            ADPEntry(
+                snapshot_id=snapshot.id,
+                player_id=player.id,
+                position=player.position,
+                adp_pick=1,
+            )
+        )
+        session.commit()
+        snapshot_id = str(snapshot.id)
+        player_id = str(player.id)
+
+    monkeypatch.setattr("app.services.mock_draft.mock_draft_ai.is_enabled", lambda settings: True)
+
+    def generate_strategy_plan(**kwargs: object) -> mock_draft_ai.AIStrategyPlanDecision:
+        context = kwargs["context"]
+        assert isinstance(context, dict)
+        assert context["top_overall_players"][0]["name"] == "AI Strategy QB"
+        return mock_draft_ai.AIStrategyPlanDecision(
+            summary="AI says attack quarterback value early.",
+            round_plan=[
+                {
+                    "round": 1,
+                    "priority": "Secure QB",
+                    "avoid": "Low-ceiling RB",
+                    "notes": "The room starts at your pick.",
+                }
+            ],
+            position_priorities=[
+                {"position": "QB", "priority": "high", "reason": "Only required starter."}
+            ],
+            targets=[
+                {
+                    "player_id": player_id,
+                    "player_name": "AI Strategy QB",
+                    "reason": "Best fit.",
+                    "acceptable_range": "1-4",
+                }
+            ],
+            fades=[],
+            contingencies=[],
+        )
+
+    monkeypatch.setattr(
+        "app.services.mock_draft.mock_draft_ai.generate_strategy_plan",
+        generate_strategy_plan,
+    )
+
+    create_response = client.post(
+        f"/api/leagues/{league_id}/mock-drafts",
+        json={"adp_snapshot_id": snapshot_id},
+    )
+
+    assert create_response.status_code == 201
+    plan = create_response.json()["strategy_plan"]
+    assert plan["summary"] == "AI says attack quarterback value early."
+    assert plan["ai_used"] is True
+    assert plan["model"] == "gpt-5.4-mini"
+    assert plan["targets"][0]["player_id"] == player_id
+
+
+def test_mock_draft_strategy_plan_regenerate_endpoint(client: TestClient) -> None:
+    admin = _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "Regenerate Strategy Mock League",
+            "season_year": 2026,
+            "roster_settings": {"slots": {"QB": 1}, "allowed_positions": ["QB"]},
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "User Team", "draft_slot": 1, "user_id": admin["id"]},
+    )
+    assert team_response.status_code == 201
+
+    create_response = client.post(f"/api/leagues/{league_id}/mock-drafts", json={"round_count": 1})
+    assert create_response.status_code == 201
+    draft_id = create_response.json()["id"]
+
+    regenerate_response = client.post(f"/api/mock-drafts/{draft_id}/strategy-plan")
+
+    assert regenerate_response.status_code == 200
+    assert regenerate_response.json()["session"]["strategy_plan"]["summary"]
+
+    assert client.post(f"/api/mock-drafts/{draft_id}/start").status_code == 200
+    rejected_response = client.post(f"/api/mock-drafts/{draft_id}/strategy-plan")
+    assert rejected_response.status_code == 400
+    assert "before or during a paused draft" in rejected_response.json()["detail"]
+
+
+def test_abandoned_mock_draft_is_excluded_from_history(client: TestClient) -> None:
+    admin = _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "Abandoned Mock League",
+            "season_year": 2026,
+            "roster_settings": {"slots": {"QB": 1}, "allowed_positions": ["QB"]},
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "User Team", "draft_slot": 1, "user_id": admin["id"]},
+    )
+    assert team_response.status_code == 201
+
+    create_response = client.post(f"/api/leagues/{league_id}/mock-drafts", json={"round_count": 1})
+    assert create_response.status_code == 201
+    draft_id = create_response.json()["id"]
+    end_response = client.post(f"/api/mock-drafts/{draft_id}/end")
+    assert end_response.status_code == 200
+    assert end_response.json()["session"]["status"] == "abandoned"
+
+    history_response = client.get(f"/api/leagues/{league_id}/mock-drafts")
+    assert history_response.status_code == 200
+    assert history_response.json() == []
+
+
+def test_mock_draft_analysis_grades_keeper_cost_against_adp(client: TestClient) -> None:
+    admin = _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "Keeper Analysis Mock League",
+            "season_year": 2026,
+            "draft_type": "snake",
+            "roster_settings": {
+                "slots": {"RB": 1, "BENCH": 1},
+                "allowed_positions": ["RB"],
+            },
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "User Team", "draft_slot": 1, "user_id": admin["id"]},
+    )
+    assert team_response.status_code == 201
+    user_team_id = team_response.json()["id"]
+    bot_team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "Bot Team", "draft_slot": 2},
+    )
+    assert bot_team_response.status_code == 201
+
+    with _session_from_client(client) as session:
+        snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="Keeper ADP",
+            source="test",
+            format_type="superflex",
+            snapshot_date=date(2026, 5, 1),
+        )
+        player = Player(full_name="Discount Keeper RB", position="RB", nfl_team="CIN")
+        session.add(snapshot)
+        session.add(player)
+        session.commit()
+        session.add(
+            ADPEntry(
+                snapshot_id=snapshot.id,
+                player_id=player.id,
+                position=player.position,
+                adp_pick=1,
+            )
+        )
+        session.add(
+            KeeperRecommendation(
+                league_id=uuid.UUID(league_id),
+                user_id=uuid.UUID(admin["id"]),
+                team_id=uuid.UUID(user_team_id),
+                player_id=player.id,
+                adp_snapshot_id=snapshot.id,
+                scenario_name="Default",
+                keeper_cost_round=2,
+                keeper_cost_pick=4,
+                adp_pick=1,
+                adp_round=1,
+                keeper_value=3,
+                keeper_score=20,
+                is_recommended=True,
+            )
+        )
+        session.commit()
+        snapshot_id = str(snapshot.id)
+
+    create_response = client.post(
+        f"/api/leagues/{league_id}/mock-drafts",
+        json={"adp_snapshot_id": snapshot_id},
+    )
+    assert create_response.status_code == 201
+    draft_id = create_response.json()["id"]
+    complete_response = client.post(f"/api/mock-drafts/{draft_id}/complete", json={"force": True})
+    assert complete_response.status_code == 200
+    feedback = complete_response.json()["session"]["analysis"]["pick_feedback"][0]
+    assert feedback["source"] == "keeper_forfeit"
+    assert feedback["keeper_cost_pick"] == 4
+    assert feedback["adp_pick"] == 1
+    assert feedback["value_vs_adp"] == 3
+    assert "keeper cost" in feedback["summary"].lower()
+    assert "reach" not in feedback["summary"].lower()
+
+
+def test_mock_draft_rejects_pick_that_exceeds_roster_limits(client: TestClient) -> None:
+    admin = _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "Roster Limit Mock League",
+            "season_year": 2026,
+            "roster_settings": {
+                "slots": {"QB": 1},
+                "allowed_positions": ["QB"],
+                "max_positions": {"QB": 1},
+            },
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "User Team", "draft_slot": 1, "user_id": admin["id"]},
+    )
+    assert team_response.status_code == 201
+
+    with _session_from_client(client) as session:
+        qb_one = Player(full_name="Limit QB One", position="QB", nfl_team="KC")
+        qb_two = Player(full_name="Limit QB Two", position="QB", nfl_team="BUF")
+        session.add(qb_one)
+        session.add(qb_two)
+        session.commit()
+        qb_one_id = str(qb_one.id)
+        qb_two_id = str(qb_two.id)
+
+    update_response = client.patch(
+        f"/api/leagues/{league_id}",
+        json={
+            "roster_settings": {
+                "slots": {"QB": 1, "BENCH": 1},
+                "allowed_positions": ["QB"],
+                "max_positions": {"QB": 1},
+            }
+        },
+    )
+    assert update_response.status_code == 200
+
+    create_response = client.post(f"/api/leagues/{league_id}/mock-drafts", json={"round_count": 2})
+    assert create_response.status_code == 201
+    draft_id = create_response.json()["id"]
+    assert create_response.json()["roster_needs"] == [
+        {"slot": "QB", "filled": 0, "target": 1, "remaining": 1},
+        {"slot": "BENCH", "filled": 0, "target": 1, "remaining": 1},
+    ]
+    start_response = client.post(f"/api/mock-drafts/{draft_id}/start")
+    assert start_response.status_code == 200
+
+    first_pick = client.post(f"/api/mock-drafts/{draft_id}/pick", json={"player_id": qb_one_id})
+    assert first_pick.status_code == 200
+    assert first_pick.json()["session"]["roster_needs"] == [
+        {"slot": "QB", "filled": 1, "target": 1, "remaining": 0},
+        {"slot": "BENCH", "filled": 0, "target": 1, "remaining": 1},
+    ]
+
+    second_pick = client.post(f"/api/mock-drafts/{draft_id}/pick", json={"player_id": qb_two_id})
+    assert second_pick.status_code == 400
+    assert "QB roster limit has been reached" in second_pick.json()["detail"]
+
+
+def test_mock_draft_roster_needs_allocate_superflex_before_bench(client: TestClient) -> None:
+    admin = _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "Superflex Allocation Mock League",
+            "season_year": 2026,
+            "roster_settings": {
+                "slots": {"QB": 1, "SUPERFLEX": 1, "BENCH": 6},
+                "allowed_positions": ["QB"],
+            },
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "User Team", "draft_slot": 1, "user_id": admin["id"]},
+    )
+    assert team_response.status_code == 201
+
+    with _session_from_client(client) as session:
+        qbs = [
+            Player(full_name="Allocation QB One", position="QB", nfl_team="KC"),
+            Player(full_name="Allocation QB Two", position="QB", nfl_team="BUF"),
+            Player(full_name="Allocation QB Three", position="QB", nfl_team="BAL"),
+        ]
+        session.add_all(qbs)
+        session.commit()
+        qb_ids = [str(player.id) for player in qbs]
+
+    create_response = client.post(f"/api/leagues/{league_id}/mock-drafts", json={})
+    assert create_response.status_code == 201
+    assert create_response.json()["round_count"] == 8
+    draft_id = create_response.json()["id"]
+    start_response = client.post(f"/api/mock-drafts/{draft_id}/start")
+    assert start_response.status_code == 200
+
+    session_payload = start_response.json()["session"]
+    for player_id in qb_ids:
+        pick_response = client.post(f"/api/mock-drafts/{draft_id}/pick", json={"player_id": player_id})
+        assert pick_response.status_code == 200
+        session_payload = pick_response.json()["session"]
+
+    assert session_payload["roster_needs"] == [
+        {"slot": "QB", "filled": 1, "target": 1, "remaining": 0},
+        {"slot": "SUPERFLEX", "filled": 1, "target": 1, "remaining": 0},
+        {"slot": "BENCH", "filled": 1, "target": 6, "remaining": 5},
+    ]
+
+
+def test_mock_draft_available_player_sort_demotes_early_kickers() -> None:
+    kicker = Player(full_name="Sort Kicker", position="K", nfl_team="MIA")
+    quarterback = Player(full_name="Sort QB", position="QB", nfl_team="IND")
+    kicker_adp = ADPEntry(
+        snapshot_id=uuid.uuid4(),
+        player_id=uuid.uuid4(),
+        position="K",
+        adp_pick=182,
+        adp_round=15,
+    )
+    quarterback_adp = ADPEntry(
+        snapshot_id=uuid.uuid4(),
+        player_id=uuid.uuid4(),
+        position="QB",
+        adp_pick=280,
+        adp_round=24,
+    )
+
+    assert mock_draft_service._available_player_sort_adp(
+        kicker,
+        kicker_adp,
+        current_round=11,
+        round_count=17,
+    ) > mock_draft_service._available_player_sort_adp(
+        quarterback,
+        quarterback_adp,
+        current_round=11,
+        round_count=17,
+    )
+    assert mock_draft_service._available_player_sort_adp(
+        kicker,
+        kicker_adp,
+        current_round=15,
+        round_count=17,
+    ) < mock_draft_service._available_player_sort_adp(
+        quarterback,
+        quarterback_adp,
+        current_round=15,
+        round_count=17,
+    )
+
+
+def test_mock_draft_available_players_hide_bad_ai_adp_rows(client: TestClient) -> None:
+    admin = _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "Bad ADP Mock League",
+            "season_year": 2026,
+            "roster_settings": {"slots": {"QB": 1, "DST": 1}, "allowed_positions": ["QB", "DST"]},
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+    team_response = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "User Team", "draft_slot": 1, "user_id": admin["id"]},
+    )
+    assert team_response.status_code == 201
+
+    with _session_from_client(client) as session:
+        snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="Bad AI ADP",
+            source="test",
+            format_type="superflex",
+            snapshot_date=date(2026, 5, 1),
+        )
+        previous_snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="Fallback ADP",
+            source="test-prior",
+            format_type="superflex",
+            snapshot_date=date(2026, 4, 1),
+        )
+        quarterback = Player(full_name="Available QB", position="QB", nfl_team="BUF")
+        texans = Player(full_name="Houston Texans", position="DST", nfl_team="HOU")
+        placeholder = Player(full_name="source_not_substantiated_placeholder", position="RB")
+        unsubstantiated = Player(full_name="Chris Johnson", position="WR")
+        fallback_wr = Player(full_name="Fallback WR", position="WR")
+        session.add(snapshot)
+        session.add(previous_snapshot)
+        session.add(quarterback)
+        session.add(texans)
+        session.add(placeholder)
+        session.add(unsubstantiated)
+        session.add(fallback_wr)
+        session.commit()
+        session.add(
+            ADPEntry(snapshot_id=snapshot.id, player_id=quarterback.id, position="QB", adp_pick=1)
+        )
+        session.add(
+            ADPEntry(snapshot_id=snapshot.id, player_id=texans.id, position="DST", adp_pick=23)
+        )
+        session.add(
+            ADPEntry(snapshot_id=snapshot.id, player_id=placeholder.id, position="RB", adp_pick=51)
+        )
+        session.add(
+            ADPEntry(
+                snapshot_id=snapshot.id,
+                player_id=unsubstantiated.id,
+                position="WR",
+                adp_pick=96,
+                source_note="Insufficient current-source substantiation.",
+            )
+        )
+        session.add(
+            ADPEntry(
+                snapshot_id=previous_snapshot.id,
+                player_id=fallback_wr.id,
+                position="WR",
+                adp_pick=174,
+                adp_round=15,
+            )
+        )
+        session.commit()
+        snapshot_id = str(snapshot.id)
+
+    create_response = client.post(
+        f"/api/leagues/{league_id}/mock-drafts",
+        json={"adp_snapshot_id": snapshot_id},
+    )
+
+    assert create_response.status_code == 201
+    available = create_response.json()["available_players"]
+    assert "source_not_substantiated_placeholder" not in {
+        player["player_name"] for player in available
+    }
+    assert "Chris Johnson" not in {player["player_name"] for player in available}
+    fallback_row = next(player for player in available if player["player_name"] == "Fallback WR")
+    assert fallback_row["adp_pick"] == 174
+    texans_row = next(player for player in available if player["player_name"] == "Houston Texans")
+    assert texans_row["adp_pick"] is None
+
+
 def test_adp_import_converts_round_pick_notation_to_overall_pick(client: TestClient) -> None:
     _create_admin_and_login(client)
     league_response = client.post(
@@ -458,6 +1375,247 @@ def test_draftsharks_browser_payload_does_not_convert_large_decimal_adp() -> Non
 
     assert rows[("deepqb", "QB")].adp_pick == 447.06
     assert rows[("laterb", "RB")].adp_pick == 249
+
+
+def test_ai_adp_refresh_imports_validated_board(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={"name": "AI ADP League", "season_year": 2026, "scoring_format": "superflex"},
+    )
+    assert league_response.status_code == 201
+    league_id = uuid.UUID(league_response.json()["id"])
+
+    def build_ai_adp_board(session: Session, league: object, settings: Settings) -> AIADPBoard:
+        return AIADPBoard(
+            snapshot_name="AI ADP League AI Synthesized ADP",
+            snapshot_date=date(2026, 5, 25),
+            source="AI Synthesized ADP",
+            source_url="openai:responses:web_search",
+            notes='{"provider":"ai_synthesized","guardrails":{"warnings":[]}}',
+            warnings=[],
+            rows=[
+                AIADPRow(1, "AI QB", "QB", "BUF", 1, 1, ["FantasyPros"], "high", "QB note"),
+                AIADPRow(2, "AI RB", "RB", "ATL", 2, 1, ["FFC"], "high", "RB note"),
+                AIADPRow(3, "AI WR", "WR", "DET", 3, 1, ["Draft Sharks"], "medium", "WR note"),
+                AIADPRow(4, "AI TE", "TE", "KC", 4, 1, ["FFToday"], "medium", "TE note"),
+                AIADPRow(5, "AI K", "K", "DAL", 100, 9, ["FantasyPros"], "low", "K note"),
+                AIADPRow(6, "AI DST", "DST", "PIT", 101, 9, ["FantasyPros"], "low", "DST note"),
+            ],
+        )
+
+    monkeypatch.setattr("app.services.adp_refresh.build_ai_adp_board", build_ai_adp_board)
+
+    with _session_from_client(client) as session:
+        result = refresh_adp_from_api(
+            session,
+            league_id,
+            _test_settings(
+                database_url="sqlite://",
+                adp_provider="ai_synthesized",
+                openai_api_key="test-key",
+                adp_ai_board_size=6,
+            ),
+        )
+
+    assert result.provider == "ai_synthesized"
+    assert result.source_url == "openai:responses:web_search"
+    assert result.import_result.imported == 6
+    assert result.import_result.rows[0]["player_name"] == "AI QB"
+    assert result.import_result.rows[-1]["position"] == "DST"
+
+
+def test_ai_adp_refresh_candidate_can_be_approved(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={"name": "AI Candidate League", "season_year": 2026, "scoring_format": "superflex"},
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+
+    def build_ai_adp_board(session: Session, league: object, settings: Settings, **kwargs: object) -> AIADPBoard:
+        return AIADPBoard(
+            snapshot_name="AI Candidate League AI Synthesized ADP",
+            snapshot_date=date(2026, 5, 25),
+            source="AI Synthesized ADP",
+            source_url="openai:responses:web_search",
+            notes='{"provider":"ai_synthesized","guardrails":{"warning_sample":["Big move"]},"source_summary":"Test sources"}',
+            warnings=["Big move"],
+            rows=[
+                AIADPRow(1, "Candidate QB", "QB", "BUF", 1, 1, ["FantasyPros"], "high", "QB note"),
+                AIADPRow(2, "Candidate RB", "RB", "ATL", 2, 1, ["FFC"], "medium", "RB note"),
+            ],
+        )
+
+    monkeypatch.setattr("app.services.adp_review.build_ai_adp_board", build_ai_adp_board)
+
+    candidate_response = client.post(f"/api/leagues/{league_id}/adp/ai-refresh-candidates")
+    assert candidate_response.status_code == 201
+    candidate = candidate_response.json()
+    assert candidate["status"] == "pending"
+    assert candidate["row_count"] == 2
+    assert candidate["warnings"] == ["Big move"]
+    assert candidate["source_summary"] == "Test sources"
+
+    approve_response = client.post(f"/api/adp/ai-refresh-candidates/{candidate['id']}/approve")
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == "approved"
+    assert approve_response.json()["imported"] == 2
+
+    snapshots_response = client.get(f"/api/leagues/{league_id}/adp-snapshots")
+    assert snapshots_response.status_code == 200
+    assert snapshots_response.json()["count"] == 1
+    snapshot_id = snapshots_response.json()["rows"][0]["id"]
+    snapshot_response = client.get(f"/api/adp-snapshots/{snapshot_id}")
+    assert [row["player_name"] for row in snapshot_response.json()["rows"]] == ["Candidate QB", "Candidate RB"]
+
+
+def test_ai_adp_refresh_candidate_can_be_rejected(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_admin_and_login(client)
+    league_response = client.post(
+        "/api/leagues",
+        json={"name": "AI Candidate Reject League", "season_year": 2026, "scoring_format": "superflex"},
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+
+    def build_ai_adp_board(session: Session, league: object, settings: Settings, **kwargs: object) -> AIADPBoard:
+        return AIADPBoard(
+            snapshot_name="AI Candidate Reject League AI Synthesized ADP",
+            snapshot_date=date(2026, 5, 25),
+            source="AI Synthesized ADP",
+            source_url="openai:responses:web_search",
+            notes='{"provider":"ai_synthesized","guardrails":{"warning_sample":[]}}',
+            warnings=[],
+            rows=[AIADPRow(1, "Reject QB", "QB", "BUF", 1, 1, ["FantasyPros"], "high", "QB note")],
+        )
+
+    monkeypatch.setattr("app.services.adp_review.build_ai_adp_board", build_ai_adp_board)
+
+    candidate_response = client.post(f"/api/leagues/{league_id}/adp/ai-refresh-candidates")
+    assert candidate_response.status_code == 201
+    candidate_id = candidate_response.json()["id"]
+
+    reject_response = client.post(
+        f"/api/adp/ai-refresh-candidates/{candidate_id}/reject",
+        json={"reason": "Needs manual review"},
+    )
+    assert reject_response.status_code == 200
+    assert reject_response.json()["status"] == "rejected"
+    assert reject_response.json()["error_message"] == "Needs manual review"
+
+    snapshots_response = client.get(f"/api/leagues/{league_id}/adp-snapshots")
+    assert snapshots_response.status_code == 200
+    assert snapshots_response.json()["count"] == 0
+
+
+def test_ai_adp_guardrails_reject_duplicate_players() -> None:
+    rows = [
+        AIADPRow(1, "Duplicate QB", "QB", "BUF", 1, 1, ["FantasyPros"], "high", "one"),
+        AIADPRow(2, "Duplicate QB", "QB", "BUF", 2, 1, ["FFC"], "high", "two"),
+    ]
+
+    with pytest.raises(AIADPError, match="Duplicate AI ADP player"):
+        _validate_board(
+            rows,
+            previous={},
+            settings=_test_settings(database_url="sqlite://", adp_ai_board_size=2),
+        )
+
+
+def test_ai_adp_guardrails_reject_position_placeholders() -> None:
+    rows = [
+        AIADPRow(1, "Quarterbacks", "QB", None, 1, 1, ["FantasyPros"], "low", "placeholder"),
+    ]
+
+    with pytest.raises(AIADPError, match="position placeholder"):
+        _validate_board(
+            rows,
+            previous={},
+            settings=_test_settings(database_url="sqlite://", adp_ai_board_size=1),
+        )
+
+
+def test_ai_adp_guardrails_reject_unsubstantiated_placeholders() -> None:
+    rows = [
+        AIADPRow(
+            1,
+            "source_not_substantiated_placeholder",
+            "RB",
+            None,
+            51,
+            5,
+            ["FantasyPros"],
+            "low",
+            "placeholder",
+        ),
+    ]
+
+    with pytest.raises(AIADPError, match="position placeholder"):
+        _validate_board(
+            rows,
+            previous={},
+            settings=_test_settings(database_url="sqlite://", adp_ai_board_size=1),
+        )
+
+
+def test_ai_adp_guardrails_reject_unsubstantiated_source_notes() -> None:
+    rows = [
+        AIADPRow(
+            1,
+            "Chris Johnson",
+            "WR",
+            None,
+            96,
+            8,
+            ["FantasyPros"],
+            "low",
+            "Insufficient current-source substantiation.",
+        ),
+    ]
+
+    with pytest.raises(AIADPError, match="lacks current-source substantiation"):
+        _validate_board(
+            rows,
+            previous={},
+            settings=_test_settings(database_url="sqlite://", adp_ai_board_size=1),
+        )
+
+
+def test_ai_adp_guardrails_reject_early_special_teams() -> None:
+    rows = [
+        AIADPRow(1, "Houston Texans", "DST", None, 23, 2, ["FantasyPros"], "low", "DST note"),
+    ]
+
+    with pytest.raises(AIADPError, match="implausibly early"):
+        _validate_board(
+            rows,
+            previous={},
+            settings=_test_settings(database_url="sqlite://", adp_ai_board_size=1),
+        )
+
+
+def test_ai_adp_board_dedupes_extra_candidates_before_validation() -> None:
+    rows = [
+        AIADPRow(1, "Duplicate QB", "QB", "BUF", 1, 1, ["FantasyPros"], "high", "one"),
+        AIADPRow(2, "Duplicate QB", "QB", "BUF", 2, 1, ["FFC"], "high", "two"),
+        AIADPRow(3, "Unique RB", "RB", "ATL", 3, 1, ["Draft Sharks"], "medium", "three"),
+    ]
+
+    board = _dedupe_and_trim_board(rows, 2)
+
+    assert [row.full_name for row in board] == ["Duplicate QB", "Unique RB"]
+    assert [row.rank for row in board] == [1, 2]
 
 
 def test_admin_can_manage_users_passwords_and_team_assignment(client: TestClient) -> None:
@@ -639,6 +1797,8 @@ def test_optimizer_run_endpoint_returns_frontend_table(
             )
         if "sleeper.app" in url:
             return FakeResponse('{"1":{"full_name":"Value WR","position":"WR","team":"PHI"},"2":{"full_name":"Value RB","position":"RB","team":"ATL"},"3":{"full_name":"Market QB","position":"QB","team":"CIN"}}')
+        if "fantasyfootballcalculator.com" in url:
+            return FakeResponse('{"players": []}')
         raise AssertionError(f"Unexpected URL: {url}")
 
     monkeypatch.setattr(
@@ -786,7 +1946,7 @@ def test_optimizer_run_endpoint_returns_frontend_table(
     assert snapshot_response.json()["rows"][0]["player_name"] == "Value WR"
     adp_template_response = client.get(f"/api/leagues/{league_id}/exports/adp-template.csv")
     assert adp_template_response.status_code == 200
-    assert "player,position,nfl_team,adp_pick,adp_round,source,snapshot_name,snapshot_date,format,source_note,draftsharks_superflex_adp,ffc_2qb_adp,ffc_ppr_adp,existing_adp,composite_method,review_flag" in adp_template_response.text
+    assert "player,position,nfl_team,adp_pick,adp_round,source,snapshot_name,snapshot_date,format,source_note,draftsharks_superflex_adp,ffc_2qb_adp,ffc_ppr_adp,existing_adp,composite_method,source_count,adp_spread,disagreement_flag,sleeper_player_id,sleeper_status,adp_movement,movement_flag,review_flag" in adp_template_response.text
     assert "Composite Superflex ADP - Endpoint League,Endpoint League Composite ADP" in adp_template_response.text
 
     invalid_adp_preview = client.post(
@@ -1139,6 +2299,8 @@ def test_adp_template_builds_composite_from_ffc_sources(
             return FakeResponse(
                 '{"1":{"full_name":"Elite QB","position":"QB","team":"BAL"},"2":{"full_name":"Elite WR","position":"WR","team":"CIN"},"3":{"full_name":"League QB","position":"QB","team":"BUF"},"4":{"full_name":"League WR","position":"WR","team":"PHI"},"5":{"full_name":"Late RB","position":"RB","team":"LAR"}}'
             )
+        if "fantasyfootballcalculator.com" in url:
+            return FakeResponse('{"players": []}')
         raise AssertionError(f"Unexpected URL: {url}")
 
     monkeypatch.setattr(
@@ -1182,7 +2344,7 @@ def test_adp_template_builds_composite_from_ffc_sources(
     assert "League QB,QB,BUF,3,1,Composite Superflex ADP - Composite League" in template_response.text
     assert "League WR,WR,PHI,4,1,Composite Superflex ADP - Composite League" in template_response.text
     assert "Late RB,RB,LAR,249,21,Composite Superflex ADP - Composite League" in template_response.text
-    assert "DraftSharks Superflex ADP 1" in template_response.text
+    assert "DS:1" in template_response.text
     assert "draftsharks_superflex_adp" in template_response.text
 
 
@@ -1241,6 +2403,8 @@ def test_adp_template_uses_browser_scraped_draftsharks_rows(
         url = request.full_url
         if "sleeper.app" in url:
             return FakeResponse("{}")
+        if "fantasyfootballcalculator.com" in url:
+            return FakeResponse('{"players": []}')
         raise AssertionError(f"Unexpected URL: {url}")
 
     monkeypatch.setattr("app.services.composite_adp.subprocess.run", fake_run)
@@ -1270,7 +2434,7 @@ def test_adp_template_uses_browser_scraped_draftsharks_rows(
     template_response = client.get(f"/api/leagues/{league_id}/exports/adp-template.csv")
     assert template_response.status_code == 200
     assert "Late Browser Player,WR,MIA,30.5,3,Composite Superflex ADP - Browser DraftSharks League" in template_response.text
-    assert "DraftSharks Superflex ADP 30.5" in template_response.text
+    assert "DS:30.5" in template_response.text
 
 
 def test_composite_adp_import_endpoint_ingests_generated_rows(
@@ -1322,6 +2486,8 @@ def test_composite_adp_import_endpoint_ingests_generated_rows(
         url = request.full_url
         if "sleeper.app" in url:
             return FakeResponse("{}")
+        if "fantasyfootballcalculator.com" in url:
+            return FakeResponse('{"players": []}')
         raise AssertionError(f"Unexpected URL: {url}")
 
     monkeypatch.setattr("app.services.composite_adp.subprocess.run", fake_run)
@@ -1353,6 +2519,12 @@ def test_composite_adp_import_endpoint_ingests_generated_rows(
     assert import_response.json()["imported"] == 30
     assert import_response.json()["generated"] == 30
     assert import_response.json()["skipped_missing_adp"] == 0
+    coverage = import_response.json()["coverage"]
+    assert coverage["total_players"] == 30
+    assert "source_coverage" in coverage
+    assert "top_150" in coverage
+    assert "movement" in coverage
+    assert "roster_players" in coverage
 
     snapshots_response = client.get(f"/api/leagues/{league_id}/adp-snapshots")
     assert snapshots_response.status_code == 200
@@ -1398,6 +2570,8 @@ def test_composite_template_falls_back_to_scraped_ffc_pages(
             )
         if "sleeper.app" in url:
             return FakeResponse("{}")
+        if "fantasyfootballcalculator.com" in url:
+            return FakeResponse('{"players": []}')
         raise AssertionError(f"Unexpected URL: {url}")
 
     monkeypatch.setattr(
@@ -1511,6 +2685,8 @@ def test_adp_template_returns_error_when_draftsharks_public_page_is_gated(
             )
         if "sleeper.app" in url:
             return FakeResponse("{}")
+        if "fantasyfootballcalculator.com" in url:
+            raise OSError("FFC unreachable in test")
         raise AssertionError(f"Unexpected URL: {url}")
 
     monkeypatch.setattr(
@@ -1531,7 +2707,163 @@ def test_adp_template_returns_error_when_draftsharks_public_page_is_gated(
 
     response = client.get(f"/api/leagues/{league_id}/exports/adp-template.csv")
     assert response.status_code == 400
-    assert "DraftSharks public page is truncated" in response.json()["detail"]
+    assert "Composite ADP build failed" in response.json()["detail"]
+
+
+def test_composite_builds_from_ffc_when_draftsharks_gated(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_draftsharks_browser_scraper(monkeypatch)
+
+    class FakeResponse:
+        def __init__(self, body: str) -> None:
+            self.body = body.encode("utf-8")
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self.body
+
+    gated_ds_rows = "".join(
+        f"""
+        <tr class="player-row">
+          <td class="rank centered"><div class="column-title rank-index"><span>{i}</span></div></td>
+          <td class="player-name overall">
+            <div class="player-name-inner"><div><a class="hide-on-mobile">DS Player {i}</a>
+              <div><div class="team-position-logo-container"><span>BUF</span><div class="position-rank RB">QB{i}</div></div></div>
+            </div></div>
+          </td>
+          <td class="adp centered" data-value="1.{i:02d}"></td>
+        </tr>
+        """
+        for i in range(1, 27)
+    )
+
+    ffc_2qb_json = json.dumps({
+        "players": [
+            {"name": "FFC QB One", "position": "QB", "team": "KC", "adp": 1.0},
+            {"name": "FFC WR Two", "position": "WR", "team": "SF", "adp": 2.0},
+            {"name": "FFC RB Three", "position": "RB", "team": "DEN", "adp": 3.0},
+        ]
+    })
+
+    def fake_urlopen(request, timeout):
+        url = request.full_url
+        if "draftsharks.com/rankings/ppr-superflex" in url:
+            return FakeResponse(
+                f"""
+                <html>
+                  <body>
+                    <script>var subscriptionAppData = {{}};</script>
+                    {gated_ds_rows}
+                  </body>
+                </html>
+                """
+            )
+        if "sleeper.app" in url:
+            return FakeResponse("{}")
+        if "fantasyfootballcalculator.com" in url and "2qb" in url:
+            return FakeResponse(ffc_2qb_json)
+        if "fantasyfootballcalculator.com" in url:
+            return FakeResponse('{"players": []}')
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(
+        "app.services.composite_adp.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    league_response = client.post(
+        "/api/leagues",
+        json={
+            "name": "FFC Fallback League",
+            "season_year": 2026,
+            "scoring_format": "superflex",
+        },
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+
+    for draft_slot in range(1, 13):
+        team_response = client.post(
+            f"/api/leagues/{league_id}/teams",
+            json={"name": f"FFC Team {draft_slot}", "draft_slot": draft_slot},
+        )
+        assert team_response.status_code == 201
+
+    template_response = client.get(f"/api/leagues/{league_id}/exports/adp-template.csv")
+    assert template_response.status_code == 200
+    assert "FFC QB One,QB,KC,1,1,Composite Superflex ADP - FFC Fallback League" in template_response.text
+    assert "FFC WR Two,WR,SF,2,1,Composite Superflex ADP - FFC Fallback League" in template_response.text
+    assert "FFC2QB:1" in template_response.text
+    assert "ffc_2qb_only" in template_response.text
+
+
+def test_adp_coverage_summary_endpoint_returns_quality_stats(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_draftsharks_browser_scraper(monkeypatch)
+    _create_admin_and_login(client)
+
+    class FakeResponse:
+        def __init__(self, body: str) -> None:
+            self.body = body.encode("utf-8")
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self.body
+
+    ffc_2qb_players = [
+        {"name": f"Coverage Player {i}", "position": "QB" if i % 2 else "WR", "team": "BUF", "adp": float(i)}
+        for i in range(1, 11)
+    ]
+
+    def fake_urlopen(request, timeout):
+        url = request.full_url
+        if "draftsharks.com" in url:
+            raise OSError("DS unavailable")
+        if "sleeper.app" in url:
+            return FakeResponse("{}")
+        if "fantasyfootballcalculator.com" in url and "2qb" in url:
+            return FakeResponse(json.dumps({"players": ffc_2qb_players}))
+        if "fantasyfootballcalculator.com" in url:
+            return FakeResponse('{"players": []}')
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr("app.services.composite_adp.urllib.request.urlopen", fake_urlopen)
+
+    league_response = client.post(
+        "/api/leagues",
+        json={"name": "Coverage League", "season_year": 2026, "scoring_format": "superflex"},
+    )
+    assert league_response.status_code == 201
+    league_id = league_response.json()["id"]
+
+    for draft_slot in range(1, 5):
+        client.post(
+            f"/api/leagues/{league_id}/teams",
+            json={"name": f"Coverage Team {draft_slot}", "draft_slot": draft_slot},
+        )
+
+    summary_response = client.get(f"/api/leagues/{league_id}/adp/coverage-summary")
+    assert summary_response.status_code == 200
+    coverage = summary_response.json()
+    assert coverage["total_players"] == 10
+    assert coverage["source_coverage"]["1"] == 10   # all single-source (FFC 2QB only)
+    assert coverage["top_150"]["total"] == 10
+    assert coverage["top_150"]["multi_source_count"] == 0
+    assert coverage["roster_players"]["total"] == 0  # no roster imports
 
 
 def test_optimizer_results_do_not_duplicate_after_settings_are_created(
@@ -1623,7 +2955,7 @@ def test_adp_refresh_endpoint_imports_configured_csv(
 
     monkeypatch.setattr(
         "app.api.routes.leagues.get_settings",
-        lambda: Settings(
+        lambda: _test_settings(
             adp_refresh_url="https://example.com/adp.csv",
             adp_refresh_timeout_seconds=5,
         ),
@@ -1679,7 +3011,7 @@ def test_adp_refresh_endpoint_supports_fantasy_nerds_provider(
 
     monkeypatch.setattr(
         "app.api.routes.leagues.get_settings",
-        lambda: Settings(
+        lambda: _test_settings(
             adp_provider="fantasynerds",
             fantasy_nerds_api_key="live-key",
             fantasy_nerds_adp_url="https://api.fantasynerds.com/v1/nfl/adp",
@@ -1741,7 +3073,7 @@ def test_adp_refresh_endpoint_supports_fantasy_football_calculator_provider(
 
     monkeypatch.setattr(
         "app.api.routes.leagues.get_settings",
-        lambda: Settings(
+        lambda: _test_settings(
             adp_provider="fantasyfootballcalculator",
             fantasy_football_calculator_adp_url="https://fantasyfootballcalculator.com/api/v1/adp",
             adp_refresh_timeout_seconds=5,
@@ -1897,3 +3229,499 @@ def test_fantasy_football_news_filters_stale_cached_noise(
     payload = news_response.json()
     assert payload["count"] == 1
     assert payload["rows"][0]["link"] == "https://example.com/news-1"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Keeper Recommendation Explanations
+# ---------------------------------------------------------------------------
+
+
+def _setup_keeper_recommendation(
+    client: TestClient,
+) -> tuple[str, str]:
+    """Create a league with one eligible recommendation and return (league_id, recommendation_id)."""
+    _create_admin_and_login(client)
+    league_resp = client.post(
+        "/api/leagues",
+        json={"name": "Explanation League", "season_year": 2026, "draft_type": "snake"},
+    )
+    assert league_resp.status_code == 201
+    league_id = league_resp.json()["id"]
+    team_resp = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "Explain Team", "draft_slot": 1},
+    )
+    assert team_resp.status_code == 201
+    team_id = team_resp.json()["id"]
+
+    with _session_from_client(client) as session:
+        player = Player(full_name="Explain WR", position="WR", nfl_team="SF")
+        session.add(player)
+        session.commit()
+        snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="Explain ADP",
+            source="test",
+            format_type="ppr",
+            snapshot_date=date(2026, 5, 1),
+        )
+        session.add(snapshot)
+        session.commit()
+        session.add(
+            ADPEntry(
+                snapshot_id=snapshot.id,
+                player_id=player.id,
+                position="WR",
+                adp_pick=20.0,
+            )
+        )
+        session.add(
+            DraftPick(
+                league_id=uuid.UUID(league_id),
+                team_id=uuid.UUID(team_id),
+                player_id=player.id,
+                season_year=2026,
+                round=3,
+                overall_pick=30,
+                position="WR",
+                nfl_team="SF",
+            )
+        )
+        session.add(
+            FinalRosterEntry(
+                league_id=uuid.UUID(league_id),
+                team_id=uuid.UUID(team_id),
+                player_id=player.id,
+                season_year=2026,
+                position="WR",
+                nfl_team="SF",
+            )
+        )
+        session.commit()
+
+    run_resp = client.post(f"/api/leagues/{league_id}/optimizer/run", json={})
+    assert run_resp.status_code == 200
+    rows = run_resp.json()["rows"]
+    assert rows, "Expected at least one recommendation row"
+    recommendation_id = rows[0]["id"]
+    return league_id, recommendation_id
+
+
+def test_keeper_explanation_get_returns_null_when_not_generated(client: TestClient) -> None:
+    league_id, recommendation_id = _setup_keeper_recommendation(client)
+
+    response = client.get(
+        f"/api/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["recommendation_id"] == recommendation_id
+    assert payload["ai_explanation"] is None
+
+
+def test_keeper_explanation_post_returns_503_when_ai_disabled(client: TestClient) -> None:
+    league_id, recommendation_id = _setup_keeper_recommendation(client)
+
+    response = client.post(
+        f"/api/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation",
+        json={},
+    )
+
+    assert response.status_code == 503
+    assert "not enabled" in response.json()["detail"].lower()
+
+
+def test_keeper_explanation_generates_and_caches(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    league_id, recommendation_id = _setup_keeper_recommendation(client)
+
+    monkeypatch.setattr(keeper_explanation_ai, "is_enabled", lambda settings: True)
+    call_count = 0
+
+    def fake_generate(**kwargs: object) -> KeeperExplanationResult:
+        nonlocal call_count
+        call_count += 1
+        return KeeperExplanationResult(
+            short_reason="Great value at this cost.",
+            value_explanation="ADP is 10 picks earlier than cost.",
+            risk_note="No significant injury history.",
+            opportunity_cost="Forfeiting a late-round pick.",
+            decision="strong keep",
+        )
+
+    monkeypatch.setattr(keeper_explanation_ai, "generate_keeper_explanation", fake_generate)
+
+    first_response = client.post(
+        f"/api/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation",
+        json={},
+    )
+    assert first_response.status_code == 200
+    payload = first_response.json()
+    assert payload["ai_explanation"]["decision"] == "strong keep"
+    assert payload["ai_explanation"]["short_reason"] == "Great value at this cost."
+    assert call_count == 1
+
+    second_response = client.post(
+        f"/api/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation",
+        json={},
+    )
+    assert second_response.status_code == 200
+    assert second_response.json()["ai_explanation"]["decision"] == "strong keep"
+    assert call_count == 1, "AI should not be called again for a cached explanation"
+
+
+def test_keeper_explanation_appears_in_optimizer_results_after_generation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    league_id, recommendation_id = _setup_keeper_recommendation(client)
+
+    results_before = client.get(f"/api/leagues/{league_id}/optimizer/results")
+    assert results_before.status_code == 200
+    row_before = next(
+        (r for r in results_before.json()["rows"] if r["id"] == recommendation_id),
+        None,
+    )
+    assert row_before is not None
+    assert row_before["ai_explanation"] is None
+
+    monkeypatch.setattr(keeper_explanation_ai, "is_enabled", lambda settings: True)
+    monkeypatch.setattr(
+        keeper_explanation_ai,
+        "generate_keeper_explanation",
+        lambda **kwargs: KeeperExplanationResult(
+            short_reason="Solid value.",
+            value_explanation="Draft cost is well below ADP.",
+            risk_note="Healthy starter.",
+            opportunity_cost="Round 3 pick.",
+            decision="lean keep",
+        ),
+    )
+    client.post(
+        f"/api/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation",
+        json={},
+    )
+
+    results_after = client.get(f"/api/leagues/{league_id}/optimizer/results")
+    assert results_after.status_code == 200
+    row_after = next(
+        (r for r in results_after.json()["rows"] if r["id"] == recommendation_id),
+        None,
+    )
+    assert row_after is not None
+    assert row_after["ai_explanation"] is not None
+    assert row_after["ai_explanation"]["decision"] == "lean keep"
+    assert row_after["ai_explanation"]["short_reason"] == "Solid value."
+
+
+def test_explanation_input_hash_is_deterministic() -> None:
+    league_id = uuid.UUID("11111111-1111-1111-1111-111111111111")
+    player_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+    h1 = explanation_input_hash(
+        league_id=league_id,
+        user_id=None,
+        player_id=player_id,
+        scenario_name="Default",
+        keeper_cost_pick=30.0,
+        adp_pick=20.0,
+        keeper_score=12.5,
+    )
+    h2 = explanation_input_hash(
+        league_id=league_id,
+        user_id=None,
+        player_id=player_id,
+        scenario_name="Default",
+        keeper_cost_pick=30.0,
+        adp_pick=20.0,
+        keeper_score=12.5,
+    )
+    assert h1 == h2
+    assert len(h1) == 64
+
+
+def test_explanation_hash_changes_when_adp_changes() -> None:
+    league_id = uuid.UUID("11111111-1111-1111-1111-111111111111")
+    player_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+    h_original = explanation_input_hash(
+        league_id=league_id,
+        user_id=None,
+        player_id=player_id,
+        scenario_name="Default",
+        keeper_cost_pick=30.0,
+        adp_pick=20.0,
+        keeper_score=12.5,
+    )
+    h_new_adp = explanation_input_hash(
+        league_id=league_id,
+        user_id=None,
+        player_id=player_id,
+        scenario_name="Default",
+        keeper_cost_pick=30.0,
+        adp_pick=10.0,
+        keeper_score=12.5,
+    )
+    assert h_original != h_new_adp
+
+
+def test_keeper_explanation_404_for_unknown_recommendation(client: TestClient) -> None:
+    _create_admin_and_login(client)
+    league_resp = client.post(
+        "/api/leagues",
+        json={"name": "404 League", "season_year": 2026},
+    )
+    assert league_resp.status_code == 201
+    league_id = league_resp.json()["id"]
+    fake_id = str(uuid.uuid4())
+
+    get_response = client.get(
+        f"/api/leagues/{league_id}/optimizer/results/{fake_id}/explanation"
+    )
+    assert get_response.status_code == 404
+
+    post_response = client.post(
+        f"/api/leagues/{league_id}/optimizer/results/{fake_id}/explanation",
+        json={},
+    )
+    assert post_response.status_code == 404
+
+
+def test_keeper_explanation_is_not_enabled_by_default() -> None:
+    settings = _test_settings()
+    assert not keeper_explanation_ai.is_enabled(settings)
+
+
+def test_keeper_explanation_requires_api_key() -> None:
+    settings = _test_settings(keeper_explanation_ai_enabled=True)
+    assert not keeper_explanation_ai.is_enabled(settings)
+
+
+def test_keeper_explanation_enabled_with_key() -> None:
+    settings = _test_settings(
+        keeper_explanation_ai_enabled=True,
+        openai_api_key="sk-test-key",
+    )
+    assert keeper_explanation_ai.is_enabled(settings)
+
+
+# Phase 5: Scenario Comparison Narratives
+# ---------------------------------------------------------------------------
+
+
+def _setup_scenario_league(client: TestClient) -> str:
+    """Create a minimal league with one team and one eligible keeper, return league_id."""
+    _create_admin_and_login(client)
+    league_resp = client.post(
+        "/api/leagues",
+        json={"name": "Narrative League", "season_year": 2026, "draft_type": "snake"},
+    )
+    assert league_resp.status_code == 201
+    league_id = league_resp.json()["id"]
+    team_resp = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "Narrative Team", "draft_slot": 1},
+    )
+    assert team_resp.status_code == 201
+    team_id = team_resp.json()["id"]
+
+    with _session_from_client(client) as session:
+        player = Player(full_name="Narrative WR", position="WR", nfl_team="KC")
+        session.add(player)
+        session.commit()
+        snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="Narrative ADP",
+            source="test",
+            format_type="ppr",
+            snapshot_date=date(2026, 5, 1),
+        )
+        session.add(snapshot)
+        session.commit()
+        session.add(
+            ADPEntry(
+                snapshot_id=snapshot.id,
+                player_id=player.id,
+                position="WR",
+                adp_pick=18.0,
+            )
+        )
+        session.add(
+            DraftPick(
+                league_id=uuid.UUID(league_id),
+                team_id=uuid.UUID(team_id),
+                player_id=player.id,
+                season_year=2026,
+                round=3,
+                overall_pick=30,
+                position="WR",
+                nfl_team="KC",
+            )
+        )
+        session.add(
+            FinalRosterEntry(
+                league_id=uuid.UUID(league_id),
+                team_id=uuid.UUID(team_id),
+                player_id=player.id,
+                season_year=2026,
+                position="WR",
+                nfl_team="KC",
+            )
+        )
+        session.commit()
+
+    run_resp = client.post(f"/api/leagues/{league_id}/optimizer/run", json={})
+    assert run_resp.status_code == 200
+    return league_id
+
+
+def test_scenario_narrative_get_returns_null_when_not_generated(client: TestClient) -> None:
+    league_id = _setup_scenario_league(client)
+
+    response = client.get(f"/api/leagues/{league_id}/optimizer/scenarios/narrative")
+    assert response.status_code == 200
+    assert response.json()["narrative"] is None
+
+
+def test_scenario_narrative_post_returns_503_when_ai_disabled(client: TestClient) -> None:
+    league_id = _setup_scenario_league(client)
+
+    response = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios/narrative",
+        json={},
+    )
+    assert response.status_code == 503
+
+
+def test_scenario_narrative_generates_and_caches(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    league_id = _setup_scenario_league(client)
+
+    monkeypatch.setattr(scenario_narrative_ai, "is_enabled", lambda settings: True)
+    call_count = 0
+
+    def fake_generate(**_kwargs: object) -> ScenarioNarrativeResult:
+        nonlocal call_count
+        call_count += 1
+        return ScenarioNarrativeResult(
+            summary="Balanced offers the best tradeoff between value and picks.",
+            best_fit="Balanced",
+            tradeoffs=[
+                {"scenario": "Pure Value", "benefit": "Max keepers.", "cost": "Loses 5 picks."}
+            ],
+            decision_notes=["Consider your draft position."],
+        )
+
+    monkeypatch.setattr(scenario_narrative_ai, "generate_scenario_narrative", fake_generate)
+
+    first_response = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios/narrative",
+        json={},
+    )
+    assert first_response.status_code == 200
+    narrative = first_response.json()["narrative"]
+    assert narrative["best_fit"] == "Balanced"
+    assert narrative["summary"] == "Balanced offers the best tradeoff between value and picks."
+    assert len(narrative["tradeoffs"]) == 1
+    assert narrative["decision_notes"] == ["Consider your draft position."]
+
+    second_response = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios/narrative",
+        json={},
+    )
+    assert second_response.status_code == 200
+    assert second_response.json()["narrative"]["best_fit"] == "Balanced"
+    assert call_count == 1, "AI should not be called again for a cached narrative"
+
+
+def test_scenario_narrative_appears_in_scenarios_response_after_generation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    league_id = _setup_scenario_league(client)
+
+    scenarios_before = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios",
+        json={"persist": False},
+    )
+    assert scenarios_before.status_code == 200
+    assert scenarios_before.json()["narrative"] is None
+
+    monkeypatch.setattr(scenario_narrative_ai, "is_enabled", lambda settings: True)
+    monkeypatch.setattr(
+        scenario_narrative_ai,
+        "generate_scenario_narrative",
+        lambda **_kwargs: ScenarioNarrativeResult(
+            summary="Win Now maximizes immediate upside.",
+            best_fit="Win Now",
+            tradeoffs=[],
+            decision_notes=[],
+        ),
+    )
+    gen_resp = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios/narrative",
+        json={},
+    )
+    assert gen_resp.status_code == 200
+
+    scenarios_after = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios",
+        json={"persist": False},
+    )
+    assert scenarios_after.status_code == 200
+    assert scenarios_after.json()["narrative"] is not None
+    assert scenarios_after.json()["narrative"]["best_fit"] == "Win Now"
+
+
+def test_narrative_input_hash_is_deterministic() -> None:
+    league_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    summaries = [
+        {"scenario_name": "Balanced", "total_keeper_score": 15.5, "team_count": 10, "keeper_count": 20},
+        {"scenario_name": "Pure Value", "total_keeper_score": 18.0, "team_count": 10, "keeper_count": 25},
+    ]
+    h1 = narrative_input_hash(league_id=league_id, user_id=None, scenario_summaries=summaries)
+    h2 = narrative_input_hash(league_id=league_id, user_id=None, scenario_summaries=summaries)
+    assert h1 == h2
+    assert len(h1) == 64
+
+
+def test_narrative_hash_changes_when_scores_change() -> None:
+    league_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    summaries_original = [
+        {"scenario_name": "Balanced", "total_keeper_score": 15.5, "team_count": 10, "keeper_count": 20},
+    ]
+    summaries_changed = [
+        {"scenario_name": "Balanced", "total_keeper_score": 20.0, "team_count": 10, "keeper_count": 20},
+    ]
+    h_original = narrative_input_hash(
+        league_id=league_id, user_id=None, scenario_summaries=summaries_original
+    )
+    h_changed = narrative_input_hash(
+        league_id=league_id, user_id=None, scenario_summaries=summaries_changed
+    )
+    assert h_original != h_changed
+
+
+def test_scenario_narrative_is_not_enabled_by_default() -> None:
+    settings = _test_settings()
+    assert not scenario_narrative_ai.is_enabled(settings)
+
+
+def test_scenario_narrative_requires_api_key() -> None:
+    settings = _test_settings(scenario_narrative_ai_enabled=True)
+    assert not scenario_narrative_ai.is_enabled(settings)
+
+
+def test_scenario_narrative_enabled_with_key() -> None:
+    settings = _test_settings(
+        scenario_narrative_ai_enabled=True,
+        openai_api_key="sk-test-key",
+    )
+    assert scenario_narrative_ai.is_enabled(settings)

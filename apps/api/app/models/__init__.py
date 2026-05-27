@@ -1,8 +1,10 @@
-from app.models.adp import ADPEntry, ADPSnapshot
+from app.models.adp import ADPEntry, ADPRefreshCandidate, ADPSnapshot
+from app.models.ai_explanation import AIExplanation
 from app.models.auth import AppDefaultOptimizerSettings, User
 from app.models.draft import DraftPick
 from app.models.keeper import KeeperCandidate
 from app.models.league import League, Team
+from app.models.mock_draft import MockDraftAnalysis, MockDraftPick, MockDraftSession
 from app.models.optimizer import (
     KeeperRecommendation,
     ManualOverride,
@@ -14,7 +16,9 @@ from app.models.roster import FinalRosterEntry
 
 __all__ = [
     "ADPEntry",
+    "ADPRefreshCandidate",
     "ADPSnapshot",
+    "AIExplanation",
     "AppDefaultOptimizerSettings",
     "DraftPick",
     "FinalRosterEntry",
@@ -22,6 +26,9 @@ __all__ = [
     "KeeperRecommendation",
     "League",
     "ManualOverride",
+    "MockDraftAnalysis",
+    "MockDraftPick",
+    "MockDraftSession",
     "OptimizerSettings",
     "Player",
     "Team",
