@@ -1,7 +1,7 @@
 """Add mock draft tables.
 
 Revision ID: 20260524_0004
-Revises: 20260521_0003
+Revises: 20260522_0004
 Create Date: 2026-05-24
 """
 
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision: str = "20260524_0004"
-down_revision: str | None = "20260521_0003"
+down_revision: str | None = "20260522_0004"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
