@@ -27,6 +27,16 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
   - Excel workbook for keeper recommendations and supporting sheets.
   - CSV keeper recommendations.
   - PDF team outlook reports.
+- **Mock Draft**: run a simulated draft against AI-powered bots, get a personalized pre-draft strategy plan, and receive a graded post-draft analysis.
+  - Full snake draft board with keeper forfeit pre-placement.
+  - 9 bot personalities × 3 difficulty levels, configurable per team.
+  - AI bot picks, AI strategy plans, and AI post-draft analysis (all optional; deterministic fallbacks always available).
+  - Position draft limits enforced — Draft button disabled and roster tiles highlighted when a position cap is reached.
+  - Pick timer (30 / 60 / 90 / 120 seconds) with auto-pick on expiry.
+  - Completed mock history with letter grade, score, and recap. Side-by-side draft comparison.
+- **AI keeper explanations**: click any player name in Keeper Recommendations for a plain-English explanation of why the optimizer recommended or passed on that player (short reason, value explanation, risk note, opportunity cost, decision badge). Responses are cached.
+- **AI scenario narratives**: click "Generate AI Analysis" in Scenario Comparison for a plain-English tradeoff summary across all five presets. Personalized for the signed-in user's assigned team when available.
+- **Composite ADP**: one-click "Update ADP" button builds a weighted-median board from DraftSharks + Fantasy Football Calculator and imports it directly.
 
 ## Stack
 
@@ -138,6 +148,8 @@ OPENAI_API_KEY=
 MOCK_DRAFT_AI_ENABLED=false
 MOCK_DRAFT_AI_MODEL=gpt-5.4-mini
 MOCK_DRAFT_AI_TIMEOUT_SECONDS=90
+KEEPER_EXPLANATION_AI_ENABLED=false
+SCENARIO_NARRATIVE_AI_ENABLED=false
 ADP_PROVIDER=fantasyfootballcalculator
 ADP_AUTO_REFRESH_ENABLED=false
 ADP_AUTO_REFRESH_INTERVAL_HOURS=168
@@ -167,6 +179,8 @@ OPENAI_API_KEY=
 MOCK_DRAFT_AI_ENABLED=false
 MOCK_DRAFT_AI_MODEL=gpt-5.4-mini
 MOCK_DRAFT_AI_TIMEOUT_SECONDS=90
+KEEPER_EXPLANATION_AI_ENABLED=false
+SCENARIO_NARRATIVE_AI_ENABLED=false
 ADP_PROVIDER=fantasyfootballcalculator
 ADP_AUTO_REFRESH_ENABLED=false
 ADP_AUTO_REFRESH_INTERVAL_HOURS=168
@@ -177,9 +191,11 @@ ADP_AI_TIMEOUT_SECONDS=180
 ADP_AI_MAX_OUTPUT_TOKENS=32000
 ```
 
-Mock draft AI is disabled by default. Set `OPENAI_API_KEY` and `MOCK_DRAFT_AI_ENABLED=true`
-on the API service to have bot picks and draft analysis call an OpenAI model. If the model call
-fails or returns an invalid player, the API falls back to the built-in deterministic draft logic.
+AI features are opt-in. All AI calls require `OPENAI_API_KEY` to be set. Each feature has its own enable flag:
+
+- `MOCK_DRAFT_AI_ENABLED=true` — bot picks, post-draft analysis, and strategy plans call an OpenAI model. Falls back to deterministic logic if the model call fails or returns an invalid player.
+- `KEEPER_EXPLANATION_AI_ENABLED=true` — keeper recommendation explanations are generated on demand and cached.
+- `SCENARIO_NARRATIVE_AI_ENABLED=true` — scenario comparison narratives are generated on demand and cached.
 
 AI-synthesized ADP is also opt-in. Set `ADP_PROVIDER=ai_synthesized`,
 `ADP_AUTO_REFRESH_ENABLED=true`, and `OPENAI_API_KEY` on the API service to refresh ADP weekly.
@@ -664,6 +680,34 @@ shareable report for one manager.
 Outlooks are summaries of the active selected keeper plan. The detailed math remains in `Keeper
 Recommendations`.
 
+### Mock Draft
+
+Use `Mock Draft` to simulate a draft against AI-powered bots using real league keeper context and
+the current ADP snapshot.
+
+**Setup:**
+
+1. Select your team (or have an admin assign you one).
+2. Choose bot personality and difficulty per opposing team, or use the defaults.
+3. Set an optional pick timer (30–120 seconds). Expired picks are filled automatically with the top available player.
+4. Click `Generate Strategy Plan` to get an AI-generated pre-draft plan with targets, fades, round priorities, and contingencies.
+5. Click `Start Draft` to begin.
+
+**During the draft:**
+
+- Keeper forfeits are pre-placed on the draft board. They do not count as picks and cannot be changed.
+- When it is your pick, use `Available Players` to browse by position or scroll by ADP. Click `Draft` to select a player.
+- If a position's draft limit is reached, the `Draft` button for players of that position is grayed out and the corresponding roster tile turns red.
+- Bots pick automatically with a brief delay. AI bot picks are used when `MOCK_DRAFT_AI_ENABLED=true`; otherwise bots fall back to deterministic scoring.
+- `Pause` and `Resume` are available if you need to step away.
+
+**After the draft:**
+
+- `Complete` ends the draft and generates a post-draft analysis with a letter grade, numeric score, pick feedback, what-if scenarios, and future advice.
+- Completed mocks are saved to history. Select two or more from history to compare side-by-side.
+
+**League roster settings** control the mock draft round count, allowed positions, slot counts, position caps, and bench limits. Admins can edit these from `Roster Settings` in the league settings section.
+
 ## Scoring Model
 
 The optimizer uses:
@@ -801,6 +845,23 @@ GET    /api/leagues/{league_id}/exports/keeper-recommendations.xlsx
 GET    /api/leagues/{league_id}/exports/keeper-recommendations.csv
 GET    /api/leagues/{league_id}/exports/adp-template.csv
 GET    /api/leagues/{league_id}/exports/team-outlooks.pdf
+
+POST   /api/mock-drafts
+GET    /api/mock-drafts/{session_id}
+DELETE /api/mock-drafts/{session_id}
+POST   /api/mock-drafts/{session_id}/start
+POST   /api/mock-drafts/{session_id}/pause
+POST   /api/mock-drafts/{session_id}/resume
+POST   /api/mock-drafts/{session_id}/pick
+POST   /api/mock-drafts/{session_id}/complete
+POST   /api/mock-drafts/{session_id}/end
+POST   /api/mock-drafts/{session_id}/strategy-plan
+GET    /api/leagues/{league_id}/mock-drafts/history
+
+POST   /api/leagues/{league_id}/keeper-recommendations/{rec_id}/explanation
+GET    /api/leagues/{league_id}/keeper-recommendations/{rec_id}/explanation
+POST   /api/leagues/{league_id}/scenario-narrative
+GET    /api/leagues/{league_id}/scenario-narrative
 ```
 
 Interactive OpenAPI docs are available at:

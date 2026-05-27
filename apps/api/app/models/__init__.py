@@ -1,4 +1,5 @@
 from app.models.adp import ADPEntry, ADPRefreshCandidate, ADPSnapshot
+from app.models.ai_explanation import AIExplanation
 from app.models.auth import AppDefaultOptimizerSettings, User
 from app.models.draft import DraftPick
 from app.models.keeper import KeeperCandidate
@@ -17,6 +18,7 @@ __all__ = [
     "ADPEntry",
     "ADPRefreshCandidate",
     "ADPSnapshot",
+    "AIExplanation",
     "AppDefaultOptimizerSettings",
     "DraftPick",
     "FinalRosterEntry",

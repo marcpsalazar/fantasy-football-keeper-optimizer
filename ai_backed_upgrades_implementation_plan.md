@@ -156,10 +156,35 @@ The app is on the `mockdraft` branch with three phases of AI-backed infrastructu
 - Pick timer selector (30 / 60 / 90 / 120 seconds).
 - History view shows completed sessions with letter grade, score, and summary.
 
+### Implemented keeper explanation UX (Phase 4 UI)
+
+- Removed AI explanation column from `KeeperRecommendationsTable`; replaced with single-click modal.
+- Clicking a player name in the recommendations table auto-generates the AI explanation (if not cached) and opens `KeeperExplanationModal` immediately — one click, no scroll required.
+- Modal shows: team/scenario header, player name, position badge, decision badge, `short_reason`, `value_explanation`, `risk_note`, and `opportunity_cost`.
+- Closes on backdrop click, X button, or Escape key.
+- Instructions added next to the recommendations description text: "Click any player name to see their AI-powered keeper recommendation."
+- `KEEPER_EXPLANATION_AI_ENABLED` and `SCENARIO_NARRATIVE_AI_ENABLED` feature flags added to `.env`.
+
+### Implemented personalized scenario narratives (Phase 5 UI)
+
+- `build_narrative_context` branches on whether the current user has an assigned team.
+- When a user has an assigned team, `analysis_mode: "personalized"` — AI focuses on that team's actual players and picks forfeited, not generic league-wide analysis.
+- When no team is assigned, falls back to `analysis_mode: "generic"` — league-wide tradeoff summary.
+- Identical-keeper annotation: `_build_user_team_context` detects scenarios with exactly the same player sets and adds `identical_keepers_to` on each matching scenario.
+- AI instructions explicitly handle identical keeper sets — treats them as strategically equivalent, uses picks forfeited as the differentiator, and avoids implying score differences between identical sets reflect real value differences.
+- Per-player `keeper_score` removed from AI context to prevent misleading score-based comparisons across scenarios (scores differ because scenario presets use different weights, not because keepers are different).
+- Cache hash updated to use player names + picks forfeited instead of scores, so identical keeper sets always hit the same cache entry.
+
+### Implemented mock draft position limit UI
+
+- `positionsAtLimit` — a `Set<string>` computed from `rosterCounts` vs `data.league.rosterSettings.maxPositionCounts`. A position enters the set when `rosterCounts[pos] >= maxPositionCounts[pos]`.
+- Available players list: Draft button is `disabled` when `positionsAtLimit.has(player.position)`, with a tooltip: `"QB draft limit reached"` (or whichever position). Button is visually grayed out and unclickable.
+- Drafted roster needs grid: when a slot matches a position at its cap and the slot still has `remaining > 0`, the tile turns rose (`border-rose-200 bg-rose-50`) with rose-colored count text, visually distinguishing "cap hit, slot unfillable" from "needs more players" (amber) and "slot filled" (emerald).
+
 ### Validation run
 
 - `ruff check` passes.
-- `pytest apps/api/tests/test_optimizer_api.py` passes with **56 tests** covering:
+- `pytest apps/api/tests/test_optimizer_api.py` passes with **77 tests** covering:
   - Mock draft session creation, keeper prefill, bot picks, user picks, roster limits, analysis grading, and keeper cost evaluation.
   - AI bot pick integration (monkeypatched boundary).
   - AI analysis narrative integration (monkeypatched boundary).
@@ -167,7 +192,10 @@ The app is on the `mockdraft` branch with three phases of AI-backed infrastructu
   - AI ADP board import, candidate approve/reject flow.
   - ADP guardrails: duplicate players, position placeholders, unsubstantiated source notes, early special teams, deduplication.
   - ADP refresh providers (FFC, Fantasy Nerds, CSV URL, AI synthesized).
+  - Phase 4: keeper explanation generation, caching by input hash, `GET` null before generation, `POST 503` when AI disabled, hash determinism, hash change on input change.
+  - Phase 5: scenario narrative generation, caching, appears in scenarios response, `POST 503` when AI disabled, hash determinism, hash change, personalized vs generic mode toggle.
   - Existing optimizer, scenario comparison, draft impact, and export tests.
+  - FastAPI `dependency_overrides` used for test settings isolation (prevents `.env` AI flags from contaminating AI-disabled tests).
 - Local API health check passes.
 
 ---
@@ -183,8 +211,8 @@ The AI scope stays focused on preseason keeper optimization, draft prep, mock dr
 | 3 | AI-backed mock draft bot picks | **Done** |
 | 4 | AI-backed post-draft analysis | **Done** |
 | 5 | AI pre-draft strategy coach | **Done** |
-| 6 | AI keeper recommendation explanations | Not started |
-| 7 | AI scenario comparison narratives | Not started |
+| 6 | AI keeper recommendation explanations | **Done** |
+| 7 | AI scenario comparison narratives | **Done** |
 | 8 | AI player detail summaries | Not started |
 | 9 | AI-assisted CSV/data cleanup | Not started |
 | 10 | Cost controls, caching, and observability | Partial (candidate limit, cache key exist; per-feature flags and token tracking not started) |
@@ -258,7 +286,7 @@ Acceptance criteria:
 
 ## Phase 4: Keeper Recommendation Explanations
 
-**Status: Not started.**
+**Status: Done.**
 
 Goal: explain optimizer recommendations in plain English.
 
@@ -316,7 +344,7 @@ Acceptance criteria:
 
 ## Phase 5: Scenario Comparison Narratives
 
-**Status: Not started.**
+**Status: Done.** (2026-05-27)
 
 Goal: summarize tradeoffs between optimizer scenarios in plain English.
 
@@ -490,11 +518,15 @@ MOCK_DRAFT_AI_MODEL=gpt-5.4-mini
 Pre-production checklist:
 
 - [ ] Redeploy API after variable changes.
-- [ ] Run `alembic upgrade head` — migrations 0004, 0005, 0006 must be applied.
+- [ ] Run `alembic upgrade head` — migrations 0004–0007 must be applied (0007 adds `ai_explanations` for keeper explanation and scenario narrative caching).
+- [ ] Set `KEEPER_EXPLANATION_AI_ENABLED=true` and `SCENARIO_NARRATIVE_AI_ENABLED=true` on the Railway API service.
 - [ ] Click "Update ADP" in the admin ADP page; confirm composite snapshot imports cleanly (DraftSharks + FFC sources visible in source notes).
 - [ ] Spot-check QB ADPs — top QBs (Allen, Mahomes, Lamar, Drake Maye) should be first-round picks.
 - [ ] Spot-check K/DST ADPs — kickers should be rounds 11–16, not earlier.
 - [ ] Run one complete mock draft with AI bot picks enabled.
+- [ ] Verify position draft limits: draft up to the cap for one position — confirm Draft button grays out and roster tile turns red.
+- [ ] Click a player name in Keeper Recommendations — confirm AI explanation modal opens on first click.
+- [ ] Run all presets in Scenario Comparison and click "Generate AI Analysis" — confirm personalized narrative for a user with an assigned team.
 - [ ] Check logs for AI failures or truncated responses.
 - [ ] Confirm weekly refresh loop starts without blocking API startup.
 - [ ] Ensure Playwright and Node.js are available in the Railway environment for the DraftSharks browser scrape.
@@ -503,9 +535,9 @@ Pre-production checklist:
 
 ## Immediate Next Steps
 
-The branch is ready for live validation and then merge.
+Phases 1–5 and mock draft core are complete on the `mockdraft` branch. The branch is ready for live validation and then merge.
 
-1. Apply pending migrations in the target environment:
+1. Apply pending migrations in the target environment (migration 0007 adds `ai_explanations`):
 
 ```bash
 cd apps/api
@@ -536,12 +568,16 @@ s = Settings()
 print("OPENAI_API_KEY=<set>" if s.openai_api_key else "OPENAI_API_KEY=<missing>")
 print("MOCK_DRAFT_AI_ENABLED=", s.mock_draft_ai_enabled)
 print("MOCK_DRAFT_AI_MODEL=", s.mock_draft_ai_model)
+print("KEEPER_EXPLANATION_AI_ENABLED=", s.keeper_explanation_ai_enabled)
+print("SCENARIO_NARRATIVE_AI_ENABLED=", s.scenario_narrative_ai_enabled)
 PY
 ```
 
 5. Run a complete mock draft with `MOCK_DRAFT_AI_ENABLED=true`.
-6. Once live validation passes, open the PR to merge `mockdraft` into `main`.
-7. After merge, proceed to Phase 4 (keeper explanations) as the next feature.
+6. Test keeper explanation modal: click a player name in Keeper Recommendations, confirm AI explanation loads in the popup on the first click.
+7. Test scenario narrative: run all presets, click "Generate AI Analysis" in Scenario Comparison, confirm personalized narrative when a user has an assigned team.
+8. Once live validation passes, open the PR to merge `mockdraft` into `main`.
+9. After merge, the next unstarted feature is Phase 6 (AI Player Detail Summaries — snap-decision player popup in mock draft and ADP views).
 
 ---
 

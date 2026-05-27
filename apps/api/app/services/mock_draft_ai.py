@@ -243,6 +243,7 @@ def _responses_json(
     instructions: str,
     user_payload: dict[str, Any],
     max_output_tokens: int,
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     payload = {
         "model": settings.mock_draft_ai_model,
@@ -268,7 +269,7 @@ def _responses_json(
         },
         "max_output_tokens": max_output_tokens,
     }
-    response_body = _post_json(settings, "/responses", payload)
+    response_body = _post_json(settings, "/responses", payload, timeout_seconds=timeout_seconds)
     if response_body.get("status") == "incomplete":
         details = response_body.get("incomplete_details")
         reason = details.get("reason") if isinstance(details, dict) else None
@@ -280,7 +281,13 @@ def _responses_json(
     return data
 
 
-def _post_json(settings: Settings, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _post_json(
+    settings: Settings,
+    path: str,
+    payload: dict[str, Any],
+    *,
+    timeout_seconds: float | None = None,
+) -> dict[str, Any]:
     if not settings.openai_api_key:
         raise MockDraftAIError("OpenAI API key is missing")
     url = settings.openai_base_url.rstrip("/") + path
@@ -294,8 +301,9 @@ def _post_json(settings: Settings, path: str, payload: dict[str, Any]) -> dict[s
         },
         method="POST",
     )
+    effective_timeout = timeout_seconds if timeout_seconds is not None else settings.mock_draft_ai_timeout_seconds
     try:
-        with request.urlopen(http_request, timeout=settings.mock_draft_ai_timeout_seconds) as response:
+        with request.urlopen(http_request, timeout=effective_timeout) as response:
             response_text = response.read().decode("utf-8")
     except TimeoutError as exc:
         raise MockDraftAIError("OpenAI request timed out") from exc

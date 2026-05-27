@@ -11,10 +11,18 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
 
 import app.models  # noqa: F401
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.db.session import get_session
 from app.main import create_app, ensure_initial_admin_user
-from app.models import ADPEntry, ADPSnapshot, KeeperRecommendation, Player, User
+from app.models import (
+    ADPEntry,
+    ADPSnapshot,
+    DraftPick,
+    FinalRosterEntry,
+    KeeperRecommendation,
+    Player,
+    User,
+)
 from app.services.auth import clear_session_cookie, hash_password, set_session_cookie, verify_password
 import app.services.auth as auth_service
 from app.services.adp_refresh import refresh_adp_from_api
@@ -23,6 +31,16 @@ from app.services.composite_adp import ProviderFetchResult, _parse_draftsharks_b
 import app.services.mock_draft_ai as mock_draft_ai
 import app.services.mock_draft as mock_draft_service
 import app.services.news_feed as news_feed
+import app.services.keeper_explanation_ai as keeper_explanation_ai
+from app.services.keeper_explanation_ai import (
+    KeeperExplanationResult,
+    explanation_input_hash,
+)
+import app.services.scenario_narrative_ai as scenario_narrative_ai
+from app.services.scenario_narrative_ai import (
+    ScenarioNarrativeResult,
+    narrative_input_hash,
+)
 
 
 def _test_settings(**overrides: object) -> Settings:
@@ -46,6 +64,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]
     monkeypatch.setattr("app.services.mock_draft.get_settings", lambda: _test_settings())
     app = create_app()
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_settings] = lambda: _test_settings()
 
     with TestClient(app) as test_client:
         yield test_client
@@ -3210,3 +3229,499 @@ def test_fantasy_football_news_filters_stale_cached_noise(
     payload = news_response.json()
     assert payload["count"] == 1
     assert payload["rows"][0]["link"] == "https://example.com/news-1"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Keeper Recommendation Explanations
+# ---------------------------------------------------------------------------
+
+
+def _setup_keeper_recommendation(
+    client: TestClient,
+) -> tuple[str, str]:
+    """Create a league with one eligible recommendation and return (league_id, recommendation_id)."""
+    _create_admin_and_login(client)
+    league_resp = client.post(
+        "/api/leagues",
+        json={"name": "Explanation League", "season_year": 2026, "draft_type": "snake"},
+    )
+    assert league_resp.status_code == 201
+    league_id = league_resp.json()["id"]
+    team_resp = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "Explain Team", "draft_slot": 1},
+    )
+    assert team_resp.status_code == 201
+    team_id = team_resp.json()["id"]
+
+    with _session_from_client(client) as session:
+        player = Player(full_name="Explain WR", position="WR", nfl_team="SF")
+        session.add(player)
+        session.commit()
+        snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="Explain ADP",
+            source="test",
+            format_type="ppr",
+            snapshot_date=date(2026, 5, 1),
+        )
+        session.add(snapshot)
+        session.commit()
+        session.add(
+            ADPEntry(
+                snapshot_id=snapshot.id,
+                player_id=player.id,
+                position="WR",
+                adp_pick=20.0,
+            )
+        )
+        session.add(
+            DraftPick(
+                league_id=uuid.UUID(league_id),
+                team_id=uuid.UUID(team_id),
+                player_id=player.id,
+                season_year=2026,
+                round=3,
+                overall_pick=30,
+                position="WR",
+                nfl_team="SF",
+            )
+        )
+        session.add(
+            FinalRosterEntry(
+                league_id=uuid.UUID(league_id),
+                team_id=uuid.UUID(team_id),
+                player_id=player.id,
+                season_year=2026,
+                position="WR",
+                nfl_team="SF",
+            )
+        )
+        session.commit()
+
+    run_resp = client.post(f"/api/leagues/{league_id}/optimizer/run", json={})
+    assert run_resp.status_code == 200
+    rows = run_resp.json()["rows"]
+    assert rows, "Expected at least one recommendation row"
+    recommendation_id = rows[0]["id"]
+    return league_id, recommendation_id
+
+
+def test_keeper_explanation_get_returns_null_when_not_generated(client: TestClient) -> None:
+    league_id, recommendation_id = _setup_keeper_recommendation(client)
+
+    response = client.get(
+        f"/api/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["recommendation_id"] == recommendation_id
+    assert payload["ai_explanation"] is None
+
+
+def test_keeper_explanation_post_returns_503_when_ai_disabled(client: TestClient) -> None:
+    league_id, recommendation_id = _setup_keeper_recommendation(client)
+
+    response = client.post(
+        f"/api/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation",
+        json={},
+    )
+
+    assert response.status_code == 503
+    assert "not enabled" in response.json()["detail"].lower()
+
+
+def test_keeper_explanation_generates_and_caches(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    league_id, recommendation_id = _setup_keeper_recommendation(client)
+
+    monkeypatch.setattr(keeper_explanation_ai, "is_enabled", lambda settings: True)
+    call_count = 0
+
+    def fake_generate(**kwargs: object) -> KeeperExplanationResult:
+        nonlocal call_count
+        call_count += 1
+        return KeeperExplanationResult(
+            short_reason="Great value at this cost.",
+            value_explanation="ADP is 10 picks earlier than cost.",
+            risk_note="No significant injury history.",
+            opportunity_cost="Forfeiting a late-round pick.",
+            decision="strong keep",
+        )
+
+    monkeypatch.setattr(keeper_explanation_ai, "generate_keeper_explanation", fake_generate)
+
+    first_response = client.post(
+        f"/api/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation",
+        json={},
+    )
+    assert first_response.status_code == 200
+    payload = first_response.json()
+    assert payload["ai_explanation"]["decision"] == "strong keep"
+    assert payload["ai_explanation"]["short_reason"] == "Great value at this cost."
+    assert call_count == 1
+
+    second_response = client.post(
+        f"/api/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation",
+        json={},
+    )
+    assert second_response.status_code == 200
+    assert second_response.json()["ai_explanation"]["decision"] == "strong keep"
+    assert call_count == 1, "AI should not be called again for a cached explanation"
+
+
+def test_keeper_explanation_appears_in_optimizer_results_after_generation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    league_id, recommendation_id = _setup_keeper_recommendation(client)
+
+    results_before = client.get(f"/api/leagues/{league_id}/optimizer/results")
+    assert results_before.status_code == 200
+    row_before = next(
+        (r for r in results_before.json()["rows"] if r["id"] == recommendation_id),
+        None,
+    )
+    assert row_before is not None
+    assert row_before["ai_explanation"] is None
+
+    monkeypatch.setattr(keeper_explanation_ai, "is_enabled", lambda settings: True)
+    monkeypatch.setattr(
+        keeper_explanation_ai,
+        "generate_keeper_explanation",
+        lambda **kwargs: KeeperExplanationResult(
+            short_reason="Solid value.",
+            value_explanation="Draft cost is well below ADP.",
+            risk_note="Healthy starter.",
+            opportunity_cost="Round 3 pick.",
+            decision="lean keep",
+        ),
+    )
+    client.post(
+        f"/api/leagues/{league_id}/optimizer/results/{recommendation_id}/explanation",
+        json={},
+    )
+
+    results_after = client.get(f"/api/leagues/{league_id}/optimizer/results")
+    assert results_after.status_code == 200
+    row_after = next(
+        (r for r in results_after.json()["rows"] if r["id"] == recommendation_id),
+        None,
+    )
+    assert row_after is not None
+    assert row_after["ai_explanation"] is not None
+    assert row_after["ai_explanation"]["decision"] == "lean keep"
+    assert row_after["ai_explanation"]["short_reason"] == "Solid value."
+
+
+def test_explanation_input_hash_is_deterministic() -> None:
+    league_id = uuid.UUID("11111111-1111-1111-1111-111111111111")
+    player_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+    h1 = explanation_input_hash(
+        league_id=league_id,
+        user_id=None,
+        player_id=player_id,
+        scenario_name="Default",
+        keeper_cost_pick=30.0,
+        adp_pick=20.0,
+        keeper_score=12.5,
+    )
+    h2 = explanation_input_hash(
+        league_id=league_id,
+        user_id=None,
+        player_id=player_id,
+        scenario_name="Default",
+        keeper_cost_pick=30.0,
+        adp_pick=20.0,
+        keeper_score=12.5,
+    )
+    assert h1 == h2
+    assert len(h1) == 64
+
+
+def test_explanation_hash_changes_when_adp_changes() -> None:
+    league_id = uuid.UUID("11111111-1111-1111-1111-111111111111")
+    player_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+    h_original = explanation_input_hash(
+        league_id=league_id,
+        user_id=None,
+        player_id=player_id,
+        scenario_name="Default",
+        keeper_cost_pick=30.0,
+        adp_pick=20.0,
+        keeper_score=12.5,
+    )
+    h_new_adp = explanation_input_hash(
+        league_id=league_id,
+        user_id=None,
+        player_id=player_id,
+        scenario_name="Default",
+        keeper_cost_pick=30.0,
+        adp_pick=10.0,
+        keeper_score=12.5,
+    )
+    assert h_original != h_new_adp
+
+
+def test_keeper_explanation_404_for_unknown_recommendation(client: TestClient) -> None:
+    _create_admin_and_login(client)
+    league_resp = client.post(
+        "/api/leagues",
+        json={"name": "404 League", "season_year": 2026},
+    )
+    assert league_resp.status_code == 201
+    league_id = league_resp.json()["id"]
+    fake_id = str(uuid.uuid4())
+
+    get_response = client.get(
+        f"/api/leagues/{league_id}/optimizer/results/{fake_id}/explanation"
+    )
+    assert get_response.status_code == 404
+
+    post_response = client.post(
+        f"/api/leagues/{league_id}/optimizer/results/{fake_id}/explanation",
+        json={},
+    )
+    assert post_response.status_code == 404
+
+
+def test_keeper_explanation_is_not_enabled_by_default() -> None:
+    settings = _test_settings()
+    assert not keeper_explanation_ai.is_enabled(settings)
+
+
+def test_keeper_explanation_requires_api_key() -> None:
+    settings = _test_settings(keeper_explanation_ai_enabled=True)
+    assert not keeper_explanation_ai.is_enabled(settings)
+
+
+def test_keeper_explanation_enabled_with_key() -> None:
+    settings = _test_settings(
+        keeper_explanation_ai_enabled=True,
+        openai_api_key="sk-test-key",
+    )
+    assert keeper_explanation_ai.is_enabled(settings)
+
+
+# Phase 5: Scenario Comparison Narratives
+# ---------------------------------------------------------------------------
+
+
+def _setup_scenario_league(client: TestClient) -> str:
+    """Create a minimal league with one team and one eligible keeper, return league_id."""
+    _create_admin_and_login(client)
+    league_resp = client.post(
+        "/api/leagues",
+        json={"name": "Narrative League", "season_year": 2026, "draft_type": "snake"},
+    )
+    assert league_resp.status_code == 201
+    league_id = league_resp.json()["id"]
+    team_resp = client.post(
+        f"/api/leagues/{league_id}/teams",
+        json={"name": "Narrative Team", "draft_slot": 1},
+    )
+    assert team_resp.status_code == 201
+    team_id = team_resp.json()["id"]
+
+    with _session_from_client(client) as session:
+        player = Player(full_name="Narrative WR", position="WR", nfl_team="KC")
+        session.add(player)
+        session.commit()
+        snapshot = ADPSnapshot(
+            league_id=uuid.UUID(league_id),
+            season_year=2026,
+            name="Narrative ADP",
+            source="test",
+            format_type="ppr",
+            snapshot_date=date(2026, 5, 1),
+        )
+        session.add(snapshot)
+        session.commit()
+        session.add(
+            ADPEntry(
+                snapshot_id=snapshot.id,
+                player_id=player.id,
+                position="WR",
+                adp_pick=18.0,
+            )
+        )
+        session.add(
+            DraftPick(
+                league_id=uuid.UUID(league_id),
+                team_id=uuid.UUID(team_id),
+                player_id=player.id,
+                season_year=2026,
+                round=3,
+                overall_pick=30,
+                position="WR",
+                nfl_team="KC",
+            )
+        )
+        session.add(
+            FinalRosterEntry(
+                league_id=uuid.UUID(league_id),
+                team_id=uuid.UUID(team_id),
+                player_id=player.id,
+                season_year=2026,
+                position="WR",
+                nfl_team="KC",
+            )
+        )
+        session.commit()
+
+    run_resp = client.post(f"/api/leagues/{league_id}/optimizer/run", json={})
+    assert run_resp.status_code == 200
+    return league_id
+
+
+def test_scenario_narrative_get_returns_null_when_not_generated(client: TestClient) -> None:
+    league_id = _setup_scenario_league(client)
+
+    response = client.get(f"/api/leagues/{league_id}/optimizer/scenarios/narrative")
+    assert response.status_code == 200
+    assert response.json()["narrative"] is None
+
+
+def test_scenario_narrative_post_returns_503_when_ai_disabled(client: TestClient) -> None:
+    league_id = _setup_scenario_league(client)
+
+    response = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios/narrative",
+        json={},
+    )
+    assert response.status_code == 503
+
+
+def test_scenario_narrative_generates_and_caches(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    league_id = _setup_scenario_league(client)
+
+    monkeypatch.setattr(scenario_narrative_ai, "is_enabled", lambda settings: True)
+    call_count = 0
+
+    def fake_generate(**_kwargs: object) -> ScenarioNarrativeResult:
+        nonlocal call_count
+        call_count += 1
+        return ScenarioNarrativeResult(
+            summary="Balanced offers the best tradeoff between value and picks.",
+            best_fit="Balanced",
+            tradeoffs=[
+                {"scenario": "Pure Value", "benefit": "Max keepers.", "cost": "Loses 5 picks."}
+            ],
+            decision_notes=["Consider your draft position."],
+        )
+
+    monkeypatch.setattr(scenario_narrative_ai, "generate_scenario_narrative", fake_generate)
+
+    first_response = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios/narrative",
+        json={},
+    )
+    assert first_response.status_code == 200
+    narrative = first_response.json()["narrative"]
+    assert narrative["best_fit"] == "Balanced"
+    assert narrative["summary"] == "Balanced offers the best tradeoff between value and picks."
+    assert len(narrative["tradeoffs"]) == 1
+    assert narrative["decision_notes"] == ["Consider your draft position."]
+
+    second_response = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios/narrative",
+        json={},
+    )
+    assert second_response.status_code == 200
+    assert second_response.json()["narrative"]["best_fit"] == "Balanced"
+    assert call_count == 1, "AI should not be called again for a cached narrative"
+
+
+def test_scenario_narrative_appears_in_scenarios_response_after_generation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    league_id = _setup_scenario_league(client)
+
+    scenarios_before = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios",
+        json={"persist": False},
+    )
+    assert scenarios_before.status_code == 200
+    assert scenarios_before.json()["narrative"] is None
+
+    monkeypatch.setattr(scenario_narrative_ai, "is_enabled", lambda settings: True)
+    monkeypatch.setattr(
+        scenario_narrative_ai,
+        "generate_scenario_narrative",
+        lambda **_kwargs: ScenarioNarrativeResult(
+            summary="Win Now maximizes immediate upside.",
+            best_fit="Win Now",
+            tradeoffs=[],
+            decision_notes=[],
+        ),
+    )
+    gen_resp = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios/narrative",
+        json={},
+    )
+    assert gen_resp.status_code == 200
+
+    scenarios_after = client.post(
+        f"/api/leagues/{league_id}/optimizer/scenarios",
+        json={"persist": False},
+    )
+    assert scenarios_after.status_code == 200
+    assert scenarios_after.json()["narrative"] is not None
+    assert scenarios_after.json()["narrative"]["best_fit"] == "Win Now"
+
+
+def test_narrative_input_hash_is_deterministic() -> None:
+    league_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    summaries = [
+        {"scenario_name": "Balanced", "total_keeper_score": 15.5, "team_count": 10, "keeper_count": 20},
+        {"scenario_name": "Pure Value", "total_keeper_score": 18.0, "team_count": 10, "keeper_count": 25},
+    ]
+    h1 = narrative_input_hash(league_id=league_id, user_id=None, scenario_summaries=summaries)
+    h2 = narrative_input_hash(league_id=league_id, user_id=None, scenario_summaries=summaries)
+    assert h1 == h2
+    assert len(h1) == 64
+
+
+def test_narrative_hash_changes_when_scores_change() -> None:
+    league_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    summaries_original = [
+        {"scenario_name": "Balanced", "total_keeper_score": 15.5, "team_count": 10, "keeper_count": 20},
+    ]
+    summaries_changed = [
+        {"scenario_name": "Balanced", "total_keeper_score": 20.0, "team_count": 10, "keeper_count": 20},
+    ]
+    h_original = narrative_input_hash(
+        league_id=league_id, user_id=None, scenario_summaries=summaries_original
+    )
+    h_changed = narrative_input_hash(
+        league_id=league_id, user_id=None, scenario_summaries=summaries_changed
+    )
+    assert h_original != h_changed
+
+
+def test_scenario_narrative_is_not_enabled_by_default() -> None:
+    settings = _test_settings()
+    assert not scenario_narrative_ai.is_enabled(settings)
+
+
+def test_scenario_narrative_requires_api_key() -> None:
+    settings = _test_settings(scenario_narrative_ai_enabled=True)
+    assert not scenario_narrative_ai.is_enabled(settings)
+
+
+def test_scenario_narrative_enabled_with_key() -> None:
+    settings = _test_settings(
+        scenario_narrative_ai_enabled=True,
+        openai_api_key="sk-test-key",
+    )
+    assert scenario_narrative_ai.is_enabled(settings)

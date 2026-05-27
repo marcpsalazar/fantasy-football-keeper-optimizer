@@ -49,6 +49,7 @@ import {
   type ADPEntry,
   type DraftPick,
   type FinalRosterEntry,
+  type KeeperExplanation,
   type KeeperRecommendation,
   type Outlook,
   type ScenarioComparison,
@@ -70,6 +71,8 @@ import {
   downloadAdpTemplate,
   endMockDraft,
   exportUrl,
+  generateKeeperExplanation,
+  generateScenarioNarrative,
   generateMockDraftStrategyPlan,
   hydrateTeams,
   importCompositeAdpSnapshot,
@@ -114,6 +117,7 @@ import {
   type MockDraftSession,
   type NewsHeadline,
   type OptimizerSettingsForm,
+  type ScenarioNarrative,
   type UserForm,
   type WorkspaceData,
 } from "@/lib/api";
@@ -982,8 +986,9 @@ export function DashboardApp() {
     setIsBusy(true);
     try {
       await saveOptimizerSettings(leagueId, settings);
-      const scenarioComparisons = await runScenarioComparison(leagueId);
-      setWorkspace((current) => ({ ...current, scenarioComparisons }));
+      const { comparisons: scenarioComparisons, narrative: scenarioNarrative } =
+        await runScenarioComparison(leagueId);
+      setWorkspace((current) => ({ ...current, scenarioComparisons, scenarioNarrative }));
       setApiStatus("live");
       setStatusMessage("Optimizer settings applied and scenario comparison completed.");
     } catch {
@@ -3417,7 +3422,12 @@ function KeeperRecommendationsPage() {
   return (
     <PagePanel
       title="Keeper Recommendations"
-      description="Optimizer output with value, score, eligibility, and selection reason."
+      description={
+        <>
+          Optimizer output with value, score, eligibility, and selection reason.{" "}
+          <span className="text-emerald-700">Click a player name for an AI explanation.</span>
+        </>
+      }
       action={
         <div className="flex flex-wrap gap-2">
           <Button disabled={isBusy} onClick={() => exportRecommendations("xlsx")} variant="outline">
@@ -3455,6 +3465,31 @@ function ScenarioComparisonPage() {
     selectedScenarioByTeam,
     setSelectedScenarioForTeam,
   } = useDashboard();
+  const [localNarrative, setLocalNarrative] = React.useState<ScenarioNarrative | null>(
+    data.scenarioNarrative,
+  );
+  const [narrativeLoading, setNarrativeLoading] = React.useState(false);
+  const [narrativeError, setNarrativeError] = React.useState(false);
+
+  React.useEffect(() => {
+    setLocalNarrative(data.scenarioNarrative);
+  }, [data.scenarioNarrative]);
+
+  const handleGenerateNarrative = React.useCallback(async () => {
+    const leagueId = data.league?.id;
+    if (!leagueId) return;
+    setNarrativeLoading(true);
+    setNarrativeError(false);
+    try {
+      const result = await generateScenarioNarrative(leagueId);
+      setLocalNarrative(result);
+    } catch {
+      setNarrativeError(true);
+    } finally {
+      setNarrativeLoading(false);
+    }
+  }, [data.league?.id]);
+
   const teams = React.useMemo(
     () =>
       data.teams
@@ -3474,6 +3509,13 @@ function ScenarioComparisonPage() {
 
   return (
     <div className="space-y-5">
+      <ScenarioNarrativePanel
+        narrative={localNarrative}
+        loading={narrativeLoading}
+        error={narrativeError}
+        onGenerate={handleGenerateNarrative}
+        disabled={isBusy || narrativeLoading}
+      />
       <div className="grid gap-3 xl:grid-cols-5">
         {data.scenarioComparisons.map((scenario) => (
           <ScenarioSummaryCard key={scenario.scenarioName} scenario={scenario} />
@@ -4173,6 +4215,16 @@ function MockDraftPage() {
       return counts;
     }, {});
   }, [userRoster]);
+  const positionsAtLimit = React.useMemo(() => {
+    const maxCounts = data.league?.rosterSettings?.maxPositionCounts ?? {};
+    const limited = new Set<string>();
+    for (const [pos, cap] of Object.entries(maxCounts)) {
+      if (cap > 0 && (rosterCounts[pos] ?? 0) >= cap) {
+        limited.add(pos);
+      }
+    }
+    return limited;
+  }, [data.league?.rosterSettings?.maxPositionCounts, rosterCounts]);
   const timerLabel =
     timerNotice
       ? "Expired"
@@ -4563,9 +4615,10 @@ function MockDraftPage() {
                           <td className="py-1.5 pl-2 pr-2">
                             <div className="flex items-center gap-2">
                               <Button
-                                disabled={isBusy || isLoading || !isUserPickSlot}
+                                disabled={isBusy || isLoading || !isUserPickSlot || positionsAtLimit.has(player.position)}
                                 onClick={() => void draftPlayer(player.playerId)}
                                 size="sm"
+                                title={positionsAtLimit.has(player.position) ? `${player.position} draft limit reached` : undefined}
                               >
                                 Draft
                               </Button>
@@ -4621,22 +4674,28 @@ function MockDraftPage() {
                         </div>
                       </div>
                       <div className="mt-3 grid grid-cols-3 gap-2">
-                        {activeSession.rosterNeeds.map((need) => (
-                          <div
-                            className={cn(
-                              "rounded-md border px-2 py-1.5",
-                              need.remaining > 0
-                                ? "border-amber-200 bg-amber-50"
-                                : "border-emerald-200 bg-emerald-50",
-                            )}
-                            key={need.slot}
-                          >
-                            <p className="truncate text-[10px] font-semibold uppercase text-zinc-500">{need.slot}</p>
-                            <p className="mt-0.5 text-sm font-semibold text-zinc-950">
-                              {need.filled}/{need.target}
-                            </p>
-                          </div>
-                        ))}
+                        {activeSession.rosterNeeds.map((need) => {
+                          const isCapHit = need.remaining > 0 && positionsAtLimit.has(need.slot);
+                          return (
+                            <div
+                              className={cn(
+                                "rounded-md border px-2 py-1.5",
+                                isCapHit
+                                  ? "border-rose-200 bg-rose-50"
+                                  : need.remaining > 0
+                                  ? "border-amber-200 bg-amber-50"
+                                  : "border-emerald-200 bg-emerald-50",
+                              )}
+                              key={need.slot}
+                              title={isCapHit ? `${need.slot} draft limit reached` : undefined}
+                            >
+                              <p className="truncate text-[10px] font-semibold uppercase text-zinc-500">{need.slot}</p>
+                              <p className={cn("mt-0.5 text-sm font-semibold", isCapHit ? "text-rose-700" : "text-zinc-950")}>
+                                {need.filled}/{need.target}
+                              </p>
+                            </div>
+                          );
+                        })}
                       </div>
                       <div className="mt-3 max-h-64 space-y-2 overflow-auto">
                         {userRoster.map((pick) => (
@@ -5718,6 +5777,99 @@ function ConnectionBadge({ status }: { status: ApiStatus }) {
   return <Badge variant={variant}>{label}</Badge>;
 }
 
+function ScenarioNarrativePanel({
+  narrative,
+  loading,
+  error,
+  onGenerate,
+  disabled,
+}: {
+  narrative: ScenarioNarrative | null;
+  loading: boolean;
+  error: boolean;
+  onGenerate: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
+        <div className="min-w-0">
+          <CardTitle>AI Scenario Analysis</CardTitle>
+          <CardDescription>
+            AI-generated summary comparing tradeoffs across keeper presets.
+          </CardDescription>
+        </div>
+        <Button disabled={disabled} onClick={onGenerate} variant="outline" size="sm">
+          <Bot className="size-4" aria-hidden="true" />
+          {loading ? "Generating…" : narrative ? "Regenerate" : "Generate Analysis"}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {loading && (
+          <div className="flex items-center gap-2 text-sm text-zinc-500">
+            <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
+            Analyzing scenarios…
+          </div>
+        )}
+        {error && !loading && (
+          <p className="text-sm text-red-600">Failed to generate analysis. Please try again.</p>
+        )}
+        {!loading && !error && !narrative && (
+          <p className="text-sm text-zinc-500">
+            Click &ldquo;Generate Analysis&rdquo; to get an AI-powered comparison of your keeper
+            presets.
+          </p>
+        )}
+        {!loading && narrative && (
+          <div className="space-y-4">
+            <p className="text-sm leading-6 text-zinc-700">{narrative.summary}</p>
+            {narrative.best_fit && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase text-zinc-500">Best Fit</span>
+                <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
+                  {narrative.best_fit}
+                </Badge>
+              </div>
+            )}
+            {narrative.tradeoffs.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase text-zinc-500">Tradeoffs</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {narrative.tradeoffs.map((t) => (
+                    <div
+                      key={t.scenario}
+                      className="rounded-md border border-zinc-100 bg-zinc-50 p-3 text-sm"
+                    >
+                      <p className="font-medium text-zinc-800">{t.scenario}</p>
+                      {t.benefit && <p className="mt-1 text-emerald-700">{t.benefit}</p>}
+                      {t.cost && <p className="mt-0.5 text-red-600">{t.cost}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {narrative.decision_notes.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase text-zinc-500">Decision Notes</p>
+                <ul className="space-y-1">
+                  {narrative.decision_notes.map((note, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-zinc-600">
+                      <span className="mt-0.5 text-emerald-500" aria-hidden="true">
+                        •
+                      </span>
+                      {note}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ScenarioSummaryCard({ scenario }: { scenario: ScenarioComparison }) {
   const selectedKeeperCount = scenario.teams.reduce(
     (sum, team) => sum + team.selectedKeepers.length,
@@ -5802,7 +5954,42 @@ function KeeperRecommendationsTable({
   showOverrides?: boolean;
   teamCount?: number;
 }) {
-  const { currentUser } = useDashboard();
+  const { currentUser, data: workspaceData } = useDashboard();
+  const leagueId = workspaceData.league?.id;
+  const [loadingIds, setLoadingIds] = React.useState<Set<string>>(new Set());
+  const [errorIds, setErrorIds] = React.useState<Set<string>>(new Set());
+  const [localExplanations, setLocalExplanations] = React.useState<
+    Record<string, KeeperExplanation>
+  >({});
+  const [selectedRec, setSelectedRec] = React.useState<KeeperRecommendation | null>(null);
+
+  const handleGenerateExplanation = React.useCallback(
+    async (rec: KeeperRecommendation) => {
+      if (!leagueId || !rec.id) return;
+      setLoadingIds((prev) => new Set(prev).add(rec.id!));
+      setErrorIds((prev) => {
+        const next = new Set(prev);
+        next.delete(rec.id!);
+        return next;
+      });
+      try {
+        const explanation = await generateKeeperExplanation(leagueId, rec.id);
+        if (explanation) {
+          setLocalExplanations((prev) => ({ ...prev, [rec.id!]: explanation }));
+        }
+      } catch {
+        setErrorIds((prev) => new Set(prev).add(rec.id!));
+      } finally {
+        setLoadingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(rec.id!);
+          return next;
+        });
+      }
+    },
+    [leagueId],
+  );
+
   const columns = React.useMemo<ColumnDef<KeeperRecommendation>[]>(
     () => [
       {
@@ -5817,7 +6004,30 @@ function KeeperRecommendationsTable({
         ),
       },
       { accessorKey: "scenario", header: "Scenario" },
-      { accessorKey: "player", header: "Player" },
+      {
+        accessorKey: "player",
+        header: "Player",
+        cell: ({ row }) => {
+          const rec = row.original;
+          return (
+            <button
+              className="text-left font-medium text-zinc-900 hover:text-emerald-700 hover:underline focus-visible:underline focus:outline-none"
+              onClick={() => {
+                setSelectedRec(rec);
+                const hasExplanation = rec.id
+                  ? !!(localExplanations[rec.id] ?? rec.aiExplanation)
+                  : !!rec.aiExplanation;
+                if (!hasExplanation && rec.id && !loadingIds.has(rec.id) && !errorIds.has(rec.id)) {
+                  handleGenerateExplanation(rec);
+                }
+              }}
+              type="button"
+            >
+              {rec.player}
+            </button>
+          );
+        },
+      },
       {
         accessorKey: "position",
         header: "Pos",
@@ -5862,7 +6072,16 @@ function KeeperRecommendationsTable({
       },
       { accessorKey: "reason", header: "Reason" },
     ],
-    [currentUser, onOverride, teamCount],
+    [
+      currentUser,
+      errorIds,
+      handleGenerateExplanation,
+      loadingIds,
+      localExplanations,
+      onOverride,
+      setSelectedRec,
+      teamCount,
+    ],
   );
 
   const visibleColumns = compact
@@ -5871,15 +6090,32 @@ function KeeperRecommendationsTable({
       ? columns
       : columns.filter((column) => column.id !== "manualOverride");
 
+  const modalRec = selectedRec;
+  const modalExplanation = modalRec?.id
+    ? (localExplanations[modalRec.id] ?? modalRec.aiExplanation ?? null)
+    : (modalRec?.aiExplanation ?? null);
+
   return (
-    <DataTable
-      columns={visibleColumns}
-      data={data}
-      resetSignal={resetSignal}
-      scrollBody={!compact}
-      tableId="keeper-recommendations"
-      teamFilter={{ columnId: "team" }}
-    />
+    <>
+      <DataTable
+        columns={visibleColumns}
+        data={data}
+        resetSignal={resetSignal}
+        scrollBody={!compact}
+        tableId="keeper-recommendations"
+        teamFilter={{ columnId: "team" }}
+      />
+      {modalRec && (
+        <KeeperExplanationModal
+          rec={modalRec}
+          explanation={modalExplanation}
+          isLoading={modalRec.id ? loadingIds.has(modalRec.id) : false}
+          hasError={modalRec.id ? errorIds.has(modalRec.id) : false}
+          onClose={() => setSelectedRec(null)}
+          onRetry={() => handleGenerateExplanation(modalRec)}
+        />
+      )}
+    </>
   );
 }
 
@@ -5898,6 +6134,120 @@ function ManualOverrideHeader() {
       <span className="text-center text-[10px] font-semibold uppercase leading-[0.95] text-zinc-500">
         Exclude
       </span>
+    </div>
+  );
+}
+
+const EXPLANATION_DECISION_STYLES: Record<KeeperExplanation["decision"], string> = {
+  "strong keep": "bg-emerald-100 text-emerald-800",
+  "lean keep": "bg-blue-100 text-blue-800",
+  "toss-up": "bg-amber-100 text-amber-800",
+  avoid: "bg-red-100 text-red-800",
+};
+
+function KeeperExplanationModal({
+  rec,
+  explanation,
+  isLoading,
+  hasError,
+  onClose,
+  onRetry,
+}: {
+  rec: KeeperRecommendation;
+  explanation: KeeperExplanation | null;
+  isLoading: boolean;
+  hasError: boolean;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  React.useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  const decisionStyle = explanation
+    ? (EXPLANATION_DECISION_STYLES[explanation.decision] ?? "bg-zinc-100 text-zinc-700")
+    : null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="relative w-full max-w-md rounded-xl bg-white shadow-xl">
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-100 px-5 py-4">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase text-zinc-500">
+              {rec.team} · {rec.scenario}
+            </p>
+            <h2 className="truncate text-lg font-semibold text-zinc-950">{rec.player}</h2>
+            <div className="mt-1.5 flex items-center gap-2">
+              <PositionBadge position={rec.position} />
+              {explanation && decisionStyle && (
+                <span
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+                    decisionStyle,
+                  )}
+                >
+                  {explanation.decision}
+                </span>
+              )}
+            </div>
+          </div>
+          <button
+            aria-label="Close"
+            className="shrink-0 rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="px-5 py-4">
+          {isLoading && (
+            <div className="flex items-center gap-2 text-sm text-zinc-500">
+              <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
+              Generating explanation…
+            </div>
+          )}
+          {hasError && !isLoading && (
+            <div className="space-y-2">
+              <p className="text-sm text-red-600">Failed to generate explanation.</p>
+              <button className="text-sm text-zinc-600 underline" onClick={onRetry} type="button">
+                Try again
+              </button>
+            </div>
+          )}
+          {!isLoading && !hasError && !explanation && (
+            <p className="text-sm text-zinc-400">No explanation available.</p>
+          )}
+          {!isLoading && explanation && (
+            <div className="space-y-3 text-sm">
+              <p className="text-zinc-700">{explanation.short_reason}</p>
+              {explanation.value_explanation && (
+                <div>
+                  <p className="font-semibold text-zinc-800">Value</p>
+                  <p className="text-zinc-600">{explanation.value_explanation}</p>
+                </div>
+              )}
+              {explanation.risk_note && (
+                <div>
+                  <p className="font-semibold text-zinc-800">Risk</p>
+                  <p className="text-zinc-600">{explanation.risk_note}</p>
+                </div>
+              )}
+              {explanation.opportunity_cost && (
+                <div>
+                  <p className="font-semibold text-zinc-800">Opportunity Cost</p>
+                  <p className="text-zinc-600">{explanation.opportunity_cost}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -6138,7 +6488,7 @@ function PagePanel({
   children,
 }: {
   title: string;
-  description: string;
+  description: React.ReactNode;
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {

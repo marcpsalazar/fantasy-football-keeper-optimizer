@@ -9,9 +9,11 @@ import {
   type ADPEntry,
   type DraftPick,
   type FinalRosterEntry,
+  type KeeperExplanation,
   type KeeperRecommendation,
   type Outlook,
   type ScenarioComparison,
+  type ScenarioNarrative,
   type Team,
 } from "@/lib/mock-data";
 
@@ -28,6 +30,7 @@ type ApiTable = {
 
 type ApiScenarioPayload = {
   scenarios?: ApiRow[];
+  narrative?: unknown;
 };
 
 export type ManualOverrideType = "auto" | "force_keep" | "exclude";
@@ -288,11 +291,14 @@ export type WorkspaceData = {
   adpEntries: ADPEntry[];
   keeperRecommendations: KeeperRecommendation[];
   scenarioComparisons: ScenarioComparison[];
+  scenarioNarrative: ScenarioNarrative | null;
   outlooks: Outlook[];
   draftImpact: DraftImpactPick[];
   leagueNews: NewsHeadline[];
   settings: OptimizerSettingsForm;
 };
+
+export type { ScenarioNarrative };
 
 export const defaultSettings: OptimizerSettingsForm = {
   minimumKeeperValue: 1,
@@ -349,6 +355,7 @@ export const mockWorkspaceData: WorkspaceData = {
   adpEntries: mockAdpEntries,
   keeperRecommendations: mockKeeperRecommendations,
   scenarioComparisons: mockScenarioComparisons,
+  scenarioNarrative: null,
   outlooks: mockOutlooks,
   draftImpact: buildDraftImpact(
     mockTeams,
@@ -426,7 +433,8 @@ export async function loadWorkspaceData(): Promise<WorkspaceData | null> {
     ? (await fetchTable(`/api/adp-snapshots/${activeSnapshot.id}`)).rows.map(mapAdpEntry)
     : [];
 
-  const scenarioComparisons = await loadScenarios(league.id);
+  const { comparisons: scenarioComparisons, narrative: scenarioNarrative } =
+    await loadScenarios(league.id);
   const hydratedTeams = hydrateTeams(teams, recommendations, league.draftType);
   const draftRoundCount = countDraftRounds(draftResults, recommendations);
 
@@ -440,6 +448,7 @@ export async function loadWorkspaceData(): Promise<WorkspaceData | null> {
     adpEntries,
     keeperRecommendations: recommendations,
     scenarioComparisons,
+    scenarioNarrative,
     outlooks: buildOutlooks(hydratedTeams, recommendations),
     draftImpact: buildDraftImpact(hydratedTeams, recommendations, league.draftType, draftRoundCount),
     leagueNews: newsTable.rows.map(mapNewsHeadline),
@@ -604,13 +613,47 @@ export async function runOptimizer(leagueId: string): Promise<void> {
   });
 }
 
-export async function runScenarioComparison(leagueId: string): Promise<ScenarioComparison[]> {
+export async function generateKeeperExplanation(
+  leagueId: string,
+  recommendationId: string,
+): Promise<KeeperExplanation | null> {
+  const payload = await fetchJson<{ ai_explanation: unknown }>(
+    `/api/leagues/${leagueId}/optimizer/results/${recommendationId}/explanation`,
+    {
+      body: JSON.stringify({}),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  return mapExplanation(payload.ai_explanation);
+}
+
+export async function runScenarioComparison(
+  leagueId: string,
+): Promise<{ comparisons: ScenarioComparison[]; narrative: ScenarioNarrative | null }> {
   const payload = await fetchJson<ApiScenarioPayload>(`/api/leagues/${leagueId}/optimizer/scenarios`, {
     body: JSON.stringify({ persist: false }),
     headers: { "content-type": "application/json" },
     method: "POST",
   });
-  return mapScenarioPayload(payload);
+  return {
+    comparisons: mapScenarioPayload(payload),
+    narrative: mapScenarioNarrative(payload.narrative),
+  };
+}
+
+export async function generateScenarioNarrative(
+  leagueId: string,
+): Promise<ScenarioNarrative | null> {
+  const payload = await fetchJson<{ narrative: unknown }>(
+    `/api/leagues/${leagueId}/optimizer/scenarios/narrative`,
+    {
+      body: JSON.stringify({}),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  return mapScenarioNarrative(payload.narrative);
 }
 
 export async function loadScenarioSelections(leagueId: string): Promise<Record<string, string>> {
@@ -852,11 +895,13 @@ function exportPath(
   return `/api/leagues/${leagueId}/exports/keeper-recommendations.xlsx`;
 }
 
-async function loadScenarios(leagueId: string): Promise<ScenarioComparison[]> {
+async function loadScenarios(
+  leagueId: string,
+): Promise<{ comparisons: ScenarioComparison[]; narrative: ScenarioNarrative | null }> {
   try {
     return await runScenarioComparison(leagueId);
   } catch {
-    return [];
+    return { comparisons: [], narrative: null };
   }
 }
 
@@ -1016,6 +1061,7 @@ function mapRecommendation(row: ApiRow): KeeperRecommendation {
   const isRecommended = Boolean(row.is_recommended);
   const isEligible = Boolean(row.is_eligible);
   return {
+    id: text(row.id),
     teamId: text(row.team_id),
     playerId: text(row.player_id),
     team: text(row.team_name),
@@ -1032,6 +1078,19 @@ function mapRecommendation(row: ApiRow): KeeperRecommendation {
     status: isRecommended ? "Recommended" : isEligible ? "Eligible" : "Excluded",
     manualOverride: text(row.manual_override, "auto") as ManualOverrideType,
     reason: text(row.reason),
+    aiExplanation: mapExplanation(row.ai_explanation),
+  };
+}
+
+function mapExplanation(raw: unknown): KeeperExplanation | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  return {
+    short_reason: String(obj.short_reason ?? ""),
+    value_explanation: String(obj.value_explanation ?? ""),
+    risk_note: String(obj.risk_note ?? ""),
+    opportunity_cost: String(obj.opportunity_cost ?? ""),
+    decision: (obj.decision as KeeperExplanation["decision"]) ?? "toss-up",
   };
 }
 
@@ -1102,6 +1161,25 @@ function mapScenarioPayload(payload: ApiScenarioPayload): ScenarioComparison[] {
       strategicNotes: text(team.strategic_notes),
     })),
   }));
+}
+
+function mapScenarioNarrative(raw: unknown): ScenarioNarrative | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  return {
+    summary: String(obj.summary ?? ""),
+    best_fit: String(obj.best_fit ?? ""),
+    tradeoffs: Array.isArray(obj.tradeoffs)
+      ? (obj.tradeoffs as Record<string, unknown>[]).map((t) => ({
+          scenario: String(t.scenario ?? ""),
+          benefit: String(t.benefit ?? ""),
+          cost: String(t.cost ?? ""),
+        }))
+      : [],
+    decision_notes: Array.isArray(obj.decision_notes)
+      ? (obj.decision_notes as unknown[]).map(String)
+      : [],
+  };
 }
 
 function mapNewsHeadline(row: ApiRow): NewsHeadline {

@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     mock_draft_ai_model: str = "gpt-5.4-mini"
     mock_draft_ai_timeout_seconds: float = 90.0
     mock_draft_ai_candidate_limit: int = 40
+    keeper_explanation_ai_enabled: bool = False
+    keeper_explanation_model: str = "gpt-5.4-mini"
+    keeper_explanation_ai_timeout_seconds: float = 30.0
+    scenario_narrative_ai_enabled: bool = False
+    scenario_narrative_model: str = "gpt-5.4-mini"
+    scenario_narrative_ai_timeout_seconds: float = 45.0
 
     @property
     def use_secure_session_cookie(self) -> bool:
