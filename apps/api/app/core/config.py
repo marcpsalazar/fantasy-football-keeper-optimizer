@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     scenario_narrative_ai_enabled: bool = False
     scenario_narrative_model: str = "gpt-5.4-mini"
     scenario_narrative_ai_timeout_seconds: float = 45.0
+    player_summary_ai_enabled: bool = False
+    player_summary_model: str = "gpt-5.4-mini"
+    player_summary_ai_timeout_seconds: float = 30.0
 
     @property
     def use_secure_session_cookie(self) -> bool:

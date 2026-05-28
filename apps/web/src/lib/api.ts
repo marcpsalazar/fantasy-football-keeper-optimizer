@@ -12,6 +12,7 @@ import {
   type KeeperExplanation,
   type KeeperRecommendation,
   type Outlook,
+  type PlayerSummary,
   type ScenarioComparison,
   type ScenarioNarrative,
   type Team,
@@ -680,6 +681,35 @@ export async function generateScenarioNarrative(
   return mapScenarioNarrative(payload.narrative);
 }
 
+export async function getPlayerSummary(
+  leagueId: string,
+  playerId: string,
+  snapshotId: string,
+): Promise<PlayerSummary | null> {
+  const payload = await fetchJson<{ ai_summary: unknown }>(
+    `/api/leagues/${leagueId}/adp/players/${playerId}/summary?snapshot_id=${snapshotId}`,
+  );
+  return mapPlayerSummary(payload.ai_summary);
+}
+
+export async function generatePlayerSummary(
+  leagueId: string,
+  playerId: string,
+  snapshotId: string,
+): Promise<PlayerSummary | null> {
+  const payload = await fetchJson<{ ai_summary: unknown }>(
+    `/api/leagues/${leagueId}/adp/players/${playerId}/summary?snapshot_id=${snapshotId}`,
+    {
+      body: JSON.stringify({}),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  return mapPlayerSummary(payload.ai_summary);
+}
+
+export type { PlayerSummary };
+
 export async function loadScenarioSelections(leagueId: string): Promise<Record<string, string>> {
   const payload = await fetchTable(`/api/leagues/${leagueId}/scenario-selections`);
   return Object.fromEntries(
@@ -1205,6 +1235,23 @@ function mapScenarioNarrative(raw: unknown): ScenarioNarrative | null {
     decision_notes: Array.isArray(obj.decision_notes)
       ? (obj.decision_notes as unknown[]).map(String)
       : [],
+  };
+}
+
+function mapPlayerSummary(raw: unknown): PlayerSummary | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const rec = String(obj.draft_recommendation ?? "watchlist");
+  const validRecs = ["draft now", "target next round", "watchlist", "avoid"] as const;
+  return {
+    quick_take: String(obj.quick_take ?? ""),
+    fantasy_points_context: String(obj.fantasy_points_context ?? ""),
+    value_note: String(obj.value_note ?? ""),
+    risk_note: String(obj.risk_note ?? ""),
+    roster_fit: String(obj.roster_fit ?? ""),
+    draft_recommendation: (validRecs as readonly string[]).includes(rec)
+      ? (rec as PlayerSummary["draft_recommendation"])
+      : "watchlist",
   };
 }
 

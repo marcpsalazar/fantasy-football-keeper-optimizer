@@ -375,7 +375,7 @@ Acceptance criteria:
 
 ## Phase 6: AI Player Detail Summaries
 
-**Status: Not started.**
+**Status: In progress.**
 
 Goal: snap-decision summary when a user clicks a player in mock draft or ADP views.
 
@@ -396,16 +396,28 @@ Output:
 
 Caching:
 
-- Base player summary cached by player ID, ADP snapshot, and scoring format.
-- Roster-fit layer cached by draft session and current pick if needed.
+- Base player summary cached by player ID, ADP snapshot, scoring format, and draft type.
+- Roster-fit layer cached by draft session and current pick if needed (not yet implemented).
 
-Frontend: player name click opens a detail popup; existing data shows immediately, AI summary fills in asynchronously.
+Frontend: clicking a player in the mock draft available-players list opens `MockDraftPlayerDialog`; existing ADP/risk data shows immediately, AI summary auto-generates and fills in below.
+
+New config:
+
+```text
+PLAYER_SUMMARY_AI_ENABLED=true
+```
 
 Acceptance criteria:
 
 - Popup opens instantly with known data.
-- AI summary fills in when available.
+- AI summary fills in when available (auto-triggered on open, no manual button needed).
 - Repeated clicks use cached summary.
+
+**Future work — projection data source:**
+
+- `consensus_projection`, `floor_projection`, `ceiling_projection` in `adp_entries` are populated only when the active snapshot was imported from a DraftSharks CSV that includes projection columns. The composite ADP refresh (FFC-only path) leaves these `null`.
+- Action: research a free or low-cost projection source (FantasyPros projections CSV, ESPN projections API, or a Sleeper seasonal projection endpoint) that can be wired into the composite ADP pipeline so projections are reliably populated.
+- Until then, the AI summary prompt degrades gracefully — it uses ADP rank and position tier context when projections are null.
 
 ---
 

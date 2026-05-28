@@ -116,6 +116,15 @@ export type ScenarioNarrative = {
   decision_notes: string[];
 };
 
+export type PlayerSummary = {
+  quick_take: string;
+  fantasy_points_context: string;
+  value_note: string;
+  risk_note: string;
+  roster_fit: string;
+  draft_recommendation: "draft now" | "target next round" | "watchlist" | "avoid";
+};
+
 export const teams: Team[] = [
   {
     id: "team-1",
