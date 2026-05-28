@@ -19,6 +19,7 @@ class ScenarioNarrativeResult:
     best_fit: str
     tradeoffs: list[dict[str, str]]
     decision_notes: list[str]
+    token_usage: dict[str, Any] | None = None
 
 
 def is_enabled(settings: Settings) -> bool:
@@ -83,7 +84,7 @@ def generate_scenario_narrative(
         },
         "required": ["summary", "best_fit", "tradeoffs", "decision_notes"],
     }
-    data = _responses_json(
+    data, usage = _responses_json(
         settings=settings,
         name="scenario_narrative",
         schema=schema,
@@ -97,6 +98,7 @@ def generate_scenario_narrative(
         best_fit=str(data.get("best_fit") or "")[:60],
         tradeoffs=_clean_tradeoffs(data.get("tradeoffs")),
         decision_notes=_clean_string_list(data.get("decision_notes")),
+        token_usage=usage,
     )
 
 

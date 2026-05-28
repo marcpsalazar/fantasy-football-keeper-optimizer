@@ -18,6 +18,7 @@ class AIBotPickDecision:
     player_id: uuid.UUID
     reasoning_summary: str
     confidence: float | None = None
+    token_usage: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class AIAnalysisDecision:
     weaknesses: list[dict[str, str]] | None = None
     what_if_scenarios: list[dict[str, Any]] | None = None
     future_advice: list[dict[str, str]] | None = None
+    token_usage: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class AIStrategyPlanDecision:
     targets: list[dict[str, Any]]
     fades: list[dict[str, Any]]
     contingencies: list[dict[str, Any]]
+    token_usage: dict[str, Any] | None = None
 
 
 def is_enabled(settings: Settings) -> bool:
@@ -61,7 +64,7 @@ def choose_bot_player(
         },
         "required": ["player_id", "reasoning_summary", "confidence"],
     }
-    data = _responses_json(
+    data, usage = _responses_json(
         settings=settings,
         name="mock_draft_bot_pick",
         schema=schema,
@@ -82,6 +85,7 @@ def choose_bot_player(
         player_id=player_id,
         reasoning_summary=reasoning,
         confidence=confidence if isinstance(confidence, int | float) else None,
+        token_usage=usage,
     )
 
 
@@ -153,7 +157,7 @@ def generate_strategy_plan(
             "contingencies",
         ],
     }
-    data = _responses_json(
+    data, usage = _responses_json(
         settings=settings,
         name="mock_draft_strategy_plan",
         schema=schema,
@@ -172,6 +176,7 @@ def generate_strategy_plan(
         targets=_list_of_dicts(data.get("targets")) or [],
         fades=_list_of_dicts(data.get("fades")) or [],
         contingencies=_list_of_dicts(data.get("contingencies")) or [],
+        token_usage=usage,
     )
 
 
@@ -214,7 +219,7 @@ def generate_draft_analysis(
         },
         "required": ["summary", "strengths", "weaknesses", "what_if_scenarios", "future_advice"],
     }
-    data = _responses_json(
+    data, usage = _responses_json(
         settings=settings,
         name="mock_draft_analysis",
         schema=schema,
@@ -232,6 +237,7 @@ def generate_draft_analysis(
         weaknesses=_list_of_label_details(data.get("weaknesses")),
         what_if_scenarios=_list_of_dicts(data.get("what_if_scenarios")),
         future_advice=_list_of_label_details(data.get("future_advice")),
+        token_usage=usage,
     )
 
 
@@ -244,7 +250,7 @@ def _responses_json(
     user_payload: dict[str, Any],
     max_output_tokens: int,
     timeout_seconds: float | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
     payload = {
         "model": settings.mock_draft_ai_model,
         "instructions": instructions,
@@ -278,7 +284,8 @@ def _responses_json(
     data = _loads_json_object(text)
     if not isinstance(data, dict):
         raise MockDraftAIError("AI response JSON must be an object")
-    return data
+    usage = response_body.get("usage")
+    return data, (usage if isinstance(usage, dict) else None)
 
 
 def _post_json(

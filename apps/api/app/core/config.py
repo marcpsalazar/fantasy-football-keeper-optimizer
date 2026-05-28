@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     player_summary_ai_enabled: bool = False
     player_summary_model: str = "gpt-5.4-mini"
     player_summary_ai_timeout_seconds: float = 30.0
+    mock_draft_ai_max_ai_round: int = 0
+    ai_monthly_token_budget: int = 0
 
     @property
     def use_secure_session_cookie(self) -> bool:

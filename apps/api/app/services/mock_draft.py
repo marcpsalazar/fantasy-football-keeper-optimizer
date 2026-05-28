@@ -9,6 +9,8 @@ import uuid
 
 from sqlmodel import Session, select
 
+import time
+
 from app.core.config import get_settings
 from app.models import (
     ADPEntry,
@@ -23,6 +25,7 @@ from app.models import (
 )
 from app.models.league import League
 from app.services import mock_draft_ai
+from app.services.ai_log import write_ai_log
 from app.services.optimizer import latest_recommendation_batch
 
 
@@ -186,10 +189,12 @@ def generate_strategy_plan(
     if mock_draft_ai.is_enabled(settings):
         try:
             valid_players = _valid_strategy_players_by_id(session, draft_session)
+            _t0 = time.monotonic()
             ai_plan = mock_draft_ai.generate_strategy_plan(
                 settings=settings,
                 context=_strategy_context(session, draft_session, league),
             )
+            _latency = int((time.monotonic() - _t0) * 1000)
             base_plan = _clean_strategy_plan(
                 {
                     "summary": ai_plan.summary,
@@ -203,8 +208,27 @@ def generate_strategy_plan(
             )
             base_plan = _filter_strategy_player_lists(base_plan, valid_players)
             ai_used = True
+            write_ai_log(
+                session,
+                feature="strategy_plan",
+                league_id=draft_session.league_id,
+                user_id=draft_session.user_id,
+                model=settings.mock_draft_ai_model,
+                status="success",
+                token_usage=ai_plan.token_usage,
+                latency_ms=_latency,
+            )
         except mock_draft_ai.MockDraftAIError as exc:
             ai_error = str(exc)[:1000]
+            write_ai_log(
+                session,
+                feature="strategy_plan",
+                league_id=draft_session.league_id,
+                user_id=draft_session.user_id,
+                model=settings.mock_draft_ai_model,
+                status="failed",
+                error_message=ai_error,
+            )
 
     generated_at = datetime.now(UTC)
     base_plan.update(
@@ -687,6 +711,7 @@ def _apply_ai_analysis(
     picks = _picks(session, draft_session.id)
     players = _players_by_id(session, {pick.player_id for pick in picks})
     try:
+        _t0 = time.monotonic()
         decision = mock_draft_ai.generate_draft_analysis(
             settings=settings,
             context={
@@ -715,7 +740,26 @@ def _apply_ai_analysis(
                 ],
             },
         )
-    except mock_draft_ai.MockDraftAIError:
+        write_ai_log(
+            session,
+            feature="draft_analysis",
+            league_id=draft_session.league_id,
+            user_id=draft_session.user_id,
+            model=settings.mock_draft_ai_model,
+            status="success",
+            token_usage=decision.token_usage,
+            latency_ms=int((time.monotonic() - _t0) * 1000),
+        )
+    except mock_draft_ai.MockDraftAIError as _exc:
+        write_ai_log(
+            session,
+            feature="draft_analysis",
+            league_id=draft_session.league_id,
+            user_id=draft_session.user_id,
+            model=settings.mock_draft_ai_model,
+            status="failed",
+            error_message=str(_exc)[:500],
+        )
         return payload
     if decision.summary:
         payload["summary"] = decision.summary[:2000]
@@ -1076,10 +1120,14 @@ def _choose_ai_bot_player(
     settings = get_settings()
     if not mock_draft_ai.is_enabled(settings):
         return None
+    max_ai_round = settings.mock_draft_ai_max_ai_round
+    if max_ai_round > 0 and current_slot.round > max_ai_round:
+        return None
     candidate_limit = max(5, min(settings.mock_draft_ai_candidate_limit, len(candidates)))
     scoped_candidates = candidates[:candidate_limit]
     try:
-        return mock_draft_ai.choose_bot_player(
+        _t0 = time.monotonic()
+        decision = mock_draft_ai.choose_bot_player(
             settings=settings,
             valid_player_ids={player.id for player in scoped_candidates},
             context={
@@ -1107,7 +1155,27 @@ def _choose_ai_bot_player(
                 ],
             },
         )
-    except mock_draft_ai.MockDraftAIError:
+        write_ai_log(
+            session,
+            feature="bot_pick",
+            league_id=draft_session.league_id,
+            user_id=draft_session.user_id,
+            model=settings.mock_draft_ai_model,
+            status="success",
+            token_usage=decision.token_usage,
+            latency_ms=int((time.monotonic() - _t0) * 1000),
+        )
+        return decision
+    except mock_draft_ai.MockDraftAIError as _exc:
+        write_ai_log(
+            session,
+            feature="bot_pick",
+            league_id=draft_session.league_id,
+            user_id=draft_session.user_id,
+            model=settings.mock_draft_ai_model,
+            status="failed",
+            error_message=str(_exc)[:500],
+        )
         return None
 
 

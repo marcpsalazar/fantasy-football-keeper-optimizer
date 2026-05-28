@@ -75,6 +75,7 @@ import {
   generatePlayerSummary,
   generateScenarioNarrative,
   generateMockDraftStrategyPlan,
+  getAiUsage,
   getPlayerSummary,
   hydrateTeams,
   importCompositeAdpSnapshot,
@@ -115,6 +116,7 @@ import {
   type LeagueCalendarSettings,
   type LeagueRosterSettings,
   type ManualOverrideType,
+  type AiUsage,
   type MockDraftAvailablePlayer,
   type MockDraftCreateForm,
   type MockDraftHistoryRow,
@@ -2630,6 +2632,183 @@ function AdminPage({
         </div>
       </div>
       <ADPInputPage csvText={adpCsvText} setCsvText={setAdpCsvText} />
+
+      <div className="flex items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+          <Bot className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-zinc-950">AI Usage</h2>
+          <p className="mt-1 text-sm text-zinc-600">
+            Token consumption, request counts, and active feature flags for the current month.
+          </p>
+        </div>
+      </div>
+      <AIUsagePanel />
+    </div>
+  );
+}
+
+function AIUsagePanel() {
+  const [usage, setUsage] = React.useState<AiUsage | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    setLoading(true);
+    void getAiUsage()
+      .then(setUsage)
+      .catch(() => setError("Failed to load AI usage data."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="p-4 text-sm text-zinc-500">Loading AI usage…</CardContent>
+      </Card>
+    );
+  }
+  if (error || !usage) {
+    return (
+      <Card>
+        <CardContent className="p-4 text-sm text-zinc-500">{error || "No usage data."}</CardContent>
+      </Card>
+    );
+  }
+
+  const { current_month: cm, settings: s, recent_logs: logs } = usage;
+  const featLabels: Record<string, string> = {
+    bot_pick: "Bot Pick",
+    draft_analysis: "Draft Analysis",
+    strategy_plan: "Strategy Plan",
+    keeper_explanation: "Keeper Explanation",
+    scenario_narrative: "Scenario Narrative",
+    player_summary: "Player Summary",
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-zinc-700">Current Month</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <MetricStrip label="Requests" value={String(cm.total_requests)} />
+            <MetricStrip label="Input Tokens" value={cm.total_input_tokens.toLocaleString()} />
+            <MetricStrip label="Output Tokens" value={cm.total_output_tokens.toLocaleString()} />
+            <MetricStrip
+              label="Success Rate"
+              value={cm.success_rate !== null ? `${(cm.success_rate * 100).toFixed(1)}%` : "—"}
+            />
+          </div>
+          {Object.keys(cm.by_feature).length > 0 && (
+            <div className="mt-4">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">By Feature</p>
+              <div className="divide-y divide-zinc-100 rounded-md border border-zinc-200">
+                {Object.entries(cm.by_feature).map(([feat, stat]) => (
+                  <div key={feat} className="flex items-center justify-between px-3 py-2 text-sm">
+                    <span className="font-medium text-zinc-800">{featLabels[feat] ?? feat}</span>
+                    <span className="text-zinc-500">
+                      {stat.requests} req · {stat.total_tokens.toLocaleString()} tok
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-zinc-700">Active Settings</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+            {[
+              ["Mock Draft AI", s.mock_draft_ai_enabled],
+              ["Keeper Explanations", s.keeper_explanation_ai_enabled],
+              ["Scenario Narratives", s.scenario_narrative_ai_enabled],
+              ["Player Summaries", s.player_summary_ai_enabled],
+            ].map(([label, enabled]) => (
+              <div key={String(label)} className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    "inline-block size-2 rounded-full",
+                    enabled ? "bg-emerald-500" : "bg-zinc-300",
+                  )}
+                />
+                <span className="text-zinc-700">{String(label)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <MetricStrip label="Model" value={s.mock_draft_ai_model} />
+            <MetricStrip
+              label="Max AI Round"
+              value={s.mock_draft_ai_max_ai_round === 0 ? "All rounds" : String(s.mock_draft_ai_max_ai_round)}
+            />
+            <MetricStrip
+              label="Monthly Budget"
+              value={s.ai_monthly_token_budget === 0 ? "Unlimited" : s.ai_monthly_token_budget.toLocaleString() + " tok"}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {logs.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-zinc-700">Recent Requests</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-100 text-left text-xs text-zinc-500">
+                    <th className="px-3 py-2 font-medium">Feature</th>
+                    <th className="px-3 py-2 font-medium">Status</th>
+                    <th className="px-3 py-2 font-medium text-right">Tokens</th>
+                    <th className="px-3 py-2 font-medium text-right">Latency</th>
+                    <th className="px-3 py-2 font-medium">Time</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-50">
+                  {logs.slice(0, 20).map((log) => (
+                    <tr key={log.id} className="hover:bg-zinc-50">
+                      <td className="px-3 py-2 text-zinc-800">{featLabels[log.feature] ?? log.feature}</td>
+                      <td className="px-3 py-2">
+                        <Badge
+                          variant={
+                            log.status === "success"
+                              ? "success"
+                              : log.status === "fallback"
+                                ? "warning"
+                                : "danger"
+                          }
+                        >
+                          {log.status}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2 text-right text-zinc-600">
+                        {log.total_tokens !== null ? log.total_tokens.toLocaleString() : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right text-zinc-600">
+                        {log.latency_ms !== null ? `${log.latency_ms}ms` : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-zinc-500">
+                        {log.created_at ? new Date(log.created_at).toLocaleString() : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
