@@ -184,6 +184,9 @@ const mockDraftPersonalities = [
 ] as const;
 
 const mockDraftDifficulties = ["Easy", "Medium", "Hard"] as const;
+const mockDraftSpeeds = ["Slow", "Medium", "Fast"] as const;
+type MockDraftSpeed = (typeof mockDraftSpeeds)[number];
+const DRAFT_SPEED_DELAY_MS: Record<MockDraftSpeed, number> = { Slow: 1500, Medium: 600, Fast: 150 };
 const rosterPlayerPositions = ["QB", "RB", "WR", "TE", "K", "DST"] as const;
 const rosterSlotPositions = ["QB", "RB", "WR", "TE", "FLEX", "SUPERFLEX", "K", "DST", "BENCH"] as const;
 
@@ -4179,6 +4182,7 @@ function MockDraftPage() {
   const [autoScrollBoard, setAutoScrollBoard] = React.useState(true);
   const [isAutoAdvancingBots, setIsAutoAdvancingBots] = React.useState(false);
   const isAutoAdvancingBotsRef = React.useRef(false);
+  const [draftSpeed, setDraftSpeed] = React.useState<MockDraftSpeed>("Medium");
   const [isDraftWorkspaceOpen, setIsDraftWorkspaceOpen] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
   const [strategyGenerationMessage, setStrategyGenerationMessage] = React.useState("");
@@ -4544,12 +4548,12 @@ function MockDraftPage() {
         isAutoAdvancingBotsRef.current = false;
         setIsAutoAdvancingBots(false);
       }
-    }, 450);
+    }, DRAFT_SPEED_DELAY_MS[draftSpeed]);
     return () => {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [activeSession, isBotTurn, refreshHistory]);
+  }, [activeSession, draftSpeed, isBotTurn, refreshHistory]);
 
   const timerKey = `${activeSession?.id ?? "none"}:${activeSession?.currentPick ?? "none"}:${activeSession?.status ?? "none"}`;
   React.useEffect(() => {
@@ -4767,6 +4771,21 @@ function MockDraftPage() {
                   {mockDraftDifficulties.map((difficulty) => (
                     <option key={difficulty} value={difficulty}>
                       {difficulty}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-2 text-sm">
+                <span className="font-medium text-zinc-700">Draft Speed</span>
+                <select
+                  className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
+                  value={draftSpeed}
+                  onChange={(event) => setDraftSpeed(event.target.value as MockDraftSpeed)}
+                >
+                  {mockDraftSpeeds.map((speed) => (
+                    <option key={speed} value={speed}>
+                      {speed}
                     </option>
                   ))}
                 </select>
