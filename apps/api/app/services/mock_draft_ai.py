@@ -225,8 +225,18 @@ def generate_draft_analysis(
         schema=schema,
         instructions=(
             "You are a fantasy football draft analyst. Improve the narrative analysis using the provided "
-            "deterministic scores, roster needs, ADP values, pick feedback, and league settings. Do not invent "
-            "players or contradict the supplied pick data. Return concise JSON only."
+            "deterministic scores, roster needs, ADP values, pick feedback, and league settings. "
+            "Apply these rules strictly:\n"
+            "1. SUPERFLEX/QB DEPTH: If is_superflex is true, having 2-3 QBs is standard and healthy — "
+            "never flag QB count of 2-3 as overinvestment. Only flag a QB as a reach if it was drafted "
+            "significantly early versus ADP AND the team already had a starter-quality QB. "
+            "If the team has 3 QBs in a superflex league with 2 starter spots (QB + SUPERFLEX), "
+            "the third QB is a normal depth pick — at most note tier quality, never overinvestment.\n"
+            "2. KICKER / DST LAST ROUND: Any pick with is_last_round=true and position K or DST must NOT "
+            "be flagged as a reach, weakness, or what-if scenario regardless of value_vs_adp. "
+            "There is no opportunity cost on the final pick; kicker ADP is irrelevant in the last round.\n"
+            "3. Use scoring_format and is_superflex to calibrate all positional value judgments.\n"
+            "Do not invent players or contradict the supplied pick data. Return concise JSON only."
         ),
         user_payload=context,
         max_output_tokens=1600,

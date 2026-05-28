@@ -349,9 +349,16 @@ def generate_analysis(session: Session, draft_session: MockDraftSession) -> Mock
     adp_by_player = _adp_by_player(session, draft_session)
     players = _players_by_id(session, {pick.player_id for pick in picks})
     league = _require_league(session, draft_session.league_id)
+    roster_cfg = league.roster_settings or {}
+    is_superflex = any(
+        str(k).upper() == "SUPERFLEX" and int(v or 0) > 0 for k, v in roster_cfg.items()
+    )
     feedback = _pick_feedback(user_picks, adp_by_player, players, draft_session)
     value_picks = [item for item in feedback if _numeric(item.get("value_vs_adp")) >= 0]
-    reaches = [item for item in feedback if _numeric(item.get("value_vs_adp")) < -8]
+    reaches = [
+        item for item in feedback
+        if _numeric(item.get("value_vs_adp")) < -8 and not item.get("exclude_from_reach_analysis")
+    ]
     needs = roster_needs(session, draft_session, draft_session.user_team_id)
     roster_completion_score = _roster_completion_score(needs)
     value_score = _value_score(feedback)
@@ -373,7 +380,7 @@ def generate_analysis(session: Session, draft_session: MockDraftSession) -> Mock
         "strengths": strengths,
         "weaknesses": weaknesses,
         "pick_feedback": feedback,
-        "what_if_scenarios": _what_if_scenarios(feedback, user_picks, adp_by_player, players),
+        "what_if_scenarios": _what_if_scenarios(feedback, user_picks, adp_by_player, players, is_superflex),
         "projected_rankings": _projected_rankings(
             session,
             draft_session,
@@ -710,6 +717,48 @@ def _apply_ai_analysis(
     league = _require_league(session, draft_session.league_id)
     picks = _picks(session, draft_session.id)
     players = _players_by_id(session, {pick.player_id for pick in picks})
+    roster_cfg = league.roster_settings or {}
+    is_superflex = any(
+        str(k).upper() == "SUPERFLEX" and int(v or 0) > 0 for k, v in roster_cfg.items()
+    )
+    user_team = session.get(Team, draft_session.user_team_id)
+    teams = _draft_order_teams(session, draft_session.league_id)
+    team_count = len(teams)
+    user_picks_for_context = [pick for pick in picks if pick.team_id == draft_session.user_team_id]
+
+    # Roster composition by position
+    roster_composition: dict[str, int] = {}
+    for pick in user_picks_for_context:
+        pos = (players[pick.player_id].position if pick.player_id in players else "UNK") or "UNK"
+        roster_composition[pos] = roster_composition.get(pos, 0) + 1
+
+    # Round-by-round pick structure: which rounds were active vs forfeited to keepers
+    active_pick_rounds = sorted(
+        pick.round for pick in user_picks_for_context if pick.source != "keeper_forfeit"
+    )
+    forfeit_rounds = sorted(
+        pick.round for pick in user_picks_for_context if pick.source == "keeper_forfeit"
+    )
+
+    # Position scarcity: cumulative position counts off the board at each of the user's first 8 picks
+    position_scarcity_at_picks: list[dict[str, Any]] = []
+    all_picks_sorted = sorted(picks, key=lambda p: p.overall_pick)
+    running_pos_counts: dict[str, int] = {}
+    for p in all_picks_sorted:
+        p_player = players.get(p.player_id)
+        if p_player:
+            pos = (p_player.position or "UNK").upper()
+            running_pos_counts[pos] = running_pos_counts.get(pos, 0) + 1
+        if p.team_id == draft_session.user_team_id and len(position_scarcity_at_picks) < 8:
+            position_scarcity_at_picks.append({
+                "round": p.round,
+                "overall_pick": p.overall_pick,
+                "positions_gone": dict(running_pos_counts),
+            })
+
+    # Value-vs-ADP index keyed by overall_pick for quick lookup
+    feedback_by_pick = {f["overall_pick"]: f for f in feedback}
+
     try:
         _t0 = time.monotonic()
         decision = mock_draft_ai.generate_draft_analysis(
@@ -718,8 +767,16 @@ def _apply_ai_analysis(
                 "league": {
                     "draft_type": draft_session.draft_type,
                     "round_count": draft_session.round_count,
-                    "roster_settings": league.roster_settings,
+                    "team_count": team_count,
+                    "scoring_format": league.scoring_format,
+                    "roster_settings": roster_cfg,
+                    "is_superflex": is_superflex,
                 },
+                "user_team": {
+                    "draft_slot": user_team.draft_slot if user_team else None,
+                    "team_name": user_team.name if user_team else None,
+                },
+                "keeper_context": draft_session.keeper_context,
                 "deterministic_scores": {
                     "overall_letter_grade": payload["overall_letter_grade"],
                     "overall_numeric_score": payload["overall_numeric_score"],
@@ -727,16 +784,26 @@ def _apply_ai_analysis(
                 },
                 "roster_needs": needs,
                 "user_pick_feedback": feedback,
+                "roster_composition": roster_composition,
+                "draft_structure": {
+                    "active_pick_rounds": active_pick_rounds,
+                    "forfeit_rounds": forfeit_rounds,
+                },
+                "position_scarcity_at_picks": position_scarcity_at_picks,
                 "user_picks": [
                     {
                         "overall_pick": pick.overall_pick,
                         "round": pick.round,
+                        "is_last_round": pick.round == draft_session.round_count,
                         "player_name": players[pick.player_id].full_name if pick.player_id in players else None,
                         "position": players[pick.player_id].position if pick.player_id in players else None,
                         "source": pick.source,
+                        "value_vs_adp": feedback_by_pick.get(pick.overall_pick, {}).get("value_vs_adp"),
+                        "exclude_from_reach_analysis": feedback_by_pick.get(
+                            pick.overall_pick, {}
+                        ).get("exclude_from_reach_analysis", False),
                     }
-                    for pick in picks
-                    if pick.team_id == draft_session.user_team_id
+                    for pick in user_picks_for_context
                 ],
             },
         )
@@ -1672,6 +1739,7 @@ def _pick_feedback(
         value = None if adp is None else _pick_value_vs_adp(pick.source, evaluation_pick, adp.adp_pick)
         risk = adp.risk if adp else None
         projection = adp.consensus_projection or adp.draftsharks_projection if adp else None
+        position = player.position if player else None
         feedback.append(
             {
                 "overall_pick": pick.overall_pick,
@@ -1679,7 +1747,7 @@ def _pick_feedback(
                 "evaluation_pick": evaluation_pick,
                 "player_id": str(pick.player_id),
                 "player_name": player.full_name if player else None,
-                "position": player.position if player else None,
+                "position": position,
                 "adp_pick": adp.adp_pick if adp else None,
                 "keeper_cost_pick": keeper.get("keeper_cost_pick") if keeper else None,
                 "keeper_cost_round": keeper.get("keeper_cost_round") if keeper else None,
@@ -1688,6 +1756,7 @@ def _pick_feedback(
                 "projection": projection,
                 "grade": _pick_grade(value),
                 "summary": _pick_summary(value, risk, pick.source),
+                "exclude_from_reach_analysis": position in ("K", "DST"),
             }
         )
     return feedback
@@ -1775,10 +1844,17 @@ def _balance_score(
 ) -> int:
     counts = _roster_counts(session, draft_session, team_id)
     slots = _roster_slots(league.roster_settings)
+    has_superflex = slots.get("SUPERFLEX", 0) > 0
+    qb_starter_target = 2 if has_superflex else 1
     starter_positions = [position for position in ("QB", "RB", "WR", "TE") if slots.get(position, 0) > 0]
     if not starter_positions:
         return 70
-    filled = sum(1 for position in starter_positions if counts.get(position, 0) > 0)
+
+    def _position_covered(position: str) -> bool:
+        needed = qb_starter_target if position == "QB" else 1
+        return counts.get(position, 0) >= needed
+
+    filled = sum(1 for position in starter_positions if _position_covered(position))
     return max(0, min(100, round((filled / len(starter_positions)) * 100)))
 
 
@@ -1809,7 +1885,10 @@ def _analysis_weaknesses(
     needs: list[dict[str, int | str]],
 ) -> list[dict[str, str]]:
     weaknesses = []
-    reaches = [item for item in feedback if _numeric(item.get("value_vs_adp")) < -8]
+    reaches = [
+        item for item in feedback
+        if _numeric(item.get("value_vs_adp")) < -8 and not item.get("exclude_from_reach_analysis")
+    ]
     if reaches:
         worst = min(reaches, key=lambda item: _numeric(item.get("value_vs_adp")))
         weaknesses.append(
@@ -1830,11 +1909,17 @@ def _what_if_scenarios(
     user_picks: list[MockDraftPick],
     adp_by_player: dict[uuid.UUID, ADPEntry],
     players: dict[uuid.UUID, Player],
+    is_superflex: bool = False,
 ) -> list[dict[str, Any]]:
     values = [_numeric(item.get("value_vs_adp")) for item in feedback]
     average_value = round(sum(values) / len(values), 1) if values else 0
     qb_picks = [
-        pick for pick in user_picks if (players.get(pick.player_id).position if players.get(pick.player_id) else "") == "QB"
+        pick for pick in user_picks
+        if (players.get(pick.player_id).position if players.get(pick.player_id) else "") == "QB"
+    ]
+    te_picks = [
+        pick for pick in user_picks
+        if (players.get(pick.player_id).position if players.get(pick.player_id) else "") == "TE"
     ]
     early_qb = any(pick.overall_pick <= 36 for pick in qb_picks)
     best_adp_misses = [
@@ -1843,22 +1928,71 @@ def _what_if_scenarios(
         if entry.player_id not in {pick.player_id for pick in user_picks}
     ]
     best_adp_misses.sort(key=lambda entry: entry.adp_pick)
+
+    # BPA delta: positive when user underperformed ADP (gain available), negative when already beating it
+    bpa_score_delta = round(-average_value)
+
+    if is_superflex:
+        if len(qb_picks) >= 2:
+            # User has adequate QB depth — surface a TE-targeting scenario instead
+            early_te = any(pick.overall_pick <= 72 for pick in te_picks)
+            positional_scenario = {
+                "name": "Target elite TE earlier",
+                "changed_picks": 0 if early_te else 1,
+                "score_delta": 0 if early_te else 2,
+                "recommendation": (
+                    "With QB handled, test locking in an elite TE before round 7 to secure "
+                    "positional scarcity before the tier break."
+                ),
+            }
+        else:
+            positional_scenario = {
+                "name": "Add a second QB",
+                "changed_picks": 1,
+                "score_delta": 4,
+                "recommendation": (
+                    "In superflex formats, a second quality QB provides a weekly starter advantage "
+                    "and a meaningful trade chip throughout the season."
+                ),
+            }
+    else:
+        if early_qb:
+            positional_scenario = {
+                "name": "Streaming QB approach",
+                "changed_picks": 0,
+                "score_delta": -1,
+                "recommendation": (
+                    "You secured QB early. Test the opposite in a future run — wait on QB "
+                    "and use early picks on RB/WR depth to compare roster construction."
+                ),
+            }
+        else:
+            positional_scenario = {
+                "name": "Prioritize QB earlier",
+                "changed_picks": 1,
+                "score_delta": 3,
+                "recommendation": "Test taking a top-12 QB before round 4 to lock in the position advantage.",
+            }
+
     return [
         {
             "name": "Best available by ADP",
             "changed_picks": min(len(user_picks), len(best_adp_misses)),
-            "score_delta": round(max(0, average_value) - average_value),
-            "recommendation": "Use this as the control strategy when comparing future mock runs.",
+            "score_delta": bpa_score_delta,
+            "recommendation": (
+                "You out-drafted ADP overall — use this as a control baseline to see if "
+                "strict ADP discipline loses value in future runs."
+                if average_value > 0
+                else "Use this as the control strategy when comparing future mock runs."
+            ),
         },
-        {
-            "name": "Prioritize QB earlier",
-            "changed_picks": 0 if early_qb else 1,
-            "score_delta": 3 if not early_qb else -1,
-            "recommendation": "In superflex formats, test one run where QB is addressed before round 4.",
-        },
+        positional_scenario,
         {
             "name": "Strict value hunting",
-            "changed_picks": len([item for item in feedback if _numeric(item.get("value_vs_adp")) < 0]),
+            "changed_picks": len([
+                item for item in feedback
+                if _numeric(item.get("value_vs_adp")) < 0 and not item.get("exclude_from_reach_analysis")
+            ]),
             "score_delta": max(1, round(abs(min(0, average_value)))),
             "recommendation": "Avoid reaches unless the player fills a scarce roster need.",
         },
@@ -1894,7 +2028,10 @@ def _future_advice(
     needs: list[dict[str, int | str]],
 ) -> list[dict[str, str]]:
     open_needs = [str(need["slot"]) for need in needs if _numeric(need.get("remaining")) > 0]
-    reaches = [item for item in feedback if _numeric(item.get("value_vs_adp")) < -8]
+    reaches = [
+        item for item in feedback
+        if _numeric(item.get("value_vs_adp")) < -8 and not item.get("exclude_from_reach_analysis")
+    ]
     advice = [
         {
             "label": "Compare strategies",
