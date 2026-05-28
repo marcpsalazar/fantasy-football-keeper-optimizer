@@ -21,6 +21,7 @@ class PlayerSummaryResult:
     risk_note: str
     roster_fit: str
     draft_recommendation: str  # "draft now" | "target next round" | "watchlist" | "avoid"
+    token_usage: dict[str, Any] | None = None
 
 
 def is_enabled(settings: Settings) -> bool:
@@ -57,7 +58,7 @@ def generate_player_summary(
             "draft_recommendation",
         ],
     }
-    data = _responses_json(
+    data, usage = _responses_json(
         settings=settings,
         name="player_summary",
         schema=schema,
@@ -89,6 +90,7 @@ def generate_player_summary(
         risk_note=str(data.get("risk_note") or "")[:200],
         roster_fit=str(data.get("roster_fit") or "")[:200],
         draft_recommendation=str(data.get("draft_recommendation") or "watchlist"),
+        token_usage=usage,
     )
 
 

@@ -710,6 +710,51 @@ export async function generatePlayerSummary(
 
 export type { PlayerSummary };
 
+export type AiUsageFeatureStat = {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+};
+
+export type AiUsageLog = {
+  id: string;
+  feature: string;
+  model: string;
+  status: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  latency_ms: number | null;
+  error_message: string | null;
+  created_at: string;
+};
+
+export type AiUsage = {
+  current_month: {
+    total_requests: number;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_tokens: number;
+    success_rate: number | null;
+    by_feature: Record<string, AiUsageFeatureStat>;
+  };
+  recent_logs: AiUsageLog[];
+  settings: {
+    mock_draft_ai_enabled: boolean;
+    keeper_explanation_ai_enabled: boolean;
+    scenario_narrative_ai_enabled: boolean;
+    player_summary_ai_enabled: boolean;
+    mock_draft_ai_max_ai_round: number;
+    ai_monthly_token_budget: number;
+    mock_draft_ai_model: string;
+  };
+};
+
+export async function getAiUsage(): Promise<AiUsage> {
+  return fetchJson<AiUsage>("/api/admin/ai/usage");
+}
+
 export async function loadScenarioSelections(leagueId: string): Promise<Record<string, string>> {
   const payload = await fetchTable(`/api/leagues/${leagueId}/scenario-selections`);
   return Object.fromEntries(

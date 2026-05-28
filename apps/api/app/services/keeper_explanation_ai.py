@@ -55,7 +55,7 @@ def generate_keeper_explanation(
             "decision",
         ],
     }
-    data = _responses_json(
+    data, usage = _responses_json(
         settings=settings,
         name="keeper_explanation",
         schema=schema,
@@ -77,6 +77,7 @@ def generate_keeper_explanation(
         risk_note=str(data.get("risk_note") or "")[:300],
         opportunity_cost=str(data.get("opportunity_cost") or "")[:300],
         decision=str(data.get("decision") or "toss-up"),
+        token_usage=usage,
     )
 
 

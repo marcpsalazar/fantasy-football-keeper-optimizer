@@ -213,8 +213,8 @@ The AI scope stays focused on preseason keeper optimization, draft prep, mock dr
 | 5 | AI pre-draft strategy coach | **Done** |
 | 6 | AI keeper recommendation explanations | **Done** |
 | 7 | AI scenario comparison narratives | **Done** |
-| 8 | AI player detail summaries | Not started |
-| 9 | AI-assisted CSV/data cleanup | Not started |
+| 8 | AI player detail summaries | **Done** |
+| 9 | AI-assisted CSV/data cleanup | Deferred |
 | 10 | Cost controls, caching, and observability | Partial (candidate limit, cache key exist; per-feature flags and token tracking not started) |
 | 11 | Admin controls for AI settings and refresh approval | Done (composite import); Not started (settings UI) |
 
@@ -423,21 +423,11 @@ Acceptance criteria:
 
 ## Phase 7: AI-Assisted CSV and Data Cleanup
 
-**Status: Not started.**
+**Status: Deferred — superseded by composite ADP pipeline.**
 
-Goal: reduce import friction without allowing AI to silently mutate data.
+The composite ADP build already handles the main normalization cases this phase targeted: position mapping (`PK→K`, `DEF→DST`), name dedup with suffix stripping (`Jr/Sr/II/III`), garbled name rejection, and duplicate player-team resolution. The "Update ADP" button replaced manual ADP CSV imports entirely. Remaining manual CSV imports (draft results, final rosters) are standard platform exports that don't benefit materially from AI cleanup.
 
-Use cases: player name normalization, team abbreviation normalization, DST name normalization, duplicate detection, position correction suggestions, header mapping for nonstandard CSVs.
-
-Workflow:
-
-1. User previews CSV.
-2. Existing deterministic parser reports warnings/errors.
-3. User clicks `Suggest Fixes`.
-4. AI returns proposed corrections with reasons.
-5. Admin reviews and applies fixes.
-
-Guardrails: AI cannot import directly; all changes require preview; original CSV retained; every change has a stated reason.
+Revisit if a significant number of users report import failures from non-standard platforms.
 
 ---
 

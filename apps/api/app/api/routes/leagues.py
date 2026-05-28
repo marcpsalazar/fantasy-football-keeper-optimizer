@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from datetime import UTC, date, datetime
 from io import StringIO
+import time
 from typing import Any, Literal
 import uuid
 
@@ -74,6 +75,7 @@ from app.services.scenario_narrative_ai import (
 from app.services import player_summary_ai
 from app.services.player_summary_ai import ENTITY_TYPE as PLAYER_SUMMARY_ENTITY_TYPE
 from app.services.mock_draft_ai import MockDraftAIError
+from app.services.ai_log import is_over_monthly_budget, monthly_usage_summary, recent_logs, write_ai_log
 
 router = APIRouter(
     prefix="/api",
@@ -844,6 +846,12 @@ def generate_scenario_narrative(
             detail="Scenario narrative AI is not enabled. Set SCENARIO_NARRATIVE_AI_ENABLED=true.",
         )
 
+    if is_over_monthly_budget(session, app_settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Monthly AI token budget exceeded.",
+        )
+
     context = build_narrative_context(
         scoring_format=league.scoring_format if league else "ppr",
         draft_type=league.draft_type if league else "snake",
@@ -852,10 +860,22 @@ def generate_scenario_narrative(
         user_team_context=user_team_context,
     )
     try:
+        _t0 = time.monotonic()
         result = scenario_narrative_ai.generate_scenario_narrative(
             settings=app_settings, context=context
         )
+        _latency = int((time.monotonic() - _t0) * 1000)
     except MockDraftAIError as exc:
+        write_ai_log(
+            session,
+            feature="scenario_narrative",
+            league_id=league_id,
+            user_id=_user_id(user),
+            model=app_settings.scenario_narrative_model,
+            status="failed",
+            error_message=str(exc)[:500],
+        )
+        session.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"AI narrative failed: {exc}",
@@ -876,6 +896,16 @@ def generate_scenario_narrative(
         content=content,
     )
     session.add(record)
+    write_ai_log(
+        session,
+        feature="scenario_narrative",
+        league_id=league_id,
+        user_id=_user_id(user),
+        model=app_settings.scenario_narrative_model,
+        status="success",
+        token_usage=result.token_usage,
+        latency_ms=_latency,
+    )
     session.commit()
     return {"narrative": content}
 
@@ -1091,6 +1121,12 @@ def generate_keeper_explanation(
             detail="Keeper explanation AI is not enabled. Set KEEPER_EXPLANATION_AI_ENABLED=true.",
         )
 
+    if is_over_monthly_budget(session, settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Monthly AI token budget exceeded.",
+        )
+
     context = build_explanation_context(
         player_name=player.full_name if player else "Unknown",
         position=player.position if player else "?",
@@ -1109,8 +1145,20 @@ def generate_keeper_explanation(
         team_count=len(team_count),
     )
     try:
+        _t0 = time.monotonic()
         result = keeper_explanation_ai.generate_keeper_explanation(settings=settings, context=context)
+        _latency = int((time.monotonic() - _t0) * 1000)
     except MockDraftAIError as exc:
+        write_ai_log(
+            session,
+            feature="keeper_explanation",
+            league_id=recommendation.league_id,
+            user_id=recommendation.user_id,
+            model=settings.keeper_explanation_model,
+            status="failed",
+            error_message=str(exc)[:500],
+        )
+        session.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"AI explanation failed: {exc}",
@@ -1133,6 +1181,16 @@ def generate_keeper_explanation(
         content=content,
     )
     session.add(record)
+    write_ai_log(
+        session,
+        feature="keeper_explanation",
+        league_id=recommendation.league_id,
+        user_id=recommendation.user_id,
+        model=settings.keeper_explanation_model,
+        status="success",
+        token_usage=result.token_usage,
+        latency_ms=_latency,
+    )
     session.commit()
     return {"recommendation_id": str(recommendation_id), "ai_explanation": content}
 
@@ -1206,6 +1264,12 @@ def generate_player_summary(
             detail="Player summary AI is not enabled. Set PLAYER_SUMMARY_AI_ENABLED=true.",
         )
 
+    if is_over_monthly_budget(session, settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Monthly AI token budget exceeded.",
+        )
+
     context = player_summary_ai.build_summary_context(
         player_name=player.full_name if player else "Unknown",
         position=player.position if player else "?",
@@ -1223,8 +1287,20 @@ def generate_player_summary(
         board_size=len(snapshot_size),
     )
     try:
+        _t0 = time.monotonic()
         result = player_summary_ai.generate_player_summary(settings=settings, context=context)
+        _latency = int((time.monotonic() - _t0) * 1000)
     except MockDraftAIError as exc:
+        write_ai_log(
+            session,
+            feature="player_summary",
+            league_id=league_id,
+            user_id=user.id if user else None,
+            model=settings.player_summary_model,
+            status="failed",
+            error_message=str(exc)[:500],
+        )
+        session.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"AI player summary failed: {exc}",
@@ -1248,6 +1324,16 @@ def generate_player_summary(
         content=content,
     )
     session.add(record)
+    write_ai_log(
+        session,
+        feature="player_summary",
+        league_id=league_id,
+        user_id=user.id if user else None,
+        model=settings.player_summary_model,
+        status="success",
+        token_usage=result.token_usage,
+        latency_ms=_latency,
+    )
     session.commit()
     return {"player_id": str(player_id), "ai_summary": content}
 
@@ -1748,6 +1834,27 @@ def _rows_to_csv_text(rows: list[dict[str, Any]]) -> str:
     if rows:
         writer.writerows(rows)
     return output.getvalue()
+
+
+@router.get("/admin/ai/usage")
+def get_ai_usage(
+    _: User | None = Depends(require_admin),
+    session: Session = Depends(get_session),
+    settings=Depends(get_settings),
+) -> dict[str, Any]:
+    return {
+        "current_month": monthly_usage_summary(session),
+        "recent_logs": recent_logs(session, limit=50),
+        "settings": {
+            "mock_draft_ai_enabled": settings.mock_draft_ai_enabled,
+            "keeper_explanation_ai_enabled": settings.keeper_explanation_ai_enabled,
+            "scenario_narrative_ai_enabled": settings.scenario_narrative_ai_enabled,
+            "player_summary_ai_enabled": settings.player_summary_ai_enabled,
+            "mock_draft_ai_max_ai_round": settings.mock_draft_ai_max_ai_round,
+            "ai_monthly_token_budget": settings.ai_monthly_token_budget,
+            "mock_draft_ai_model": settings.mock_draft_ai_model,
+        },
+    }
 
 
 def _require_league(session: Session, league_id: uuid.UUID) -> League:
