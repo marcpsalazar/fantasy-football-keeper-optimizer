@@ -345,6 +345,7 @@ def _build_candidate(
     )
     composite_adp, composite_method, source_count, adp_spread, disagreement_flag = _compose_adp(
         scoring_format=scoring_format,
+        position=canonical_pos,
         draftsharks_adp=ds_adp_for_composite,
         ffc_2qb_adp=ffc_2qb_row.adp_pick if ffc_2qb_row else None,
         ffc_ppr_adp=ffc_ppr_row.adp_pick if ffc_ppr_row else None,
@@ -389,10 +390,16 @@ def _build_candidate(
     )
 
 
-def _source_weights(scoring_format: str) -> dict[str, float]:
+def _source_weights(scoring_format: str, position: str = "") -> dict[str, float]:
     fmt = scoring_format.strip().lower()
     if fmt in ("superflex", "2qb"):
-        return {"draftsharks": 1.3, "ffc_2qb": 0.85, "ffc_ppr": 0.35, "existing": 0.15}
+        if position.upper() == "QB":
+            # QBs: 2QB format is highly relevant — keep 2QB as the primary FFC source
+            return {"draftsharks": 1.3, "ffc_2qb": 0.85, "ffc_ppr": 0.35, "existing": 0.15}
+        else:
+            # Skill positions: FFC 2QB communities over-draft QBs, pushing WR/RB/TE too late.
+            # PPR is a more reliable proxy for non-QB skill position values in superflex.
+            return {"draftsharks": 1.3, "ffc_2qb": 0.35, "ffc_ppr": 0.85, "existing": 0.15}
     if fmt == "ppr":
         return {"draftsharks": 0.45, "ffc_2qb": 0.35, "ffc_ppr": 1.0, "existing": 0.15}
     # half-ppr, standard
@@ -413,12 +420,13 @@ def _weighted_median(values_weights: list[tuple[float, float]]) -> float:
 def _compose_adp(
     *,
     scoring_format: str,
+    position: str = "",
     draftsharks_adp: float | None,
     ffc_2qb_adp: float | None,
     ffc_ppr_adp: float | None,
     existing_adp: float | None,
 ) -> tuple[float | None, str, int, float | None, bool]:
-    weights = _source_weights(scoring_format)
+    weights = _source_weights(scoring_format, position)
 
     real_sources: list[tuple[float, float, str]] = []
     if draftsharks_adp is not None:
