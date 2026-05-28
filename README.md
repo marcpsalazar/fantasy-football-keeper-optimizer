@@ -294,11 +294,36 @@ railway logs --service api --environment production --lines 120
 railway logs --service '@keeper-optimizer/web' --environment production --lines 120
 ```
 
-Deploy from the repository root:
+Deploy the API (uses `apps/api/Dockerfile`, so `--path-as-root` scopes the upload to avoid the
+monorepo root `package.json` triggering Railway's Node.js builder):
 
 ```bash
-railway up --service api --environment production --detach
-railway up --service '@keeper-optimizer/web' --environment production --detach
+railway up ./apps/api --path-as-root --service api
+```
+
+Deploy the web frontend. **Two rules before deploying:**
+
+1. **Commit first.** Railway's diff engine is git-aware and silently skips uncommitted file
+   changes, so the old cached build image is reused if changes are not committed before deploying.
+2. **Bump `apps/web/package.json` version for source-only changes.** Railway's build cache is
+   keyed on `package.json` content. If only `.tsx`/`.ts` source files changed (no dependency
+   changes), bump the patch version (e.g. `0.1.2` → `0.1.3`) so Railway produces a fresh image
+   instead of reusing the last cached one.
+
+```bash
+# bump apps/web/package.json version if only source files changed
+git add apps/web/...
+git commit -m "your message"
+railway up --service "@keeper-optimizer/web"
+```
+
+The web service is deployed from the monorepo root (no `--path-as-root`) so that Railway picks up
+the workspace `package.json` and runs `npm run build --workspace=@keeper-optimizer/web`.
+
+To inspect build logs (separate from runtime logs):
+
+```bash
+railway logs --service "@keeper-optimizer/web" --build
 ```
 
 Add the custom domain from the Railway dashboard if the CLI domain command returns an authorization
