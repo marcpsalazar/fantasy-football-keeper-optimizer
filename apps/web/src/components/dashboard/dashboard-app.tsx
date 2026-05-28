@@ -72,8 +72,10 @@ import {
   endMockDraft,
   exportUrl,
   generateKeeperExplanation,
+  generatePlayerSummary,
   generateScenarioNarrative,
   generateMockDraftStrategyPlan,
+  getPlayerSummary,
   hydrateTeams,
   importCompositeAdpSnapshot,
   importCsv,
@@ -119,6 +121,7 @@ import {
   type MockDraftSession,
   type NewsHeadline,
   type OptimizerSettingsForm,
+  type PlayerSummary,
   type ScenarioNarrative,
   type UserForm,
   type WorkspaceData,
@@ -4999,6 +5002,8 @@ function MockDraftPage() {
               <MockDraftPlayerDialog
                 currentPick={activeSession.currentPick}
                 disabled={isBusy || isLoading || !isUserPickSlot}
+                leagueId={activeSession.leagueId}
+                snapshotId={activeSession.adpSnapshotId}
                 onClose={() => setSelectedPlayer(null)}
                 onDraft={() => {
                   const playerId = selectedPlayer.playerId;
@@ -5462,19 +5467,61 @@ function playToneSequence(
   }
 }
 
+const DRAFT_REC_VARIANT: Record<
+  PlayerSummary["draft_recommendation"],
+  "success" | "info" | "warning" | "danger"
+> = {
+  "draft now": "success",
+  "target next round": "info",
+  watchlist: "warning",
+  avoid: "danger",
+};
+
 function MockDraftPlayerDialog({
   currentPick,
   disabled,
+  leagueId,
+  snapshotId,
   onClose,
   onDraft,
   player,
 }: {
   currentPick: number | null;
   disabled: boolean;
+  leagueId: string;
+  snapshotId: string | null;
   onClose: () => void;
   onDraft: () => void;
   player: MockDraftAvailablePlayer;
 }) {
+  const [summary, setSummary] = React.useState<PlayerSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!snapshotId) return;
+    let cancelled = false;
+    setSummary(null);
+    setSummaryLoading(true);
+    void (async () => {
+      try {
+        const cached = await getPlayerSummary(leagueId, player.playerId, snapshotId);
+        if (cancelled) return;
+        if (cached) {
+          setSummary(cached);
+          setSummaryLoading(false);
+          return;
+        }
+        const generated = await generatePlayerSummary(leagueId, player.playerId, snapshotId);
+        if (!cancelled) setSummary(generated);
+      } catch {
+        // AI unavailable — summary stays null, no error shown
+      } finally {
+        if (!cancelled) setSummaryLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [leagueId, player.playerId, snapshotId]);
+
   const value =
     currentPick && player.adpPick !== null
       ? player.adpPick - currentPick
@@ -5494,7 +5541,7 @@ function MockDraftPlayerDialog({
       className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/50 p-4"
       role="dialog"
     >
-      <div className="w-full max-w-lg rounded-md bg-white shadow-xl">
+      <div className="w-full max-w-lg overflow-y-auto rounded-md bg-white shadow-xl" style={{ maxHeight: "90vh" }}>
         <div className="flex items-start justify-between gap-3 border-b border-zinc-200 p-4">
           <div className="min-w-0">
             <h3 className="truncate text-lg font-semibold text-zinc-950">{player.playerName}</h3>
@@ -5502,6 +5549,11 @@ function MockDraftPlayerDialog({
               <PositionBadge position={player.position} />
               <Badge variant="info">{player.nflTeam || "FA"}</Badge>
               <Badge variant={value !== null && value >= 0 ? "success" : "warning"}>{valueLabel}</Badge>
+              {summary && (
+                <Badge variant={DRAFT_REC_VARIANT[summary.draft_recommendation]}>
+                  {summary.draft_recommendation}
+                </Badge>
+              )}
             </div>
           </div>
           <Button onClick={onClose} size="sm" variant="ghost">
@@ -5533,20 +5585,51 @@ function MockDraftPlayerDialog({
           <MetricStrip label="Position" value={player.position || "-"} />
         </div>
 
-        <div className="border-t border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-700">
-          <p>
-            {player.projection === null
-              ? "Projection data is unavailable for this player."
-              : `${player.projection.toFixed(1)} projected fantasy points are available from the active ADP snapshot.`}
-          </p>
-          <p className="mt-2">
-            {value === null
-              ? "No current-pick value can be calculated without ADP and pick context."
-              : value >= 0
-                ? `This player is ${formatter.format(value)} picks past market cost at the current pick.`
-                : `This player is ${formatter.format(Math.abs(value))} picks ahead of market cost at the current pick.`}
-          </p>
-        </div>
+        {summaryLoading ? (
+          <div className="border-t border-zinc-200 px-4 pb-3 pt-3">
+            <p className="flex items-center gap-2 text-sm text-zinc-500">
+              <Bot className="size-4 shrink-0 animate-pulse" aria-hidden="true" />
+              Generating AI analysis…
+            </p>
+          </div>
+        ) : summary ? (
+          <div className="border-t border-zinc-200 space-y-3 p-4">
+            <p className="text-sm font-semibold text-zinc-700">{summary.quick_take}</p>
+            <div className="grid gap-2 text-sm text-zinc-600 sm:grid-cols-2">
+              <div>
+                <span className="font-medium text-zinc-800">Fantasy context: </span>
+                {summary.fantasy_points_context}
+              </div>
+              <div>
+                <span className="font-medium text-zinc-800">Value: </span>
+                {summary.value_note}
+              </div>
+              <div>
+                <span className="font-medium text-zinc-800">Risk: </span>
+                {summary.risk_note}
+              </div>
+              <div>
+                <span className="font-medium text-zinc-800">Roster fit: </span>
+                {summary.roster_fit}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="border-t border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-700">
+            <p>
+              {player.projection === null
+                ? "Projection data is unavailable for this player."
+                : `${player.projection.toFixed(1)} projected fantasy points are available from the active ADP snapshot.`}
+            </p>
+            <p className="mt-2">
+              {value === null
+                ? "No current-pick value can be calculated without ADP and pick context."
+                : value >= 0
+                  ? `This player is ${formatter.format(value)} picks past market cost at the current pick.`
+                  : `This player is ${formatter.format(Math.abs(value))} picks ahead of market cost at the current pick.`}
+            </p>
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 p-4">
           <Button onClick={onClose} variant="outline">

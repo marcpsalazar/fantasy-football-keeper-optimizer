@@ -71,6 +71,8 @@ from app.services.scenario_narrative_ai import (
     build_narrative_context,
     narrative_input_hash,
 )
+from app.services import player_summary_ai
+from app.services.player_summary_ai import ENTITY_TYPE as PLAYER_SUMMARY_ENTITY_TYPE
 from app.services.mock_draft_ai import MockDraftAIError
 
 router = APIRouter(
@@ -1133,6 +1135,121 @@ def generate_keeper_explanation(
     session.add(record)
     session.commit()
     return {"recommendation_id": str(recommendation_id), "ai_explanation": content}
+
+
+@router.get("/leagues/{league_id}/adp/players/{player_id}/summary")
+def get_player_summary(
+    league_id: uuid.UUID,
+    player_id: uuid.UUID,
+    snapshot_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    league = _require_league(session, league_id)
+    rec_hash = player_summary_ai.summary_input_hash(
+        player_id=player_id,
+        adp_snapshot_id=snapshot_id,
+        scoring_format=league.scoring_format,
+        draft_type=league.draft_type,
+    )
+    existing = session.exec(
+        select(AIExplanation).where(
+            AIExplanation.entity_type == PLAYER_SUMMARY_ENTITY_TYPE,
+            AIExplanation.input_hash == rec_hash,
+        )
+    ).first()
+    if existing is None:
+        return {"player_id": str(player_id), "ai_summary": None}
+    return {"player_id": str(player_id), "ai_summary": existing.content}
+
+
+@router.post("/leagues/{league_id}/adp/players/{player_id}/summary")
+def generate_player_summary(
+    league_id: uuid.UUID,
+    player_id: uuid.UUID,
+    snapshot_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+    settings=Depends(get_settings),
+) -> dict[str, Any]:
+    league = _require_league(session, league_id)
+    player = session.get(Player, player_id)
+    teams = session.exec(select(Team).where(Team.league_id == league_id)).all()
+    adp_entry = session.exec(
+        select(ADPEntry).where(
+            ADPEntry.snapshot_id == snapshot_id,
+            ADPEntry.player_id == player_id,
+        )
+    ).first()
+    snapshot_size = session.exec(
+        select(ADPEntry).where(ADPEntry.snapshot_id == snapshot_id)
+    ).all()
+
+    rec_hash = player_summary_ai.summary_input_hash(
+        player_id=player_id,
+        adp_snapshot_id=snapshot_id,
+        scoring_format=league.scoring_format,
+        draft_type=league.draft_type,
+    )
+    existing = session.exec(
+        select(AIExplanation).where(
+            AIExplanation.entity_type == PLAYER_SUMMARY_ENTITY_TYPE,
+            AIExplanation.input_hash == rec_hash,
+        )
+    ).first()
+    if existing is not None:
+        return {"player_id": str(player_id), "ai_summary": existing.content}
+
+    if not player_summary_ai.is_enabled(settings):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Player summary AI is not enabled. Set PLAYER_SUMMARY_AI_ENABLED=true.",
+        )
+
+    context = player_summary_ai.build_summary_context(
+        player_name=player.full_name if player else "Unknown",
+        position=player.position if player else "?",
+        nfl_team=player.nfl_team if player else None,
+        adp_pick=adp_entry.adp_pick if adp_entry else 999.0,
+        adp_round=adp_entry.adp_round if adp_entry else None,
+        consensus_projection=adp_entry.consensus_projection if adp_entry else None,
+        floor_projection=adp_entry.floor_projection if adp_entry else None,
+        ceiling_projection=adp_entry.ceiling_projection if adp_entry else None,
+        risk=adp_entry.risk if adp_entry else None,
+        sos=adp_entry.sos if adp_entry else None,
+        scoring_format=league.scoring_format,
+        draft_type=league.draft_type,
+        team_count=len(teams),
+        board_size=len(snapshot_size),
+    )
+    try:
+        result = player_summary_ai.generate_player_summary(settings=settings, context=context)
+    except MockDraftAIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI player summary failed: {exc}",
+        ) from exc
+
+    content = {
+        "quick_take": result.quick_take,
+        "fantasy_points_context": result.fantasy_points_context,
+        "value_note": result.value_note,
+        "risk_note": result.risk_note,
+        "roster_fit": result.roster_fit,
+        "draft_recommendation": result.draft_recommendation,
+    }
+    record = AIExplanation(
+        league_id=league_id,
+        user_id=user.id if user else None,
+        entity_type=PLAYER_SUMMARY_ENTITY_TYPE,
+        entity_id=player_id,
+        input_hash=rec_hash,
+        model=settings.player_summary_model,
+        content=content,
+    )
+    session.add(record)
+    session.commit()
+    return {"player_id": str(player_id), "ai_summary": content}
 
 
 @router.get("/leagues/{league_id}/exports/keeper-recommendations.csv")
