@@ -6507,21 +6507,14 @@ function formatKeeperCost(recommendation: KeeperRecommendation, teamCount?: numb
 }
 
 function formatRecommendationAdp(recommendation: KeeperRecommendation, teamCount?: number): string {
-  const draftSharksAdp = recommendation.adpSourceNote?.match(/DraftSharks Superflex ADP ([0-9]+(?:\.[0-9]+)?)/)?.[1];
-  const adpValue = draftSharksAdp ? parseFloat(draftSharksAdp) : recommendation.adpPick;
-
-  if (!adpValue) {
+  const adpPick = recommendation.adpPick;
+  if (!adpPick) {
     return "";
   }
 
-  const displayPick = draftSharksAdp ?? String(adpValue);
-
-  if (teamCount && teamCount > 0) {
-    const round = Math.ceil(adpValue / teamCount);
-    return `${displayPick} (R${round})`;
-  }
-
-  return displayPick;
+  const derivedRound =
+    teamCount && teamCount > 0 ? Math.ceil(adpPick / teamCount) : recommendation.adpRound;
+  return derivedRound ? `${adpPick} (R${derivedRound})` : String(adpPick);
 }
 
 function ManualOverrideControls({
