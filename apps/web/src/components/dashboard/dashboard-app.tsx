@@ -1201,10 +1201,8 @@ export function DashboardApp() {
                 <Trophy className="size-5" aria-hidden="true" />
               </div>
               <div>
-                <p className="text-sm font-semibold leading-5">Keeper Optimizer</p>
-                <p className="text-xs text-zinc-500">
-                  {workspaceData.league?.name ?? "League"} {workspaceData.league?.seasonYear ?? ""}
-                </p>
+                <p className="text-sm font-semibold leading-5">Mayhem</p>
+                <p className="text-xs text-zinc-500">Fantasy Football Tools</p>
               </div>
             </div>
 

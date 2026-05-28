@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Keeper Optimizer Dashboard",
-  description: "Fantasy football keeper optimizer dashboard",
+  title: "Mayhem | Fantasy Football Tools",
+  description: "Fantasy football tools",
   icons: {
     icon: "/icon.svg",
   },
