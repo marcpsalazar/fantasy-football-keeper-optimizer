@@ -267,42 +267,50 @@ const screenGuides: ScreenGuide[] = [
   {
     title: "Optimizer Settings",
     icon: SlidersHorizontal,
-    bestFor: "Tuning the model to match league strategy.",
-    howToRead: "Keeper limits, thresholds, ADP cap, position weights, and bonuses decide who qualifies and how candidates are ranked.",
-    watchFor: "Save Settings persists values and reruns recommendations. Very high thresholds can produce fewer keepers.",
+    bestFor: "Tuning the model to match your league's rules and strategy preferences.",
+    howToRead: "Settings are grouped into three areas. Keeper Limits (max per team, max per position, max QBs) set hard caps on how many keepers the optimizer can select. Eligibility thresholds (minimum keeper value, minimum keeper score, latest ADP pick) filter out weak or fringe candidates — raise them for stricter recommendations, lower them to allow more borderline options. Position weights control how much keeper value counts at each position, which matters most in superflex formats where QB weight and the QB scarcity toggle can shift the rankings significantly.",
+    watchFor: "Save Settings reruns the optimizer immediately — you do not need to click Run Optimizer separately afterward. The new recommendations then flow into Scenario Comparison, Draft Impact, Team Outlooks, and the keeper context loaded into any new Mock Draft session.",
     view: "settings",
   },
   {
     title: "Keeper Recommendations",
     icon: Trophy,
-    bestFor: "The primary decision screen.",
-    howToRead: "Recommended means selected by the optimizer. Eligible means good enough but not selected because of limits. Excluded means the player failed a threshold or was manually excluded.",
-    watchFor: "Use manual overrides sparingly. Force Keep and Exclude are best for league knowledge the model cannot know.",
+    bestFor: "The primary decision screen for finalizing keeper selections.",
+    howToRead: "Recommended means selected by the optimizer within the current limits. Eligible means good enough to keep but not selected because another player ranked higher or a team or position limit was already reached. Excluded means the player failed a threshold, was manually excluded, or did not appear on a final roster.",
+    watchFor: "Use manual overrides sparingly — Force Keep and Exclude are best for context the model cannot know, such as a player who has since retired or been traded. Changes here do not require a Save Settings click, but the override takes effect on the next Run Optimizer or the next time you load a Mock Draft session.",
     view: "recommendations",
   },
   {
     title: "Scenario Comparison",
     icon: GitCompare,
-    bestFor: "Seeing how strategy changes the keeper list.",
-    howToRead: "Each preset shows selected keepers, forfeited picks, total score, and notes by team. The Outlook Scenario selector chooses the active strategy for that team.",
-    watchFor: "Run All Presets after settings or input changes. Scenario selections change Team Outlook and Draft Impact.",
+    bestFor: "Seeing how different strategies change the keeper list without permanently changing settings.",
+    howToRead: "Each preset shows selected keepers, forfeited picks, total score, and notes by team. The Outlook Scenario selector assigns an active strategy per team so that Team Outlooks and Draft Impact reflect your chosen approach for each owner.",
+    watchFor: "Run All Presets after any settings or source data change. Scenario selections feed Team Outlooks and Draft Impact, but they do not change the active recommendations used by the Mock Draft.",
     view: "scenarios",
   },
   {
     title: "Team Outlooks",
     icon: ShieldCheck,
-    bestFor: "A team-by-team summary for discussion.",
-    howToRead: "Each card summarizes stance, recommended keepers, lost picks, draft capital, and risk from the active keeper plan.",
-    watchFor: "Outlooks are summaries, not separate rankings. Export a PDF when the team plan is ready to share.",
+    bestFor: "A team-by-team summary for commissioner reports and owner discussions.",
+    howToRead: "Each card summarizes stance, recommended keepers, lost picks, draft capital, and risk from the active keeper plan. The outlook reflects the scenario assigned to that team in Scenario Comparison.",
+    watchFor: "Outlooks are summaries driven by the active recommendations, not separate rankings. Export a PDF when the team plan is ready to share with owners.",
     view: "outlooks",
   },
   {
     title: "Draft Impact",
     icon: ClipboardList,
-    bestFor: "Understanding the draft board after keeper picks are removed.",
-    howToRead: "Forfeited picks are spent on keepers. Open picks remain available in the projected draft board.",
-    watchFor: "Draft Impact is downstream of recommendations and scenario selections. Rerun the right calculation before using it for planning.",
+    bestFor: "Understanding which picks are open after keeper costs are removed from the board.",
+    howToRead: "Forfeited picks are the rounds spent on keepers. Open picks are the positions that remain available in the projected snake draft order.",
+    watchFor: "Draft Impact is downstream of recommendations and scenario selections. Rerun the optimizer or reassign scenarios before using it for planning.",
     view: "draft-impact",
+  },
+  {
+    title: "Mock Draft",
+    icon: Bot,
+    bestFor: "Practicing your draft with keepers already locked in, AI bots filling other teams, and a live strategy coach guiding your picks.",
+    howToRead: "Your team's currently recommended keepers are already accounted for before the draft starts — they do not appear in the available player pool and their picks are forfeited on the board. All other teams are controlled by AI bots. Each bot has a personality (Balanced, Aggressive, Value Hunter, etc.) that shapes its drafting style and a difficulty level (Easy, Medium, Hard) that controls how optimally it executes that style. The Strategy Coach generates an AI plan before the draft starts, showing position priorities, specific player targets, and per-round guidance that updates as picks are made.",
+    watchFor: "Run the optimizer and confirm your keeper recommendations before starting a Mock Draft. Any keeper changes made in Recommendations or via Settings after a session was created will only appear in new sessions — already-created sessions retain the keeper context they were built with. If you want to test how a different keeper strategy affects your draft, update settings, save them, then create a new Mock Draft session.",
+    view: "mock-draft",
   },
 ];
 
@@ -313,28 +321,28 @@ const workflowSteps: WorkflowStep[] = [
     view: "dashboard",
   },
   {
-    title: "Tune model behavior",
-    text: "Use Optimizer Settings when league rules or strategy should change the calculation, such as keeper limits, QB caps, thresholds, ADP cap, position weights, or bonus toggles.",
+    title: "Tune optimizer settings",
+    text: "Go to Optimizer Settings when league rules or strategy should change the calculation — keeper limits per team or position, QB caps, eligibility thresholds, ADP cap, position weights, or bonus toggles. Click Save Settings when done: it reruns the optimizer automatically, so no separate Run Optimizer click is needed.",
     view: "settings",
   },
   {
-    title: "Run the calculation",
-    text: "Use Run Optimizer after imports, team edits, settings changes, ADP updates, or manual overrides. This recomputes keeper recommendations from live inputs.",
-    view: "recommendations",
-  },
-  {
-    title: "Review and override",
-    text: "Read Keeper Recommendations first. Use Auto for model control, Force Keep for outside context the model cannot know, and Exclude for players you do not want selected.",
+    title: "Review and override recommendations",
+    text: "Read Keeper Recommendations first. Use Auto for model control, Force Keep for outside context the model cannot know, and Exclude for players you do not want selected. Use Run Optimizer to recompute after imports, team edits, ADP updates, or manual overrides.",
     view: "recommendations",
   },
   {
     title: "Compare strategies",
-    text: "Use Scenario Comparison to compare Pure Value, Balanced, Superflex Heavy, Win Now, and Rebuild. Pick an Outlook Scenario per team when the report should reflect a specific strategy.",
+    text: "Use Scenario Comparison to compare Pure Value, Balanced, Superflex Heavy, Win Now, and Rebuild across all teams. Assign an Outlook Scenario per team when reports should reflect a specific strategy.",
     view: "scenarios",
   },
   {
+    title: "Practice with Mock Draft",
+    text: "Open Mock Draft after your keeper recommendations are set. Your recommended keepers are already removed from the available player pool and their picks are forfeited on the draft board. Choose bot personalities and difficulty, then use the AI Strategy Coach's plan to guide your picks. If you change keeper settings before the draft, save and rerun the optimizer first so the new session reflects the updated keeper list.",
+    view: "mock-draft",
+  },
+  {
     title: "Share the result",
-    text: "Use Draft Impact and Team Outlook after recommendations are set, then export Excel, CSV, or PDF reports from the recommendation and outlook screens.",
+    text: "Use Draft Impact and Team Outlook after recommendations are finalized, then export Excel, CSV, or PDF reports from the recommendation and outlook screens.",
     view: "outlooks",
   },
 ];
@@ -343,17 +351,17 @@ const controlGuides: ControlGuide[] = [
   {
     title: "Optimizer Settings",
     icon: SlidersHorizontal,
-    text: "Changes the model input. Use it before calculation when you want stricter recommendations, more speculative candidates, different position emphasis, or different keeper caps.",
+    text: "Opens the settings panel where you change keeper limits, eligibility thresholds, position weights, and bonus toggles. Use it when league rules or strategy should change who the model recommends.",
   },
   {
     title: "Save Settings",
     icon: Save,
-    text: "Persists the visible settings, reruns the optimizer, clears selected scenario overrides, and refreshes recommendation-driven screens.",
+    text: "Persists the visible settings and immediately reruns the optimizer in one step — you do not need to click Run Optimizer separately. Also clears selected scenario overrides and refreshes all recommendation-driven screens.",
   },
   {
     title: "Run Optimizer",
     icon: Play,
-    text: "Saves the visible settings, recomputes keeper recommendations from teams, draft results, final rosters, ADP, overrides, and settings, then reloads the workspace.",
+    text: "Recomputes keeper recommendations from live inputs: teams, draft results, final rosters, ADP, manual overrides, and current settings. Use this after source data imports, team edits, ADP updates, or manual override changes.",
   },
   {
     title: "Refresh",
@@ -363,12 +371,12 @@ const controlGuides: ControlGuide[] = [
   {
     title: "Preview and Import",
     icon: Upload,
-    text: "Preview validates pasted CSV before writes. Import commits valid draft, roster, or ADP rows. Run Optimizer after imports when recommendations should change.",
+    text: "Preview validates pasted CSV before writes. Import commits valid draft, roster, or ADP rows. Always run the optimizer after an import when you want recommendations to reflect the new data.",
   },
   {
     title: "Run All Presets",
     icon: GitCompare,
-    text: "Recomputes scenario presets for side-by-side strategy comparison. Use it after settings or source data change.",
+    text: "Recomputes all five scenario presets for side-by-side strategy comparison. Use it after settings or source data change. Does not affect the active recommendations used by Mock Draft.",
   },
 ];
 
@@ -440,6 +448,22 @@ const glossaryTerms: GlossaryTerm[] = [
   {
     term: "Draft Capital",
     meaning: "A plain-language summary of remaining pick strength. In the dashboard, it counts remaining open top-100 picks after keeper costs.",
+  },
+  {
+    term: "Bot Personality",
+    meaning: "The drafting style assigned to an AI-controlled team in Mock Draft. Balanced is the default. Aggressive reaches for upside, Conservative plays it safe, QB Lover stacks quarterbacks, RB/WR Heavy prioritizes that position, Value Hunter targets ADP bargains, Need Based fills roster gaps, and Chaos makes unpredictable picks.",
+  },
+  {
+    term: "Bot Difficulty",
+    meaning: "How optimally an AI bot executes its personality in Mock Draft. Easy bots make more mistakes and miss value. Hard bots draft close to their style ceiling and are harder to exploit.",
+  },
+  {
+    term: "Strategy Coach",
+    meaning: "An AI-generated draft plan in Mock Draft that shows position priorities, specific player targets, and per-round guidance. It generates when a session is created and can be regenerated while the draft is in setup or paused. Live guidance updates after each pick to reflect what is still available on the board.",
+  },
+  {
+    term: "Pick Timer",
+    meaning: "An optional countdown per pick in Mock Draft, set to 30, 60, 90, or 120 seconds. When the timer expires on your turn, the pick slot stays open but a warning is shown. Disable it by selecting No limit for a relaxed practice session.",
   },
 ];
 
@@ -3805,28 +3829,21 @@ function OptimizerSettingsPage({
         <CardHeader>
           <CardTitle className="text-base">How to Use These Settings</CardTitle>
           <CardDescription>
-            These controls change how strict or aggressive the optimizer becomes.
+            What each group does, when to change it, and how to apply changes.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm leading-6 text-zinc-700">
           <p>
-            Start with the default settings if you want the safest recommendation set. The default
-            model favors positive keeper value and avoids recommending players who do not clearly
-            beat their expected draft cost.
+            <strong className="text-zinc-950">Keeper Limits</strong> enforce hard caps that match your league rules. Set Maximum Keepers Per Team to the number your rules allow. Use Maximum Keepers Per Position if your league prevents stacking a single position. Use Maximum QB Keepers to prevent the optimizer from filling slots with quarterbacks in superflex leagues where QBs score highly.
           </p>
           <p>
-            Lower the minimum keeper value or minimum keeper score if you want to explore more
-            aggressive builds, including borderline players. Raise them if you want only the
-            clearest keeper values.
+            <strong className="text-zinc-950">Eligibility thresholds</strong> control who gets considered. Minimum Keeper Value Threshold is the pick-savings edge a player must have to qualify — lower it (toward zero or negative) to allow borderline or speculative picks, raise it to keep only the most cost-efficient options. Minimum Keeper Score is a combined quality floor after bonuses and penalties are applied. Latest ADP Pick removes late-round fringe players from the candidate pool entirely.
           </p>
           <p>
-            Position weights decide how much keeper value matters at each position. In superflex,
-            QB weight and the QB scarcity toggle will usually have the biggest impact on scenario
-            differences.
+            <strong className="text-zinc-950">Position Weights</strong> multiply how much keeper value counts at each position. The default weights are roughly equal. Raise QB Weight in superflex formats where starting a QB is nearly mandatory — pairing this with the Tiered Superflex QB Scarcity toggle adds an additional tiered bonus for quarterbacks with stronger ADP.
           </p>
           <p>
-            After saving, rerun the optimizer or scenario comparison to see the effect on keeper
-            recommendations, draft impact, and team outlooks.
+            <strong className="text-zinc-950">Applying changes:</strong> click Save Settings when done. Save reruns the optimizer immediately — recommendations, Draft Impact, Team Outlooks, and Scenario Comparison all update in one step. You do not need to click Run Optimizer separately. These updated recommendations also flow into the keeper context loaded by any new Mock Draft session you create afterward.
           </p>
         </CardContent>
       </Card>
