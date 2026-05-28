@@ -550,7 +550,9 @@ def _source_note(candidate: CompositeCandidate) -> str:
 
 
 def _export_adp_pick(candidate: CompositeCandidate) -> float | None:
-    return candidate.composite_adp
+    if candidate.composite_adp is None:
+        return None
+    return float(round(candidate.composite_adp))
 
 
 def _fetch_draftsharks_superflex_rows(settings: Settings, team_count: int) -> ProviderFetchResult:
@@ -595,7 +597,10 @@ def _fetch_draftsharks_superflex_rows(settings: Settings, team_count: int) -> Pr
 
 
 def _fetch_draftsharks_browser_rows(settings: Settings, team_count: int) -> ProviderFetchResult:
-    script_path = _repo_root() / "scripts" / "draftsharks_scrape.mjs"
+    try:
+        script_path = _repo_root() / "scripts" / "draftsharks_scrape.mjs"
+    except IndexError:
+        return ProviderFetchResult(rows={}, error="DraftSharks browser scraper unavailable in this environment")
     if not script_path.exists():
         return ProviderFetchResult(rows={}, error="DraftSharks browser scraper script is missing")
 
