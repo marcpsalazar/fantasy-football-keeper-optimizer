@@ -744,7 +744,9 @@ export async function analyzeKeeperTrade(
   params: {
     receivingTeamId: string;
     give: { playerId: string }[];
+    givePicks: { round: number }[];
     receive: { playerId: string; keeperCostRound: number | null }[];
+    receivePicks: { playerId: string; keeperCostRound: number }[];
     adpSnapshotId?: string | null;
     includeAi?: boolean;
   },
@@ -752,9 +754,14 @@ export async function analyzeKeeperTrade(
   const body = {
     receiving_team_id: params.receivingTeamId,
     give: params.give.map((g) => ({ player_id: g.playerId })),
+    give_picks: params.givePicks.map((p) => ({ round: p.round })),
     receive: params.receive.map((r) => ({
       player_id: r.playerId,
       keeper_cost_round: r.keeperCostRound,
+    })),
+    receive_picks: params.receivePicks.map((p) => ({
+      player_id: p.playerId,
+      keeper_cost_round: p.keeperCostRound,
     })),
     adp_snapshot_id: params.adpSnapshotId ?? null,
     include_ai: params.includeAi ?? false,

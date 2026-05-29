@@ -4863,14 +4863,19 @@ function TradeAnalyzerPage() {
 
   const [receivingTeamId, setReceivingTeamId] = React.useState<string>(teams[0]?.id ?? "");
   const [givePlayerIds, setGivePlayerIds] = React.useState<string[]>([]);
+  const [givePicks, setGivePicks] = React.useState<number[]>([]);
   const [receiveItems, setReceiveItems] = React.useState<
     { playerId: string; keeperCostRound: number | null }[]
+  >([]);
+  const [receivePicks, setReceivePicks] = React.useState<
+    { playerId: string; keeperCostRound: number }[]
   >([]);
   const [result, setResult] = React.useState<TradeAnalysisResult | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [sensitivityShift, setSensitivityShift] = React.useState(0);
   const [receiveSearch, setReceiveSearch] = React.useState("");
+  const [givePickRound, setGivePickRound] = React.useState<string>("");
 
   const teamRosterMap = React.useMemo(() => {
     const m = new Map<string, { playerId: string; player: string; position: string }[]>();
@@ -4919,7 +4924,7 @@ function TradeAnalyzerPage() {
     setResult(null);
   };
 
-  const addReceive = (playerId: string, player: string) => {
+  const addReceive = (playerId: string, _player: string) => {
     if (receivePlayerIds.has(playerId)) return;
     setReceiveItems((prev) => [...prev, { playerId, keeperCostRound: null }]);
     setReceiveSearch("");
@@ -4938,6 +4943,44 @@ function TradeAnalyzerPage() {
     setResult(null);
   };
 
+  const addGivePick = () => {
+    const round = parseInt(givePickRound, 10);
+    if (!round || round < 1 || round > 30 || givePicks.includes(round)) return;
+    setGivePicks((prev) => [...prev, round].sort((a, b) => a - b));
+    setGivePickRound("");
+    setResult(null);
+  };
+
+  const removeGivePick = (round: number) => {
+    setGivePicks((prev) => prev.filter((r) => r !== round));
+    setResult(null);
+  };
+
+  const receivePickPlayerIds = new Set(receivePicks.map((r) => r.playerId));
+
+  const addReceivePick = (playerId: string, keeperCostRound: number) => {
+    if (receivePickPlayerIds.has(playerId)) {
+      setReceivePicks((prev) =>
+        prev.map((r) => (r.playerId === playerId ? { ...r, keeperCostRound } : r)),
+      );
+    } else {
+      setReceivePicks((prev) => [...prev, { playerId, keeperCostRound }]);
+    }
+    setResult(null);
+  };
+
+  const removeReceivePick = (playerId: string) => {
+    setReceivePicks((prev) => prev.filter((r) => r.playerId !== playerId));
+    setResult(null);
+  };
+
+  const updateReceivePickCost = (playerId: string, cost: number) => {
+    setReceivePicks((prev) =>
+      prev.map((r) => (r.playerId === playerId ? { ...r, keeperCostRound: cost } : r)),
+    );
+    setResult(null);
+  };
+
   const handleRun = React.useCallback(
     async (shift = 0) => {
       if (!leagueId || !receivingTeamId) return;
@@ -4947,10 +4990,15 @@ function TradeAnalyzerPage() {
         const res = await analyzeKeeperTrade(leagueId, {
           receivingTeamId,
           give: givePlayerIds.map((id) => ({ playerId: id })),
+          givePicks: givePicks.map((r) => ({ round: r })),
           receive: receiveItems.map((r) => ({
             playerId: r.playerId,
             keeperCostRound:
               r.keeperCostRound != null ? r.keeperCostRound + shift : null,
+          })),
+          receivePicks: receivePicks.map((r) => ({
+            playerId: r.playerId,
+            keeperCostRound: r.keeperCostRound + shift,
           })),
         });
         setResult(res);
@@ -4961,11 +5009,12 @@ function TradeAnalyzerPage() {
         setLoading(false);
       }
     },
-    [leagueId, receivingTeamId, givePlayerIds, receiveItems],
+    [leagueId, receivingTeamId, givePlayerIds, givePicks, receiveItems, receivePicks],
   );
 
   const hasSensitivityData =
-    result !== null && receiveItems.some((r) => r.keeperCostRound != null);
+    result !== null &&
+    (receiveItems.some((r) => r.keeperCostRound != null) || receivePicks.length > 0);
 
   const surplusDeltaColor =
     result == null
@@ -4992,6 +5041,8 @@ function TradeAnalyzerPage() {
               onChange={(e) => {
                 setReceivingTeamId(e.target.value);
                 setGivePlayerIds([]);
+                setGivePicks([]);
+                setReceivePicks([]);
                 setResult(null);
               }}
             >
@@ -5038,6 +5089,43 @@ function TradeAnalyzerPage() {
                 ))}
               </div>
             )}
+            {/* Give Picks */}
+            <div className="mt-3 border-t border-rose-200 pt-3">
+              <p className="mb-2 text-xs font-semibold text-rose-600">Draft Picks You're Trading Away</p>
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  className="w-20 rounded border border-zinc-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                  placeholder="Round"
+                  value={givePickRound}
+                  onChange={(e) => setGivePickRound(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") addGivePick(); }}
+                />
+                <Button size="sm" variant="outline" onClick={addGivePick} className="h-7 text-xs px-2">
+                  <Plus className="size-3 mr-1" />
+                  Add
+                </Button>
+              </div>
+              {givePicks.length === 0 ? (
+                <p className="text-xs text-zinc-400">No picks added.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {givePicks.map((round) => (
+                    <span
+                      key={round}
+                      className="inline-flex items-center gap-1 rounded bg-rose-200 px-2 py-0.5 text-xs font-medium text-rose-800"
+                    >
+                      Rd {round}
+                      <button onClick={() => removeGivePick(round)} className="hover:text-rose-600">
+                        <X className="size-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Receive column */}
@@ -5121,6 +5209,74 @@ function TradeAnalyzerPage() {
                 })}
               </div>
             )}
+            {/* Receive Picks — assign incoming picks to existing roster players */}
+            <div className="mt-3 border-t border-emerald-200 pt-3">
+              <p className="mb-2 text-xs font-semibold text-emerald-600">Draft Picks You're Receiving</p>
+              <p className="mb-2 text-[11px] text-zinc-500">
+                Select a player already on your roster who will use this pick as their keeper cost.
+              </p>
+              {myRoster.length === 0 ? (
+                <p className="text-xs text-zinc-400">Import final rosters to enable pick assignments.</p>
+              ) : (
+                <div className="space-y-2">
+                  {receivePicks.map((rp) => {
+                    const info = myRoster.find((p) => p.playerId === rp.playerId);
+                    return (
+                      <div
+                        key={rp.playerId}
+                        className="flex items-center gap-2 rounded bg-white px-2 py-1.5 border border-emerald-100"
+                      >
+                        <span className="flex-1 text-sm font-medium text-zinc-800">
+                          {info?.player ?? rp.playerId}
+                        </span>
+                        <Badge className="text-[10px]">{info?.position ?? "?"}</Badge>
+                        <div className="flex items-center gap-1">
+                          <Label className="text-[10px] text-zinc-500 whitespace-nowrap">Rd</Label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={30}
+                            className="w-12 rounded border border-zinc-200 px-1.5 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                            value={rp.keeperCostRound}
+                            onChange={(e) =>
+                              e.target.value && updateReceivePickCost(rp.playerId, Number(e.target.value))
+                            }
+                          />
+                        </div>
+                        <button
+                          onClick={() => removeReceivePick(rp.playerId)}
+                          className="text-zinc-400 hover:text-rose-500"
+                          aria-label="Remove"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <div className="flex items-center gap-2">
+                    <select
+                      className="flex-1 rounded border border-zinc-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                      defaultValue=""
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          addReceivePick(e.target.value, 3);
+                          e.target.value = "";
+                        }
+                      }}
+                    >
+                      <option value="">+ Assign pick to roster player…</option>
+                      {myRoster
+                        .filter((p) => !receivePickPlayerIds.has(p.playerId))
+                        .map((p) => (
+                          <option key={p.playerId} value={p.playerId}>
+                            {p.player} ({p.position})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -5128,7 +5284,14 @@ function TradeAnalyzerPage() {
         <div className="flex flex-wrap items-center gap-3">
           <Button
             onClick={() => handleRun(0)}
-            disabled={loading || !receivingTeamId || (givePlayerIds.length === 0 && receiveItems.length === 0)}
+            disabled={
+            loading ||
+            !receivingTeamId ||
+            (givePlayerIds.length === 0 &&
+              givePicks.length === 0 &&
+              receiveItems.length === 0 &&
+              receivePicks.length === 0)
+          }
           >
             {loading ? (
               <RefreshCw className="mr-2 size-4 animate-spin" aria-hidden />

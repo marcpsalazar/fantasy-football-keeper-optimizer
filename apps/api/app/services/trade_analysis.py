@@ -25,9 +25,20 @@ class TradeGiveItem:
 
 
 @dataclass(frozen=True)
+class TradeGivePickItem:
+    round: int  # Give away the pick in this round (deletes team's DraftPick in that round)
+
+
+@dataclass(frozen=True)
 class TradeReceiveItem:
     player_id: uuid.UUID
     keeper_cost_round: int | None = None  # None = no existing pick (ADP-based cost)
+
+
+@dataclass(frozen=True)
+class TradeReceivePickItem:
+    player_id: uuid.UUID  # Player already on your roster who will use this pick as keeper cost
+    keeper_cost_round: int  # The round of the received pick
 
 
 @dataclass(frozen=True)
@@ -76,6 +87,8 @@ def analyze_trade(
     give: list[TradeGiveItem],
     receive: list[TradeReceiveItem],
     *,
+    give_picks: list[TradeGivePickItem] | None = None,
+    receive_picks: list[TradeReceivePickItem] | None = None,
     adp_snapshot_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
     app_settings: Settings | None = None,
@@ -92,6 +105,8 @@ def analyze_trade(
     all_teams = session.exec(select(Team).where(Team.league_id == league_id)).all()
     team_count = len(all_teams) or 12
     draft_slot = receiving_team.draft_slot or (team_count // 2)
+    give_picks = give_picks or []
+    receive_picks = receive_picks or []
 
     # Baseline run — no DB changes, no persist
     baseline_recs = run_optimizer(
@@ -102,19 +117,23 @@ def analyze_trade(
     )
     baseline_team_recs = [r for r in baseline_recs if r.team_id == receiving_team_id]
 
-    # Collect player metadata
+    # Collect player metadata (includes players involved in pick assignments)
     all_player_ids = (
         {r.player_id for r in baseline_recs}
         | {item.player_id for item in give}
         | {item.player_id for item in receive}
+        | {item.player_id for item in receive_picks}
     )
     players: dict[uuid.UUID, Player] = {
         p.id: p
         for p in session.exec(select(Player).where(Player.id.in_(all_player_ids))).all()
     }
 
-    # Validate received players exist
+    # Validate received players and pick-assignment players exist
     for item in receive:
+        if item.player_id not in players:
+            raise OptimizerInputError(f"Player {item.player_id} not found")
+    for item in receive_picks:
         if item.player_id not in players:
             raise OptimizerInputError(f"Player {item.player_id} not found")
 
@@ -144,6 +163,19 @@ def analyze_trade(
             ).first()
             if pick is not None:
                 session.delete(pick)
+
+        # Remove given-away picks (by round): deletes whatever pick the team has in that round
+        for pick_item in give_picks:
+            picks_in_round = session.exec(
+                select(DraftPick).where(
+                    DraftPick.league_id == league_id,
+                    DraftPick.team_id == receiving_team_id,
+                    DraftPick.season_year == league.season_year,
+                    DraftPick.round == pick_item.round,
+                )
+            ).all()
+            for p in picks_in_round:
+                session.delete(p)
 
         session.flush()
 
@@ -196,6 +228,48 @@ def analyze_trade(
                     position=player.position,
                 ))
 
+        # Apply received picks to existing roster players (reassign keeper cost)
+        for pick_item in receive_picks:
+            player = players[pick_item.player_id]
+            round_num = max(1, int(pick_item.keeper_cost_round))
+            target_overall = (round_num - 1) * team_count + draft_slot
+
+            # Remove any existing pick for this player on this team
+            old_pick = session.exec(
+                select(DraftPick).where(
+                    DraftPick.league_id == league_id,
+                    DraftPick.team_id == receiving_team_id,
+                    DraftPick.player_id == pick_item.player_id,
+                    DraftPick.season_year == league.season_year,
+                )
+            ).first()
+            if old_pick is not None:
+                session.delete(old_pick)
+                session.flush()
+
+            # Clear any pick at the target slot from another player
+            conflicting = session.exec(
+                select(DraftPick).where(
+                    DraftPick.league_id == league_id,
+                    DraftPick.season_year == league.season_year,
+                    DraftPick.overall_pick == target_overall,
+                )
+            ).first()
+            if conflicting is not None:
+                session.delete(conflicting)
+                session.flush()
+
+            session.add(DraftPick(
+                league_id=league_id,
+                team_id=receiving_team_id,
+                player_id=pick_item.player_id,
+                season_year=league.season_year,
+                round=round_num,
+                overall_pick=target_overall,
+                pick_in_round=draft_slot,
+                position=player.position,
+            ))
+
         session.flush()
 
         hypo_recs = run_optimizer(
@@ -245,13 +319,19 @@ def analyze_trade(
 
     if include_ai and app_settings is not None:
         give_names = [players[i.player_id].full_name for i in give if i.player_id in players]
+        give_pick_descs = [f"Round {p.round} pick" for p in give_picks]
         receive_names = [players[i.player_id].full_name for i in receive if i.player_id in players]
+        receive_pick_descs = [
+            f"Round {p.keeper_cost_round} pick → {players[p.player_id].full_name}"
+            for p in receive_picks
+            if p.player_id in players
+        ]
         try:
             result.ai_narrative = generate_trade_narrative(
                 settings=app_settings,
                 result=result,
-                give_names=give_names,
-                receive_names=receive_names,
+                give_names=give_names + give_pick_descs,
+                receive_names=receive_names + receive_pick_descs,
             )
         except MockDraftAIError:
             pass

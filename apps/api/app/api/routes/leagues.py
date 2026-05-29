@@ -162,15 +162,26 @@ class TradeGiveItemRequest(BaseModel):
     player_id: uuid.UUID
 
 
+class TradeGivePickItemRequest(BaseModel):
+    round: int
+
+
 class TradeReceiveItemRequest(BaseModel):
     player_id: uuid.UUID
     keeper_cost_round: int | None = None
 
 
+class TradeReceivePickItemRequest(BaseModel):
+    player_id: uuid.UUID
+    keeper_cost_round: int
+
+
 class TradeAnalysisRunRequest(BaseModel):
     receiving_team_id: uuid.UUID
     give: list[TradeGiveItemRequest] = []
+    give_picks: list[TradeGivePickItemRequest] = []
     receive: list[TradeReceiveItemRequest] = []
+    receive_picks: list[TradeReceivePickItemRequest] = []
     adp_snapshot_id: uuid.UUID | None = None
     include_ai: bool = False
 
@@ -1006,7 +1017,9 @@ def run_trade_analysis(
     from app.services.trade_analysis import (
         TradeAnalysisResult,
         TradeGiveItem,
+        TradeGivePickItem,
         TradeReceiveItem,
+        TradeReceivePickItem,
         analyze_trade,
     )
 
@@ -1019,6 +1032,11 @@ def run_trade_analysis(
             [TradeGiveItem(player_id=g.player_id) for g in payload.give],
             [TradeReceiveItem(player_id=r.player_id, keeper_cost_round=r.keeper_cost_round)
              for r in payload.receive],
+            give_picks=[TradeGivePickItem(round=p.round) for p in payload.give_picks],
+            receive_picks=[
+                TradeReceivePickItem(player_id=p.player_id, keeper_cost_round=p.keeper_cost_round)
+                for p in payload.receive_picks
+            ],
             adp_snapshot_id=payload.adp_snapshot_id,
             user_id=_user_id(user),
             app_settings=app_settings if payload.include_ai else None,
