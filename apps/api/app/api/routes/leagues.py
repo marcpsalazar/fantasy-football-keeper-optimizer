@@ -44,6 +44,11 @@ from app.services.csv_imports import (
     import_final_rosters_csv,
 )
 from app.services.adp_refresh import ADPRefreshError, refresh_adp_from_api
+from app.services.sleeper_import import (
+    SleeperAPIError,
+    commit_sleeper_import,
+    preview_sleeper_import,
+)
 from app.services.ai_adp import AIADPError
 from app.services.adp_review import create_ai_adp_refresh_candidate as create_ai_adp_refresh_candidate_service
 from app.services.csv_preview import (
@@ -146,6 +151,11 @@ class LeagueMemberRoleRequest(BaseModel):
 
 class LeagueAvatarRequest(BaseModel):
     avatar_data_url: str | None = None
+
+
+class SleeperImportRequest(BaseModel):
+    sleeper_league_id: str
+    season_year: int | None = None
 
 
 def _count_league_admins(session: Session, league_id: uuid.UUID) -> int:
@@ -510,6 +520,53 @@ def import_final_rosters(
     except CSVImportError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return _table(result.rows, imported=result.imported)
+
+
+@router.post("/leagues/{league_id}/import/sleeper/preview")
+def preview_sleeper(
+    league_id: uuid.UUID,
+    payload: SleeperImportRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    result = preview_sleeper_import(
+        session, league_id, payload.sleeper_league_id, payload.season_year
+    )
+    return {
+        "valid": result.valid,
+        "season_year": result.season_year,
+        "teams": result.teams,
+        "draft_picks_count": result.draft_picks_count,
+        "roster_entries_count": result.roster_entries_count,
+        "warnings": result.warnings,
+        "errors": result.errors,
+    }
+
+
+@router.post("/leagues/{league_id}/import/sleeper/commit")
+def commit_sleeper(
+    league_id: uuid.UUID,
+    payload: SleeperImportRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    try:
+        result = commit_sleeper_import(
+            session, league_id, payload.sleeper_league_id, payload.season_year
+        )
+    except SleeperAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {
+        "season_year": result.season_year,
+        "teams_upserted": result.teams_upserted,
+        "draft_picks_upserted": result.draft_picks_upserted,
+        "roster_entries_upserted": result.roster_entries_upserted,
+        "warnings": result.warnings,
+    }
 
 
 @router.post(

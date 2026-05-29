@@ -34,6 +34,7 @@ import {
   X,
 } from "lucide-react";
 import * as React from "react";
+import { createPortal } from "react-dom";
 
 import { DataTable, resetDataTableDisplaySettings } from "@/components/dashboard/data-table";
 import { Badge } from "@/components/ui/badge";
@@ -97,6 +98,8 @@ import {
   pauseMockDraft,
   previewCsv,
   readMockDraft,
+  commitSleeperImport,
+  previewSleeperImport,
   removeLeagueMember,
   resumeMockDraft,
   recommendScenarioSelections,
@@ -120,6 +123,7 @@ import {
   type AuthUser,
   type CsvImportKind,
   type CsvPreviewResult,
+  type SleeperImportPreview,
   type DraftImpactPick,
   type LeagueCalendarSettings,
   type LeagueCreateForm,
@@ -574,6 +578,17 @@ export function DashboardApp() {
   );
   const [tableDisplayResetSignal, setTableDisplayResetSignal] = React.useState(0);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
+  const userMenuRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!userMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [userMenuOpen]);
   const [activeLeagueId, setActiveLeagueId] = React.useState<string | null>(null);
   const [userLeagues, setUserLeagues] = React.useState<LeagueWithRole[]>([]);
   const [createLeagueModalOpen, setCreateLeagueModalOpen] = React.useState(false);
@@ -1452,7 +1467,7 @@ export function DashboardApp() {
                   <span className="text-[11px] font-normal text-zinc-300">Recompute recommendations</span>
                 </Button>
                 {currentUser ? (
-                  <div className="relative">
+                  <div className="relative" ref={userMenuRef}>
                     <button
                       aria-expanded={userMenuOpen}
                       aria-label="Open user menu"
@@ -1587,19 +1602,20 @@ export function DashboardApp() {
                     ) : null}
                   </div>
                 ) : null}
-                {createLeagueModalOpen ? (
-                  <CreateLeagueModal
-                    isBusy={isBusy}
-                    onClose={() => setCreateLeagueModalOpen(false)}
-                    onSubmit={async (form) => {
-                      await createLeagueNow(form);
-                      setCreateLeagueModalOpen(false);
-                    }}
-                  />
-                ) : null}
               </div>
             </div>
           </header>
+
+          {createLeagueModalOpen ? (
+            <CreateLeagueModal
+              isBusy={isBusy}
+              onClose={() => setCreateLeagueModalOpen(false)}
+              onSubmit={async (form) => {
+                await createLeagueNow(form);
+                setCreateLeagueModalOpen(false);
+              }}
+            />
+          ) : null}
 
           <div className="px-4 py-5 md:px-6">
             {activeView === "dashboard" && <LeagueDashboard />}
@@ -1996,9 +2012,16 @@ function CreateLeagueModal({
   const [scoringFormat, setScoringFormat] = React.useState("superflex");
   const [draftType, setDraftType] = React.useState("snake");
   const [error, setError] = React.useState("");
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => { setMounted(true); }, []);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+  if (!mounted) return null;
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] overflow-y-auto bg-black/50"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="flex min-h-full items-center justify-center p-4">
       <div className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
           <h2 className="text-base font-semibold text-zinc-950">Create League</h2>
@@ -2078,7 +2101,9 @@ function CreateLeagueModal({
           </Button>
         </div>
       </div>
-    </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -4077,31 +4102,209 @@ function AdminDataImports({
   const { csvPreviews, importCsvText, isBusy, previewCsvText } = useDashboard();
 
   return (
-    <div className="grid gap-5 xl:grid-cols-2">
-      <CsvImportPanel
-        buttonLabel="Import Draft Results"
-        csvText={draftCsvText}
-        description="Original draft picks used to determine same-team keeper cost."
-        disabled={isBusy}
-        inputId="admin-draft-csv"
-        onChange={setDraftCsvText}
-        onImport={() => importCsvText("draft-results", draftCsvText)}
-        onPreview={() => previewCsvText("draft-results", draftCsvText)}
-        preview={csvPreviews["draft-results"]}
-        title="Draft Results CSV"
-      />
-      <CsvImportPanel
-        buttonLabel="Import Final Rosters"
-        csvText={rosterCsvText}
-        description="End-of-season roster state that defines keeper candidates."
-        disabled={isBusy}
-        inputId="admin-roster-csv"
-        onChange={setRosterCsvText}
-        onImport={() => importCsvText("final-rosters", rosterCsvText)}
-        onPreview={() => previewCsvText("final-rosters", rosterCsvText)}
-        preview={csvPreviews["final-rosters"]}
-        title="Final Rosters CSV"
-      />
+    <div className="space-y-5">
+      <SleeperImportPanel />
+      <div className="grid gap-5 xl:grid-cols-2">
+        <CsvImportPanel
+          buttonLabel="Import Draft Results"
+          csvText={draftCsvText}
+          description="Original draft picks used to determine same-team keeper cost."
+          disabled={isBusy}
+          inputId="admin-draft-csv"
+          onChange={setDraftCsvText}
+          onImport={() => importCsvText("draft-results", draftCsvText)}
+          onPreview={() => previewCsvText("draft-results", draftCsvText)}
+          preview={csvPreviews["draft-results"]}
+          title="Draft Results CSV"
+        />
+        <CsvImportPanel
+          buttonLabel="Import Final Rosters"
+          csvText={rosterCsvText}
+          description="End-of-season roster state that defines keeper candidates."
+          disabled={isBusy}
+          inputId="admin-roster-csv"
+          onChange={setRosterCsvText}
+          onImport={() => importCsvText("final-rosters", rosterCsvText)}
+          onPreview={() => previewCsvText("final-rosters", rosterCsvText)}
+          preview={csvPreviews["final-rosters"]}
+          title="Final Rosters CSV"
+        />
+      </div>
+    </div>
+  );
+}
+
+function SleeperImportPanel() {
+  const { activeLeagueId, data, isBusy, refreshData } = useDashboard();
+  const [sleeperLeagueId, setSleeperLeagueId] = React.useState("");
+  const [seasonYear, setSeasonYear] = React.useState<string>("");
+  const [preview, setPreview] = React.useState<SleeperImportPreview | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [successMessage, setSuccessMessage] = React.useState("");
+
+  const defaultYear = data?.league?.seasonYear ?? new Date().getFullYear();
+
+  const handlePreview = async () => {
+    if (!activeLeagueId || !sleeperLeagueId.trim()) return;
+    setLoading(true);
+    setError("");
+    setSuccessMessage("");
+    setPreview(null);
+    try {
+      const year = seasonYear ? parseInt(seasonYear, 10) : undefined;
+      const result = await previewSleeperImport(activeLeagueId, sleeperLeagueId.trim(), year);
+      setPreview(result);
+    } catch {
+      setError("Preview failed — check the Sleeper League ID and try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!activeLeagueId || !sleeperLeagueId.trim() || !preview?.valid) return;
+    setLoading(true);
+    setError("");
+    try {
+      const year = seasonYear ? parseInt(seasonYear, 10) : undefined;
+      const result = await commitSleeperImport(activeLeagueId, sleeperLeagueId.trim(), year);
+      await refreshData();
+      setSuccessMessage(
+        `Import complete: ${result.teamsUpserted} teams, ${result.draftPicksUpserted} draft picks, ${result.rosterEntriesUpserted} roster entries.`,
+      );
+      setPreview(null);
+      setSleeperLeagueId("");
+      setSeasonYear("");
+    } catch {
+      setError("Import failed. Check the API logs.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const busy = isBusy || loading;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Import from Sleeper</CardTitle>
+        <CardDescription>
+          Automatically pull teams, draft results, and final rosters from a Sleeper league. Find your league ID in the Sleeper URL (e.g. sleeper.com/leagues/<strong>123456789</strong>).
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+          <div className="grid gap-2">
+            <Label htmlFor="sleeper-league-id">Sleeper League ID</Label>
+            <Input
+              id="sleeper-league-id"
+              disabled={busy}
+              onChange={(e) => { setSleeperLeagueId(e.target.value); setPreview(null); }}
+              placeholder="e.g. 1048599578647052288"
+              value={sleeperLeagueId}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="sleeper-season-year">Season Year</Label>
+            <Input
+              id="sleeper-season-year"
+              disabled={busy}
+              min={2000}
+              max={2100}
+              onChange={(e) => { setSeasonYear(e.target.value); setPreview(null); }}
+              placeholder={String(defaultYear)}
+              type="number"
+              className="w-28"
+              value={seasonYear}
+            />
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Button
+            disabled={busy || !sleeperLeagueId.trim()}
+            onClick={() => { void handlePreview(); }}
+            variant="outline"
+          >
+            <ListChecks className="size-4" aria-hidden="true" />
+            Preview
+          </Button>
+          <Button
+            disabled={busy || !preview?.valid}
+            onClick={() => { void handleImport(); }}
+          >
+            <Upload className="size-4" aria-hidden="true" />
+            Import
+          </Button>
+        </div>
+        {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+        {successMessage && !preview ? (
+          <p className="text-sm text-emerald-700">{successMessage}</p>
+        ) : null}
+        {preview ? <SleeperPreviewSummary preview={preview} /> : (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">
+            Enter a Sleeper League ID and click Preview to validate before importing.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SleeperPreviewSummary({ preview }: { preview: SleeperImportPreview }) {
+  return (
+    <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={preview.valid ? "success" : "danger"}>
+          {preview.valid ? "Ready" : "Error"}
+        </Badge>
+        {preview.valid ? (
+          <span className="text-sm text-zinc-700">
+            Season {preview.seasonYear} · {preview.teams.length} teams · {preview.draftPicksCount} draft picks · {preview.rosterEntriesCount} roster entries
+          </span>
+        ) : null}
+      </div>
+
+      {preview.errors.length > 0 ? (
+        <div className="space-y-1">
+          {preview.errors.map((e, i) => (
+            <p key={i} className="text-sm text-rose-700">{e}</p>
+          ))}
+        </div>
+      ) : null}
+
+      {preview.warnings.length > 0 ? (
+        <div className="space-y-1">
+          {preview.warnings.map((w, i) => (
+            <p key={i} className="text-xs text-amber-700">{w}</p>
+          ))}
+        </div>
+      ) : null}
+
+      {preview.valid && preview.teams.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-zinc-200 text-left text-zinc-500">
+                <th className="pb-1 pr-3 font-medium">Slot</th>
+                <th className="pb-1 pr-3 font-medium">Team</th>
+                <th className="pb-1 pr-3 font-medium">Owner</th>
+                <th className="pb-1 font-medium text-right">Players</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.teams.map((team) => (
+                <tr key={team.rosterId} className="border-b border-zinc-100 last:border-0">
+                  <td className="py-1 pr-3 text-zinc-500">{team.rosterId}</td>
+                  <td className="py-1 pr-3 font-medium text-zinc-900">{team.teamName}</td>
+                  <td className="py-1 pr-3 text-zinc-500">{team.ownerName ?? "—"}</td>
+                  <td className="py-1 text-right text-zinc-700">{team.playerCount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </div>
   );
 }
