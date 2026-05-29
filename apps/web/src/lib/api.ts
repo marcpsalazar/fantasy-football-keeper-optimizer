@@ -617,6 +617,78 @@ export async function uploadLeagueAvatar(leagueId: string, dataUrl: string | nul
   });
 }
 
+export type SleeperImportPreview = {
+  valid: boolean;
+  seasonYear: number;
+  teams: Array<{ rosterId: number; teamName: string; ownerName: string | null; playerCount: number }>;
+  draftPicksCount: number;
+  rosterEntriesCount: number;
+  warnings: string[];
+  errors: string[];
+};
+
+export type SleeperImportResult = {
+  seasonYear: number;
+  teamsUpserted: number;
+  draftPicksUpserted: number;
+  rosterEntriesUpserted: number;
+  warnings: string[];
+};
+
+export async function previewSleeperImport(
+  leagueId: string,
+  sleeperLeagueId: string,
+  seasonYear?: number,
+): Promise<SleeperImportPreview> {
+  const row = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/import/sleeper/preview`,
+    {
+      body: JSON.stringify({ sleeper_league_id: sleeperLeagueId, season_year: seasonYear ?? null }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  return {
+    valid: Boolean(row.valid),
+    seasonYear: Number(row.season_year),
+    teams: ((row.teams as unknown[]) ?? []).map((t: unknown) => {
+      const team = t as Record<string, unknown>;
+      return {
+        rosterId: Number(team.roster_id),
+        teamName: String(team.team_name ?? ""),
+        ownerName: team.owner_name != null ? String(team.owner_name) : null,
+        playerCount: Number(team.player_count ?? 0),
+      };
+    }),
+    draftPicksCount: Number(row.draft_picks_count ?? 0),
+    rosterEntriesCount: Number(row.roster_entries_count ?? 0),
+    warnings: ((row.warnings as string[]) ?? []),
+    errors: ((row.errors as string[]) ?? []),
+  };
+}
+
+export async function commitSleeperImport(
+  leagueId: string,
+  sleeperLeagueId: string,
+  seasonYear?: number,
+): Promise<SleeperImportResult> {
+  const row = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/import/sleeper/commit`,
+    {
+      body: JSON.stringify({ sleeper_league_id: sleeperLeagueId, season_year: seasonYear ?? null }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  return {
+    seasonYear: Number(row.season_year),
+    teamsUpserted: Number(row.teams_upserted ?? 0),
+    draftPicksUpserted: Number(row.draft_picks_upserted ?? 0),
+    rosterEntriesUpserted: Number(row.roster_entries_upserted ?? 0),
+    warnings: ((row.warnings as string[]) ?? []),
+  };
+}
+
 export async function getLeagueMemberships(leagueId: string): Promise<LeagueMembership[]> {
   const payload = await fetchTable(`/api/leagues/${leagueId}/memberships`);
   return payload.rows.map(mapLeagueMembership);
