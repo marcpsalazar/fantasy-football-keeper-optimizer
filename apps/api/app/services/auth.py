@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import secrets
 import uuid
+from typing import TYPE_CHECKING
 
 from fastapi import Cookie, Depends, HTTPException, Response, status
 from sqlmodel import Session, select
@@ -12,6 +13,9 @@ from sqlmodel import Session, select
 from app.core.config import get_settings
 from app.db.session import get_session
 from app.models import User
+
+if TYPE_CHECKING:
+    from app.models.membership import LeagueMembership
 
 PASSWORD_SCHEME = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 260_000
@@ -124,9 +128,47 @@ def require_current_user(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
 
-def require_admin(user: User | None = Depends(require_current_user)) -> User | None:
+def require_platform_admin(user: User | None = Depends(require_current_user)) -> User | None:
     if user is None:
         return None
-    if user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    if user.role != "platform_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Platform admin access required")
     return user
+
+
+# Deprecated alias — kept so existing import sites compile until migrated.
+require_admin = require_platform_admin
+
+
+def _get_league_membership(session: Session, user: User, league_id: uuid.UUID) -> LeagueMembership | None:
+    from app.models.membership import LeagueMembership as _LeagueMembership
+    return session.exec(
+        select(_LeagueMembership).where(
+            _LeagueMembership.user_id == user.id,
+            _LeagueMembership.league_id == league_id,
+        )
+    ).first()
+
+
+def assert_league_admin(session: Session, user: User | None, league_id: uuid.UUID) -> None:
+    """Raise 401/403 unless user is a league admin or platform admin for this league.
+    user=None is the no-users-exist bypass — access is permitted."""
+    if user is None:
+        return
+    if user.role == "platform_admin":
+        return
+    membership = _get_league_membership(session, user, league_id)
+    if membership is None or membership.role != "league_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin access required")
+
+
+def assert_league_member(session: Session, user: User | None, league_id: uuid.UUID) -> None:
+    """Raise 401/403 unless user has any membership in this league, or is platform admin.
+    user=None is the no-users-exist bypass — access is permitted."""
+    if user is None:
+        return
+    if user.role == "platform_admin":
+        return
+    membership = _get_league_membership(session, user, league_id)
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League membership required")

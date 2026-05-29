@@ -82,7 +82,7 @@ def _disable_draftsharks_browser_scraper(monkeypatch: pytest.MonkeyPatch) -> Non
 def _create_admin_and_login(client: TestClient) -> dict[str, str]:
     response = client.post(
         "/api/admin/users",
-        json={"email": "admin@example.com", "password": "secret", "role": "admin"},
+        json={"email": "admin@example.com", "password": "secret", "role": "platform_admin"},
     )
     assert response.status_code == 201
     login_response = client.post(
@@ -340,9 +340,9 @@ def test_regular_user_is_blocked_from_admin_endpoints(client: TestClient) -> Non
         headers={"content-type": "text/csv"},
     )
 
-    assert league_create_response.status_code == 403
-    assert draft_preview_response.status_code == 403
-    assert draft_import_response.status_code == 403
+    assert league_create_response.status_code == 201  # any authenticated user can create a league
+    assert draft_preview_response.status_code == 403  # non-member cannot access another league
+    assert draft_import_response.status_code == 403   # non-member cannot import into another league
 
 
 def test_team_management_is_admin_only_and_can_assign_users(client: TestClient) -> None:

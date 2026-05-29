@@ -8,6 +8,7 @@ from app.models.base import TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.league import Team
+    from app.models.membership import LeagueMembership
     from app.models.mock_draft import MockDraftSession
     from app.models.optimizer import (
         KeeperRecommendation,
@@ -35,6 +36,7 @@ class User(TimestampMixin, table=True):
     scenario_selections: list["TeamScenarioSelection"] = Relationship(back_populates="user")
     teams: list["Team"] = Relationship(back_populates="user")
     mock_draft_sessions: list["MockDraftSession"] = Relationship(back_populates="user")
+    memberships: list["LeagueMembership"] = Relationship(back_populates="user")
 
 
 class AppDefaultOptimizerSettings(TimestampMixin, table=True):
