@@ -689,6 +689,108 @@ export async function commitSleeperImport(
   };
 }
 
+export type TradePlayerRow = {
+  playerId: string;
+  playerName: string;
+  position: string;
+  nflTeam: string | null;
+  keeperCostPick: number | null;
+  keeperCostRound: number | null;
+  adpPick: number | null;
+  adpRound: number | null;
+  keeperValue: number | null;
+  keeperScore: number | null;
+  isRecommended: boolean;
+  isIncoming: boolean;
+};
+
+export type TradeAnalysisResult = {
+  receivingTeamId: string;
+  receivingTeamName: string;
+  baselineKeepers: TradePlayerRow[];
+  hypotheticalKeepers: TradePlayerRow[];
+  baselineSurplus: number;
+  hypotheticalSurplus: number;
+  surplusDelta: number;
+  gained: TradePlayerRow[];
+  lost: TradePlayerRow[];
+  aiNarrative: {
+    verdict: "good" | "neutral" | "bad";
+    summary: string;
+    keyRisk: string;
+    opportunityCost: string;
+  } | null;
+};
+
+function mapTradePlayerRow(row: Record<string, unknown>): TradePlayerRow {
+  return {
+    playerId: String(row.player_id ?? ""),
+    playerName: String(row.player_name ?? ""),
+    position: String(row.position ?? ""),
+    nflTeam: row.nfl_team != null ? String(row.nfl_team) : null,
+    keeperCostPick: row.keeper_cost_pick != null ? Number(row.keeper_cost_pick) : null,
+    keeperCostRound: row.keeper_cost_round != null ? Number(row.keeper_cost_round) : null,
+    adpPick: row.adp_pick != null ? Number(row.adp_pick) : null,
+    adpRound: row.adp_round != null ? Number(row.adp_round) : null,
+    keeperValue: row.keeper_value != null ? Number(row.keeper_value) : null,
+    keeperScore: row.keeper_score != null ? Number(row.keeper_score) : null,
+    isRecommended: Boolean(row.is_recommended),
+    isIncoming: Boolean(row.is_incoming),
+  };
+}
+
+export async function analyzeKeeperTrade(
+  leagueId: string,
+  params: {
+    receivingTeamId: string;
+    give: { playerId: string }[];
+    receive: { playerId: string; keeperCostRound: number | null }[];
+    adpSnapshotId?: string | null;
+    includeAi?: boolean;
+  },
+): Promise<TradeAnalysisResult> {
+  const body = {
+    receiving_team_id: params.receivingTeamId,
+    give: params.give.map((g) => ({ player_id: g.playerId })),
+    receive: params.receive.map((r) => ({
+      player_id: r.playerId,
+      keeper_cost_round: r.keeperCostRound,
+    })),
+    adp_snapshot_id: params.adpSnapshotId ?? null,
+    include_ai: params.includeAi ?? false,
+  };
+  const raw = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/optimizer/trade-analysis`,
+    {
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  const mapRows = (arr: unknown): TradePlayerRow[] =>
+    Array.isArray(arr) ? arr.map((r) => mapTradePlayerRow(r as Record<string, unknown>)) : [];
+  const aiRaw = raw.ai_narrative as Record<string, unknown> | null | undefined;
+  return {
+    receivingTeamId: String(raw.receiving_team_id ?? ""),
+    receivingTeamName: String(raw.receiving_team_name ?? ""),
+    baselineKeepers: mapRows(raw.baseline_keepers),
+    hypotheticalKeepers: mapRows(raw.hypothetical_keepers),
+    baselineSurplus: Number(raw.baseline_surplus ?? 0),
+    hypotheticalSurplus: Number(raw.hypothetical_surplus ?? 0),
+    surplusDelta: Number(raw.surplus_delta ?? 0),
+    gained: mapRows(raw.gained),
+    lost: mapRows(raw.lost),
+    aiNarrative: aiRaw
+      ? {
+          verdict: (aiRaw.verdict as "good" | "neutral" | "bad") ?? "neutral",
+          summary: String(aiRaw.summary ?? ""),
+          keyRisk: String(aiRaw.key_risk ?? ""),
+          opportunityCost: String(aiRaw.opportunity_cost ?? ""),
+        }
+      : null,
+  };
+}
+
 export async function getLeagueMemberships(leagueId: string): Promise<LeagueMembership[]> {
   const payload = await fetchTable(`/api/leagues/${leagueId}/memberships`);
   return payload.rows.map(mapLeagueMembership);
@@ -1337,6 +1439,8 @@ function mapDraftPick(row: ApiRow): DraftPick {
 
 function mapFinalRosterEntry(row: ApiRow): FinalRosterEntry {
   return {
+    teamId: row.team_id != null ? String(row.team_id) : undefined,
+    playerId: row.player_id != null ? String(row.player_id) : undefined,
     team: text(row.team_name),
     player: text(row.player_name),
     position: text(row.position),

@@ -2,6 +2,7 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import {
+  ArrowLeftRight,
   Ban,
   Bot,
   BookOpen,
@@ -98,6 +99,7 @@ import {
   pauseMockDraft,
   previewCsv,
   readMockDraft,
+  analyzeKeeperTrade,
   commitSleeperImport,
   previewSleeperImport,
   removeLeagueMember,
@@ -140,6 +142,8 @@ import {
   type OptimizerSettingsForm,
   type PlayerSummary,
   type ScenarioNarrative,
+  type TradeAnalysisResult,
+  type TradePlayerRow,
   type UserForm,
   type WorkspaceData,
 } from "@/lib/api";
@@ -155,6 +159,7 @@ type ViewId =
   | "settings"
   | "profile"
   | "recommendations"
+  | "trade-analyzer"
   | "scenarios"
   | "outlooks"
   | "draft-impact"
@@ -171,6 +176,7 @@ const navItems: NavItem[] = [
   { id: "guide", label: "How to Use", icon: BookOpen },
   { id: "dashboard", label: "League Dashboard", icon: Gauge },
   { id: "recommendations", label: "Keeper Recommendations", icon: Trophy },
+  { id: "trade-analyzer", label: "Trade Analyzer", icon: ArrowLeftRight },
   { id: "scenarios", label: "Scenario Comparison", icon: GitCompare },
   { id: "draft-impact", label: "Draft Impact", icon: ClipboardList },
   { id: "mock-draft", label: "Mock Draft", icon: Bot },
@@ -1638,6 +1644,7 @@ export function DashboardApp() {
             )}
             {activeView === "profile" && <ProfilePage />}
             {activeView === "recommendations" && <KeeperRecommendationsPage />}
+            {activeView === "trade-analyzer" && <TradeAnalyzerPage />}
             {activeView === "scenarios" && <ScenarioComparisonPage />}
             {activeView === "outlooks" && <TeamOutlooksPage />}
             {activeView === "draft-impact" && <DraftImpactPage />}
@@ -4846,6 +4853,487 @@ function KeeperRecommendationsPage() {
         teamCount={data.teams.length}
       />
     </PagePanel>
+  );
+}
+
+function TradeAnalyzerPage() {
+  const { data } = useDashboard();
+  const leagueId = data.league?.id ?? null;
+  const teams = data.teams;
+
+  const [receivingTeamId, setReceivingTeamId] = React.useState<string>(teams[0]?.id ?? "");
+  const [givePlayerIds, setGivePlayerIds] = React.useState<string[]>([]);
+  const [receiveItems, setReceiveItems] = React.useState<
+    { playerId: string; keeperCostRound: number | null }[]
+  >([]);
+  const [result, setResult] = React.useState<TradeAnalysisResult | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [sensitivityShift, setSensitivityShift] = React.useState(0);
+  const [receiveSearch, setReceiveSearch] = React.useState("");
+
+  const teamRosterMap = React.useMemo(() => {
+    const m = new Map<string, { playerId: string; player: string; position: string }[]>();
+    for (const entry of data.finalRosters) {
+      if (!entry.teamId || !entry.playerId) continue;
+      const list = m.get(entry.teamId) ?? [];
+      list.push({ playerId: entry.playerId, player: entry.player, position: entry.position });
+      m.set(entry.teamId, list);
+    }
+    return m;
+  }, [data.finalRosters]);
+
+  const myRoster = teamRosterMap.get(receivingTeamId) ?? [];
+
+  const allOtherPlayers = React.useMemo(() => {
+    const result: { playerId: string; player: string; position: string; teamName: string }[] = [];
+    for (const entry of data.finalRosters) {
+      if (!entry.teamId || !entry.playerId) continue;
+      if (entry.teamId === receivingTeamId) continue;
+      const team = teams.find((t) => t.id === entry.teamId);
+      result.push({
+        playerId: entry.playerId,
+        player: entry.player,
+        position: entry.position,
+        teamName: team?.name ?? "Unknown",
+      });
+    }
+    return result;
+  }, [data.finalRosters, receivingTeamId, teams]);
+
+  const filteredReceivePlayers = React.useMemo(() => {
+    const q = receiveSearch.trim().toLowerCase();
+    if (!q) return allOtherPlayers.slice(0, 40);
+    return allOtherPlayers
+      .filter((p) => p.player.toLowerCase().includes(q) || p.position.toLowerCase().includes(q))
+      .slice(0, 40);
+  }, [allOtherPlayers, receiveSearch]);
+
+  const receivePlayerIds = new Set(receiveItems.map((r) => r.playerId));
+  const giveSet = new Set(givePlayerIds);
+
+  const toggleGive = (playerId: string) => {
+    setGivePlayerIds((prev) =>
+      prev.includes(playerId) ? prev.filter((id) => id !== playerId) : [...prev, playerId],
+    );
+    setResult(null);
+  };
+
+  const addReceive = (playerId: string, player: string) => {
+    if (receivePlayerIds.has(playerId)) return;
+    setReceiveItems((prev) => [...prev, { playerId, keeperCostRound: null }]);
+    setReceiveSearch("");
+    setResult(null);
+  };
+
+  const removeReceive = (playerId: string) => {
+    setReceiveItems((prev) => prev.filter((r) => r.playerId !== playerId));
+    setResult(null);
+  };
+
+  const updateReceiveCost = (playerId: string, cost: number | null) => {
+    setReceiveItems((prev) =>
+      prev.map((r) => (r.playerId === playerId ? { ...r, keeperCostRound: cost } : r)),
+    );
+    setResult(null);
+  };
+
+  const handleRun = React.useCallback(
+    async (shift = 0) => {
+      if (!leagueId || !receivingTeamId) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await analyzeKeeperTrade(leagueId, {
+          receivingTeamId,
+          give: givePlayerIds.map((id) => ({ playerId: id })),
+          receive: receiveItems.map((r) => ({
+            playerId: r.playerId,
+            keeperCostRound:
+              r.keeperCostRound != null ? r.keeperCostRound + shift : null,
+          })),
+        });
+        setResult(res);
+        setSensitivityShift(shift);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Analysis failed.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [leagueId, receivingTeamId, givePlayerIds, receiveItems],
+  );
+
+  const hasSensitivityData =
+    result !== null && receiveItems.some((r) => r.keeperCostRound != null);
+
+  const surplusDeltaColor =
+    result == null
+      ? ""
+      : result.surplusDelta > 0
+        ? "text-emerald-600"
+        : result.surplusDelta < 0
+          ? "text-rose-600"
+          : "text-zinc-500";
+
+  return (
+    <PagePanel
+      title="Trade Analyzer"
+      description="Model the keeper value impact of a proposed trade before you agree to it."
+    >
+      <div className="space-y-6">
+        {/* Team selector */}
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="min-w-[200px]">
+            <Label className="mb-1 block text-xs font-medium">Your Team</Label>
+            <select
+              className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400"
+              value={receivingTeamId}
+              onChange={(e) => {
+                setReceivingTeamId(e.target.value);
+                setGivePlayerIds([]);
+                setResult(null);
+              }}
+            >
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          {/* Give column */}
+          <div className="rounded-lg border border-rose-100 bg-rose-50 p-4">
+            <p className="mb-3 text-sm font-semibold text-rose-700">
+              Players You're Trading Away
+            </p>
+            {myRoster.length === 0 ? (
+              <p className="text-xs text-zinc-400">No roster data. Import final rosters first.</p>
+            ) : (
+              <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
+                {myRoster.map((p) => (
+                  <label
+                    key={p.playerId}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm transition-colors",
+                      giveSet.has(p.playerId)
+                        ? "bg-rose-200 text-rose-900"
+                        : "hover:bg-rose-100 text-zinc-700",
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      className="accent-rose-600"
+                      checked={giveSet.has(p.playerId)}
+                      onChange={() => toggleGive(p.playerId)}
+                    />
+                    <span className="font-medium">{p.player}</span>
+                    <Badge className="ml-auto text-[10px]">
+                      {p.position}
+                    </Badge>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Receive column */}
+          <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-4">
+            <p className="mb-3 text-sm font-semibold text-emerald-700">
+              Players You're Receiving
+            </p>
+            <div className="mb-2">
+              <Input
+                className="text-sm"
+                placeholder="Search players by name or position…"
+                value={receiveSearch}
+                onChange={(e) => setReceiveSearch(e.target.value)}
+              />
+            </div>
+            {receiveSearch && (
+              <div className="mb-3 max-h-40 overflow-y-auto rounded border border-zinc-200 bg-white shadow-sm">
+                {filteredReceivePlayers.length === 0 ? (
+                  <p className="p-2 text-xs text-zinc-400">No matches</p>
+                ) : (
+                  filteredReceivePlayers.map((p) => (
+                    <button
+                      key={p.playerId}
+                      onClick={() => addReceive(p.playerId, p.player)}
+                      disabled={receivePlayerIds.has(p.playerId)}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-zinc-50 disabled:opacity-40"
+                    >
+                      <span className="font-medium">{p.player}</span>
+                      <span className="text-xs text-zinc-400">{p.position}</span>
+                      <span className="ml-auto text-xs text-zinc-400">{p.teamName}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+            {receiveItems.length === 0 ? (
+              <p className="text-xs text-zinc-400">Search and add players above.</p>
+            ) : (
+              <div className="space-y-2">
+                {receiveItems.map((r) => {
+                  const info = allOtherPlayers.find((p) => p.playerId === r.playerId);
+                  return (
+                    <div
+                      key={r.playerId}
+                      className="flex items-center gap-2 rounded bg-white px-2 py-1.5 border border-emerald-100"
+                    >
+                      <span className="flex-1 text-sm font-medium text-zinc-800">
+                        {info?.player ?? r.playerId}
+                      </span>
+                      <Badge className="text-[10px]">
+                        {info?.position ?? "?"}
+                      </Badge>
+                      <div className="flex items-center gap-1">
+                        <Label className="text-[10px] text-zinc-500 whitespace-nowrap">
+                          Keeper Rd
+                        </Label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={20}
+                          className="w-14 rounded border border-zinc-200 px-1.5 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                          placeholder="—"
+                          value={r.keeperCostRound ?? ""}
+                          onChange={(e) =>
+                            updateReceiveCost(
+                              r.playerId,
+                              e.target.value ? Number(e.target.value) : null,
+                            )
+                          }
+                        />
+                      </div>
+                      <button
+                        onClick={() => removeReceive(r.playerId)}
+                        className="text-zinc-400 hover:text-rose-500"
+                        aria-label="Remove"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Run button */}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            onClick={() => handleRun(0)}
+            disabled={loading || !receivingTeamId || (givePlayerIds.length === 0 && receiveItems.length === 0)}
+          >
+            {loading ? (
+              <RefreshCw className="mr-2 size-4 animate-spin" aria-hidden />
+            ) : (
+              <ArrowLeftRight className="mr-2 size-4" aria-hidden />
+            )}
+            Analyze Trade
+          </Button>
+          {hasSensitivityData && result && (
+            <Button
+              variant="outline"
+              onClick={() => handleRun(sensitivityShift === 0 ? 1 : 0)}
+              disabled={loading}
+            >
+              {sensitivityShift === 0 ? "+1 Round Cost (Sensitivity)" : "Reset to Original Cost"}
+            </Button>
+          )}
+        </div>
+
+        {error && <p className="text-sm text-rose-600">{error}</p>}
+
+        {/* Results */}
+        {result && (
+          <div className="space-y-5">
+            {/* Delta summary */}
+            <div className="flex flex-wrap gap-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+              <div className="text-center">
+                <p className="text-xs text-zinc-500">Before Surplus</p>
+                <p className="text-xl font-bold text-zinc-700">
+                  {result.baselineSurplus > 0 ? "+" : ""}
+                  {result.baselineSurplus.toFixed(1)}
+                </p>
+              </div>
+              <div className="flex items-center text-zinc-300 text-xl">→</div>
+              <div className="text-center">
+                <p className="text-xs text-zinc-500">After Surplus</p>
+                <p className="text-xl font-bold text-zinc-700">
+                  {result.hypotheticalSurplus > 0 ? "+" : ""}
+                  {result.hypotheticalSurplus.toFixed(1)}
+                </p>
+              </div>
+              <div className="flex items-center text-zinc-300 text-xl">=</div>
+              <div className="text-center">
+                <p className="text-xs text-zinc-500">Net Change</p>
+                <p className={cn("text-xl font-bold", surplusDeltaColor)}>
+                  {result.surplusDelta > 0 ? "+" : ""}
+                  {result.surplusDelta.toFixed(1)} rounds
+                </p>
+              </div>
+              {sensitivityShift !== 0 && (
+                <Badge variant="warning" className="self-center">
+                  +{sensitivityShift} round cost sensitivity
+                </Badge>
+              )}
+            </div>
+
+            {/* Before / After keeper tables */}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <TradeKeeperTable title="Current Keepers" rows={result.baselineKeepers} variant="baseline" />
+              <TradeKeeperTable title="Projected Keepers" rows={result.hypotheticalKeepers} variant="hypothetical" />
+            </div>
+
+            {/* Gained / Lost summary */}
+            {(result.gained.length > 0 || result.lost.length > 0) && (
+              <div className="flex flex-wrap gap-3">
+                {result.gained.map((r) => (
+                  <Badge
+                    key={r.playerId}
+                    variant="success"
+                  >
+                    + {r.playerName} ({r.position})
+                  </Badge>
+                ))}
+                {result.lost.map((r) => (
+                  <Badge
+                    key={r.playerId}
+                    variant="danger"
+                  >
+                    − {r.playerName} ({r.position})
+                  </Badge>
+                ))}
+              </div>
+            )}
+
+            {/* AI narrative */}
+            {result.aiNarrative && (
+              <div
+                className={cn(
+                  "rounded-lg border p-4 space-y-2",
+                  result.aiNarrative.verdict === "good"
+                    ? "border-emerald-200 bg-emerald-50"
+                    : result.aiNarrative.verdict === "bad"
+                      ? "border-rose-200 bg-rose-50"
+                      : "border-zinc-200 bg-zinc-50",
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <Badge
+                    className={cn(
+                      result.aiNarrative.verdict === "good"
+                        ? "bg-emerald-600"
+                        : result.aiNarrative.verdict === "bad"
+                          ? "bg-rose-600"
+                          : "bg-zinc-500",
+                      "text-white capitalize",
+                    )}
+                  >
+                    {result.aiNarrative.verdict}
+                  </Badge>
+                  <span className="text-sm font-medium text-zinc-700">AI Trade Verdict</span>
+                </div>
+                <p className="text-sm text-zinc-700">{result.aiNarrative.summary}</p>
+                {result.aiNarrative.keyRisk && (
+                  <p className="text-xs text-zinc-500">
+                    <span className="font-medium">Key risk:</span> {result.aiNarrative.keyRisk}
+                  </p>
+                )}
+                {result.aiNarrative.opportunityCost && (
+                  <p className="text-xs text-zinc-500">
+                    <span className="font-medium">Opportunity cost:</span>{" "}
+                    {result.aiNarrative.opportunityCost}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </PagePanel>
+  );
+}
+
+function TradeKeeperTable({
+  title,
+  rows,
+  variant,
+}: {
+  title: string;
+  rows: TradePlayerRow[];
+  variant: "baseline" | "hypothetical";
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-200 overflow-hidden">
+      <div
+        className={cn(
+          "px-3 py-2 text-xs font-semibold uppercase tracking-wide",
+          variant === "baseline"
+            ? "bg-zinc-100 text-zinc-500"
+            : "bg-emerald-50 text-emerald-700",
+        )}
+      >
+        {title}
+      </div>
+      {rows.length === 0 ? (
+        <p className="px-3 py-4 text-xs text-zinc-400">No recommended keepers.</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-zinc-100 text-xs text-zinc-400">
+              <th className="px-3 py-1.5 text-left font-normal">Player</th>
+              <th className="px-3 py-1.5 text-right font-normal">Cost Rd</th>
+              <th className="px-3 py-1.5 text-right font-normal">ADP Rd</th>
+              <th className="px-3 py-1.5 text-right font-normal">Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.playerId}
+                className={cn(
+                  "border-b border-zinc-50 last:border-0",
+                  r.isIncoming && "bg-emerald-50",
+                )}
+              >
+                <td className="px-3 py-1.5">
+                  <span className="font-medium">{r.playerName}</span>
+                  <span className="ml-1.5 text-[10px] text-zinc-400">{r.position}</span>
+                  {r.isIncoming && (
+                    <Badge variant="success" className="ml-1.5 text-[9px] py-0">
+                      incoming
+                    </Badge>
+                  )}
+                </td>
+                <td className="px-3 py-1.5 text-right text-zinc-500">
+                  {r.keeperCostRound != null ? Math.round(r.keeperCostRound) : "—"}
+                </td>
+                <td className="px-3 py-1.5 text-right text-zinc-500">
+                  {r.adpRound != null ? Math.round(r.adpRound) : "—"}
+                </td>
+                <td
+                  className={cn(
+                    "px-3 py-1.5 text-right font-medium",
+                    (r.keeperValue ?? 0) > 0 ? "text-emerald-600" : "text-rose-500",
+                  )}
+                >
+                  {r.keeperValue != null
+                    ? `${r.keeperValue > 0 ? "+" : ""}${r.keeperValue.toFixed(1)}`
+                    : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 

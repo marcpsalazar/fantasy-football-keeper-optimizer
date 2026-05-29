@@ -60,7 +60,9 @@ These features have no direct equivalent in competing tools. They represent the 
 
 ---
 
-### 2.1 Keeper Trade Calculator
+### ~~2.1 Keeper Trade Calculator~~ ✅ Complete
+
+Trade calculator shipped: `apps/api/app/services/trade_analysis.py` runs the optimizer twice — baseline and hypothetical — using a DB savepoint to apply temporary roster/pick changes without persisting them. The `POST /api/leagues/{league_id}/optimizer/trade-analysis` endpoint accepts give/receive player lists with optional per-player keeper cost round overrides. The frontend `TradeAnalyzerPage` (reachable via "Trade Analyzer" in the sidebar) provides team selection, checkbox pickers for given-away players, a searchable receive panel with keeper round inputs, before/after surplus comparison, gained/lost keeper badges, and a "+1 round sensitivity" toggle. Optional AI narrative (verdict + summary + key risk + opportunity cost) is generated via the same OpenAI Responses API pattern used elsewhere. `FinalRosterEntry` type extended with `teamId` and `playerId` to support roster-based player lookups in the frontend.
 
 **Why it matters:** Keeper leagues are defined by trade strategy, and no tool evaluates trades in keeper cost terms. The trade calculator answers: "If I trade for Player X with a Year 2 keeper cost of Pick Y, what does my optimal keeper set become, and what's the net value swing vs. what I'm giving up?" The optimizer already solves the hard part — this is a UI and hypothetical re-run wrapper around it.
 
@@ -203,7 +205,7 @@ These features increase the value of the app for power users who return year-rou
 |----------|---------|--------|--------|
 | ✅ | ~~Multi-League Dashboard (1.3)~~ | — | — |
 | ✅ | ~~Sleeper League Import (1.1)~~ | — | — |
-| 1 | Keeper Trade Calculator (2.1) | Unique differentiator; no competing tool does this | Medium-High |
+| ✅ | ~~Keeper Trade Calculator (2.1)~~ | — | — |
 | 3 | Auction Draft Mode (1.2) | Opens a large excluded market segment | High |
 | 4 | Shareable Keeper Report Card (3.1) | Low effort, viral surface, organic acquisition | Low |
 | 5 | Commissioner Tools Pack (3.2) | Acquisition via commissioners = leverage | Medium |
@@ -214,10 +216,8 @@ These features increase the value of the app for power users who return year-rou
 
 ---
 
-## What to Build First
+## What to Build Next
 
-**Keeper Trade Calculator** is next.
+**Auction Draft Mode (1.2)** or **Shareable Keeper Report Card (3.1)** are the top candidates.
 
-Sleeper import is complete. The trade calculator is the feature most likely to be written about in fantasy football communities — it is genuinely unique, it is directly actionable, and it leverages the optimizer infrastructure already built.
-
-The shareable report card (3.1) is a low-effort companion once the mock draft grading is already producing letter grades and surplus summaries — it is worth adding shortly after the first two.
+The trade calculator is complete. The report card (3.1) is low effort and viral — it leverages the optimizer surplus data already computed. Auction mode (1.2) opens a large excluded market segment but requires a parallel optimizer path and new ADP source integration.
