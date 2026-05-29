@@ -21,8 +21,8 @@ from app.schemas.optimizer import OptimizerSettingsUpdate
 from app.services.auth import (
     clear_session_cookie,
     hash_password,
-    require_admin,
     require_current_user,
+    require_platform_admin,
     set_session_cookie,
     verify_password,
 )
@@ -39,7 +39,7 @@ class UserCreateRequest(BaseModel):
     email: str
     password: str
     alias: str | None = None
-    role: Literal["admin", "user"] = "user"
+    role: Literal["platform_admin", "user"] = "user"
     is_active: bool = True
     team_id: str | None = None
 
@@ -59,7 +59,7 @@ class UserUpdateRequest(BaseModel):
     email: str | None = None
     alias: str | None = None
     password: str | None = None
-    role: Literal["admin", "user"] | None = None
+    role: Literal["platform_admin", "user"] | None = None
     is_active: bool | None = None
     team_id: str | None = None
 
@@ -181,7 +181,7 @@ def change_password(
 @router.post("/admin/users", status_code=status.HTTP_201_CREATED)
 def create_user(
     payload: UserCreateRequest,
-    _: User | None = Depends(require_admin),
+    _: User | None = Depends(require_platform_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     email = payload.email.lower()
@@ -205,7 +205,7 @@ def create_user(
 
 @router.get("/admin/users")
 def list_users(
-    _: User | None = Depends(require_admin),
+    _: User | None = Depends(require_platform_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     users = session.exec(select(User).order_by(User.email)).all()
@@ -217,7 +217,7 @@ def list_users(
 def update_user(
     user_id: str,
     payload: UserUpdateRequest,
-    _: User | None = Depends(require_admin),
+    _: User | None = Depends(require_platform_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     user = _require_user(session, user_id)
@@ -248,7 +248,7 @@ def update_user(
 def reset_user_password(
     user_id: str,
     payload: PasswordResetRequest,
-    _: User | None = Depends(require_admin),
+    _: User | None = Depends(require_platform_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     user = _require_user(session, user_id)
@@ -262,16 +262,16 @@ def reset_user_password(
 @router.delete("/admin/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(
     user_id: str,
-    _: User | None = Depends(require_admin),
+    _: User | None = Depends(require_platform_admin),
     session: Session = Depends(get_session),
 ) -> Response:
     user = _require_user(session, user_id)
-    if user.role == "admin":
-        admin_count = session.exec(select(User).where(User.role == "admin")).all()
+    if user.role == "platform_admin":
+        admin_count = session.exec(select(User).where(User.role == "platform_admin")).all()
         if len(admin_count) <= 1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot delete the last admin user",
+                detail="Cannot delete the last platform admin",
             )
 
     for team in session.exec(select(Team).where(Team.user_id == user.id)).all():
@@ -339,7 +339,7 @@ def _assign_user_to_team(session: Session, user: User, team_id: str | None) -> N
 
 @router.get("/admin/defaults/optimizer-settings")
 def read_default_optimizer_settings(
-    _: User | None = Depends(require_admin),
+    _: User | None = Depends(require_platform_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     return _default_settings_payload(_active_default_settings(session))
@@ -348,7 +348,7 @@ def read_default_optimizer_settings(
 @router.patch("/admin/defaults/optimizer-settings")
 def update_default_optimizer_settings(
     payload: OptimizerSettingsUpdate,
-    _: User | None = Depends(require_admin),
+    _: User | None = Depends(require_platform_admin),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     settings = _active_default_settings(session)

@@ -41,7 +41,7 @@ export type AuthUser = {
   id: string;
   email: string;
   alias: string | null;
-  role: "admin" | "user";
+  role: "platform_admin" | "user";
   isActive: boolean;
   avatarDataUrl: string | null;
   teamId: string | null;
@@ -54,7 +54,7 @@ export type UserForm = {
   email: string;
   alias: string;
   password: string;
-  role: "admin" | "user";
+  role: "platform_admin" | "user";
   isActive: boolean;
   teamId: string | null;
 };
@@ -100,6 +100,28 @@ export type LeagueSummary = {
   keeperPickDeadline: string | null;
   regularSeasonStartDate: string | null;
   rosterSettings: LeagueRosterSettings;
+};
+
+export type LeagueWithRole = LeagueSummary & {
+  leagueRole: "league_admin" | "member";
+  avatarDataUrl: string | null;
+};
+
+export type LeagueCreateForm = {
+  name: string;
+  seasonYear: number;
+  scoringFormat: string;
+  draftType: string;
+};
+
+export type LeagueMembership = {
+  id: string;
+  userId: string;
+  leagueId: string;
+  role: "league_admin" | "member";
+  email: string;
+  alias: string | null;
+  avatarDataUrl: string | null;
 };
 
 export type LeagueCalendarSettings = {
@@ -398,9 +420,11 @@ type OutlookMetrics = {
   totalKeeperValue: number;
 };
 
-export async function loadWorkspaceData(): Promise<WorkspaceData | null> {
-  const leagues = await fetchTable("/api/leagues");
-  const leagueRow = leagues.rows[0];
+export async function loadWorkspaceData(leagueId?: string): Promise<WorkspaceData | null> {
+  const leagues = await fetchTable("/api/leagues/my");
+  const leagueRow = leagueId
+    ? (leagues.rows.find((r) => text(r.id) === leagueId) ?? leagues.rows[0])
+    : leagues.rows[0];
   if (!leagueRow) {
     return null;
   }
@@ -546,6 +570,86 @@ export async function resetAdminUserPassword(userId: string, password: string): 
 
 export async function deleteAdminUser(userId: string): Promise<void> {
   await fetch(`${API_BASE_URL}/api/admin/users/${userId}`, {
+    credentials: "include",
+    method: "DELETE",
+  }).then(async (response) => {
+    if (!response.ok) {
+      throw new Error(`API ${response.status}: ${await response.text()}`);
+    }
+  });
+}
+
+export async function listMyLeagues(): Promise<LeagueWithRole[]> {
+  const payload = await fetchTable("/api/leagues/my");
+  return payload.rows.map(mapLeagueWithRole);
+}
+
+export async function createLeague(form: LeagueCreateForm): Promise<LeagueWithRole> {
+  const payload = await fetchJson<ApiRow>("/api/leagues", {
+    body: JSON.stringify({
+      name: form.name,
+      season_year: form.seasonYear,
+      scoring_format: form.scoringFormat,
+      draft_type: form.draftType,
+    }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapLeagueWithRole(payload);
+}
+
+export async function deleteLeague(leagueId: string): Promise<void> {
+  await fetch(`${API_BASE_URL}/api/leagues/${leagueId}`, {
+    credentials: "include",
+    method: "DELETE",
+  }).then(async (response) => {
+    if (!response.ok) {
+      throw new Error(`API ${response.status}: ${await response.text()}`);
+    }
+  });
+}
+
+export async function uploadLeagueAvatar(leagueId: string, dataUrl: string | null): Promise<void> {
+  await fetchJson(`/api/leagues/${leagueId}/memberships/me/avatar`, {
+    body: JSON.stringify({ avatar_data_url: dataUrl }),
+    headers: { "content-type": "application/json" },
+    method: "PATCH",
+  });
+}
+
+export async function getLeagueMemberships(leagueId: string): Promise<LeagueMembership[]> {
+  const payload = await fetchTable(`/api/leagues/${leagueId}/memberships`);
+  return payload.rows.map(mapLeagueMembership);
+}
+
+export async function upsertLeagueMembership(
+  leagueId: string,
+  userId: string,
+  role: "league_admin" | "member",
+): Promise<LeagueMembership> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/memberships`, {
+    body: JSON.stringify({ user_id: userId, role }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapLeagueMembership(payload);
+}
+
+export async function updateLeagueMemberRole(
+  leagueId: string,
+  userId: string,
+  role: "league_admin" | "member",
+): Promise<LeagueMembership> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/memberships/${userId}/role`, {
+    body: JSON.stringify({ role }),
+    headers: { "content-type": "application/json" },
+    method: "PATCH",
+  });
+  return mapLeagueMembership(payload);
+}
+
+export async function removeLeagueMember(leagueId: string, userId: string): Promise<void> {
+  await fetch(`${API_BASE_URL}/api/leagues/${leagueId}/memberships/${userId}`, {
     credentials: "include",
     method: "DELETE",
   }).then(async (response) => {
@@ -1024,7 +1128,7 @@ function mapAuthUser(row: ApiRow): AuthUser {
     id: text(row.id),
     email: text(row.email),
     alias: text(row.alias) || null,
-    role: text(row.role) === "admin" ? "admin" : "user",
+    role: text(row.role) === "platform_admin" ? "platform_admin" : "user",
     isActive: Boolean(row.is_active),
     avatarDataUrl: text(row.avatar_data_url) || null,
     teamId: text(row.team_id) || null,
@@ -1059,6 +1163,28 @@ function mapLeague(row: ApiRow): LeagueSummary {
     keeperPickDeadline: text(row.keeper_pick_deadline) || null,
     regularSeasonStartDate: text(row.regular_season_start_date) || null,
     rosterSettings: mapLeagueRosterSettings(row.roster_settings),
+  };
+}
+
+function mapLeagueWithRole(row: ApiRow): LeagueWithRole {
+  const role = text(row.league_role);
+  return {
+    ...mapLeague(row),
+    leagueRole: role === "league_admin" ? "league_admin" : "member",
+    avatarDataUrl: text(row.avatar_data_url) || null,
+  };
+}
+
+function mapLeagueMembership(row: ApiRow): LeagueMembership {
+  const role = text(row.role);
+  return {
+    id: text(row.id),
+    userId: text(row.user_id),
+    leagueId: text(row.league_id),
+    role: role === "league_admin" ? "league_admin" : "member",
+    email: text(row.email),
+    alias: text(row.alias) || null,
+    avatarDataUrl: text(row.avatar_data_url) || null,
   };
 }
 

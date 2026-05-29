@@ -63,9 +63,11 @@ import {
   changeOwnPassword,
   countDraftRounds,
   createAdminUser,
+  createLeague,
   createMockDraft,
   createTeam,
   deleteAdminUser,
+  deleteLeague,
   deleteMockDraft,
   deleteTeam,
   downloadAdpTemplate,
@@ -76,12 +78,14 @@ import {
   generateScenarioNarrative,
   generateMockDraftStrategyPlan,
   getAiUsage,
+  getLeagueMemberships,
   getPlayerSummary,
   hydrateTeams,
   importCompositeAdpSnapshot,
   importCsv,
   getCurrentUser,
   listAdminUsers,
+  listMyLeagues,
   listMockDrafts,
   loadWorkspaceData,
   loadScenarioSelections,
@@ -93,6 +97,7 @@ import {
   pauseMockDraft,
   previewCsv,
   readMockDraft,
+  removeLeagueMember,
   resumeMockDraft,
   recommendScenarioSelections,
   resetAdminUserPassword,
@@ -103,9 +108,12 @@ import {
   saveScenarioSelection,
   setManualOverride,
   startMockDraft,
-  updateProfile,
   updateAdminUser,
   updateLeagueCalendarSettings,
+  updateLeagueMemberRole,
+  updateProfile,
+  uploadLeagueAvatar,
+  upsertLeagueMembership,
   updateTeam,
   type AdminUser,
   type TeamForm,
@@ -114,7 +122,10 @@ import {
   type CsvPreviewResult,
   type DraftImpactPick,
   type LeagueCalendarSettings,
+  type LeagueCreateForm,
+  type LeagueMembership,
   type LeagueRosterSettings,
+  type LeagueWithRole,
   type ManualOverrideType,
   type AiUsage,
   type MockDraftAvailablePlayer,
@@ -480,12 +491,21 @@ type DashboardContextValue = {
   isBusy: boolean;
   statusMessage: string;
   isAdmin: boolean;
+  isPlatformAdmin: boolean;
+  isLeagueAdmin: boolean;
+  activeLeagueId: string | null;
+  userLeagues: LeagueWithRole[];
+  activeLeagueMembership: LeagueWithRole | undefined;
   selectedScenarioByTeam: TeamScenarioSelection;
   tableDisplayResetSignal: number;
-  refreshData: () => Promise<void>;
+  refreshData: (leagueId?: string) => Promise<void>;
+  switchLeague: (leagueId: string) => Promise<void>;
+  createLeagueNow: (form: LeagueCreateForm) => Promise<void>;
+  deleteLeagueNow: (leagueId: string) => Promise<void>;
   logoutNow: () => Promise<void>;
   resetDisplayAndRefresh: () => Promise<void>;
   updateProfileAvatarNow: (avatarDataUrl: string | null) => Promise<void>;
+  updateLeagueAvatarNow: (leagueId: string, avatarDataUrl: string | null) => Promise<void>;
   updateProfileAliasNow: (alias: string | null) => Promise<void>;
   changePasswordNow: (currentPassword: string, newPassword: string) => Promise<void>;
   setSelectedScenarioForTeam: (
@@ -515,6 +535,10 @@ type DashboardContextValue = {
     overrideType: ManualOverrideType,
   ) => Promise<void>;
   exportRecommendations: (format: "xlsx" | "csv" | "pdf", teamId?: string) => void;
+  getLeagueMembershipsNow: (leagueId: string) => Promise<LeagueMembership[]>;
+  upsertLeagueMemberNow: (leagueId: string, userId: string, role: "league_admin" | "member") => Promise<void>;
+  updateLeagueMemberRoleNow: (leagueId: string, userId: string, role: "league_admin" | "member") => Promise<void>;
+  removeLeagueMemberNow: (leagueId: string, userId: string) => Promise<void>;
 };
 
 const DashboardContext = React.createContext<DashboardContextValue | null>(null);
@@ -550,11 +574,17 @@ export function DashboardApp() {
   );
   const [tableDisplayResetSignal, setTableDisplayResetSignal] = React.useState(0);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
+  const [activeLeagueId, setActiveLeagueId] = React.useState<string | null>(null);
+  const [userLeagues, setUserLeagues] = React.useState<LeagueWithRole[]>([]);
+  const [createLeagueModalOpen, setCreateLeagueModalOpen] = React.useState(false);
 
-  const isAdmin = currentUser?.role === "admin";
+  const isPlatformAdmin = currentUser?.role === "platform_admin";
+  const activeLeagueMembership = userLeagues.find((l) => l.id === activeLeagueId);
+  const isLeagueAdmin = isPlatformAdmin || activeLeagueMembership?.leagueRole === "league_admin";
+  const isAdmin = isPlatformAdmin;
   const visibleNavItems = React.useMemo(
-    () => navItems.filter((item) => !item.adminOnly || isAdmin),
-    [isAdmin],
+    () => navItems.filter((item) => !item.adminOnly || isLeagueAdmin),
+    [isLeagueAdmin],
   );
   const activeItem = visibleNavItems.find((item) => item.id === activeView) ?? visibleNavItems[0];
   const activeLabel = activeView === "profile" ? "Profile" : activeItem.label;
@@ -627,10 +657,14 @@ export function DashboardApp() {
     });
   }, [workspace.scenarioComparisons, workspace.teams]);
 
-  const refreshData = React.useCallback(async () => {
+  const refreshData = React.useCallback(async (leagueId?: string) => {
     setApiStatus("loading");
     try {
-      const loaded = await loadWorkspaceData();
+      const [loaded, leagues] = await Promise.all([
+        loadWorkspaceData(leagueId),
+        listMyLeagues().catch(() => [] as LeagueWithRole[]),
+      ]);
+      setUserLeagues(leagues);
       if (!loaded) {
         setWorkspace(mockWorkspaceData);
         setSettings(mockWorkspaceData.settings);
@@ -641,6 +675,7 @@ export function DashboardApp() {
       setWorkspace(loaded);
       setSettings(loaded.settings);
       if (loaded.league?.id) {
+        setActiveLeagueId(loaded.league.id);
         const selections = await loadScenarioSelections(loaded.league.id);
         setSelectedScenarioByTeam(selections as TeamScenarioSelection);
       }
@@ -659,6 +694,46 @@ export function DashboardApp() {
     setTableDisplayResetSignal((current) => current + 1);
     await refreshData();
   }, [refreshData]);
+
+  const switchLeague = React.useCallback(async (leagueId: string) => {
+    setActiveLeagueId(leagueId);
+    setSelectedScenarioByTeam({});
+    setTableDisplayResetSignal((n) => n + 1);
+    await refreshData(leagueId);
+  }, [refreshData]);
+
+  const createLeagueNow = React.useCallback(async (form: LeagueCreateForm) => {
+    setIsBusy(true);
+    try {
+      const newLeague = await createLeague(form);
+      setStatusMessage(`League "${newLeague.name}" created.`);
+      await refreshData(newLeague.id);
+    } finally {
+      setIsBusy(false);
+    }
+  }, [refreshData]);
+
+  const deleteLeagueNow = React.useCallback(async (leagueId: string) => {
+    setIsBusy(true);
+    try {
+      await deleteLeague(leagueId);
+      const remaining = userLeagues.filter((l) => l.id !== leagueId);
+      const next = remaining[0];
+      setStatusMessage("League deleted.");
+      if (next) {
+        await refreshData(next.id);
+      } else {
+        setUserLeagues([]);
+        setActiveLeagueId(null);
+        setWorkspace(mockWorkspaceData);
+        setSettings(mockWorkspaceData.settings);
+        setApiStatus("mock");
+        setStatusMessage("League deleted. No leagues remaining.");
+      }
+    } finally {
+      setIsBusy(false);
+    }
+  }, [refreshData, userLeagues]);
 
   const loginNow = React.useCallback(
     async (email: string, password: string) => {
@@ -705,6 +780,22 @@ export function DashboardApp() {
       setIsBusy(false);
     }
   }, []);
+
+  const updateLeagueAvatarNow = React.useCallback(async (leagueId: string, avatarDataUrl: string | null) => {
+    setIsBusy(true);
+    try {
+      await uploadLeagueAvatar(leagueId, avatarDataUrl);
+      const leagues = await listMyLeagues().catch(() => userLeagues);
+      setUserLeagues(leagues);
+      setStatusMessage(avatarDataUrl ? "League avatar updated." : "League avatar removed.");
+    } catch (error) {
+      setApiStatus("error");
+      setStatusMessage(error instanceof Error ? error.message : "Updating league avatar failed.");
+      throw error;
+    } finally {
+      setIsBusy(false);
+    }
+  }, [userLeagues]);
 
   const updateProfileAliasNow = React.useCallback(async (alias: string | null) => {
     setIsBusy(true);
@@ -774,10 +865,10 @@ export function DashboardApp() {
   }, [authChecked, authRequired, currentUser, refreshData]);
 
   React.useEffect(() => {
-    if (!isAdmin && activeView === "admin") {
+    if (!isLeagueAdmin && !isPlatformAdmin && activeView === "admin") {
       setActiveView("dashboard");
     }
-  }, [activeView, isAdmin]);
+  }, [activeView, isLeagueAdmin, isPlatformAdmin]);
 
   const requireLeagueId = React.useCallback(() => {
     if (workspaceData.source !== "api" || !workspaceData.league?.id) {
@@ -1139,6 +1230,26 @@ export function DashboardApp() {
     [requireLeagueId],
   );
 
+  const getLeagueMembershipsNow = React.useCallback(async (leagueId: string) => {
+    return getLeagueMemberships(leagueId);
+  }, []);
+
+  const upsertLeagueMemberNow = React.useCallback(async (leagueId: string, userId: string, role: "league_admin" | "member") => {
+    await upsertLeagueMembership(leagueId, userId, role);
+    const leagues = await listMyLeagues().catch(() => userLeagues);
+    setUserLeagues(leagues);
+  }, [userLeagues]);
+
+  const updateLeagueMemberRoleNow = React.useCallback(async (leagueId: string, userId: string, role: "league_admin" | "member") => {
+    await updateLeagueMemberRole(leagueId, userId, role);
+  }, []);
+
+  const removeLeagueMemberNow = React.useCallback(async (leagueId: string, userId: string) => {
+    await removeLeagueMember(leagueId, userId);
+    const leagues = await listMyLeagues().catch(() => userLeagues);
+    setUserLeagues(leagues);
+  }, [userLeagues]);
+
   const contextValue = React.useMemo<DashboardContextValue>(
     () => ({
       data: workspaceData,
@@ -1147,6 +1258,11 @@ export function DashboardApp() {
       isBusy,
       statusMessage,
       isAdmin,
+      isPlatformAdmin,
+      isLeagueAdmin,
+      activeLeagueId,
+      userLeagues,
+      activeLeagueMembership,
       selectedScenarioByTeam,
       tableDisplayResetSignal,
       csvPreviews,
@@ -1160,9 +1276,13 @@ export function DashboardApp() {
       updateTeamNow,
       deleteTeamNow,
       refreshData,
+      switchLeague,
+      createLeagueNow,
+      deleteLeagueNow,
       logoutNow,
       resetDisplayAndRefresh,
       updateProfileAvatarNow,
+      updateLeagueAvatarNow,
       updateProfileAliasNow,
       changePasswordNow,
       setSelectedScenarioForTeam,
@@ -1175,28 +1295,45 @@ export function DashboardApp() {
       saveRosterSettings,
       setManualOverrideNow,
       exportRecommendations,
+      getLeagueMembershipsNow,
+      upsertLeagueMemberNow,
+      updateLeagueMemberRoleNow,
+      removeLeagueMemberNow,
     }),
     [
+      activeLeagueId,
+      activeLeagueMembership,
       apiStatus,
       changePasswordNow,
+      createLeagueNow,
       csvPreviews,
       currentUser,
       createUserNow,
       createTeamNow,
+      deleteLeagueNow,
       deleteUserNow,
       deleteTeamNow,
       downloadAdpTemplateNow,
       exportRecommendations,
+      getLeagueMembershipsNow,
       importCompositeAdpNow,
       importCsvText,
       isBusy,
       isAdmin,
+      isLeagueAdmin,
+      isPlatformAdmin,
       logoutNow,
       previewCsvText,
       refreshData,
+      removeLeagueMemberNow,
       resetDisplayAndRefresh,
+      switchLeague,
+      updateLeagueAvatarNow,
+      updateLeagueMemberRoleNow,
       updateProfileAvatarNow,
       updateProfileAliasNow,
+      upsertLeagueMemberNow,
+      userLeagues,
       runOptimizerNow,
       runScenariosNow,
       saveLeagueCalendarSettings,
@@ -1324,24 +1461,108 @@ export function DashboardApp() {
                       onClick={() => setUserMenuOpen((open) => !open)}
                       type="button"
                     >
-                      <AvatarImage user={currentUser} className="size-12" iconClassName="size-7" />
+                      <AvatarImage
+                        avatarDataUrl={activeLeagueMembership?.avatarDataUrl ?? currentUser.avatarDataUrl}
+                        className="size-12"
+                        iconClassName="size-7"
+                      />
                     </button>
                     {userMenuOpen ? (
-                      <div className="absolute right-0 top-14 z-30 w-72 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
+                      <div className="absolute right-0 top-14 z-30 w-80 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
                         <div className="flex items-center gap-3 border-b border-zinc-100 px-2 pb-3 pt-1">
-                          <AvatarImage user={currentUser} className="size-10" iconClassName="size-6" />
+                          <AvatarImage
+                            avatarDataUrl={activeLeagueMembership?.avatarDataUrl ?? currentUser.avatarDataUrl}
+                            className="size-10"
+                            iconClassName="size-6"
+                          />
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium text-zinc-950">{currentUser.email}</p>
                             <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                              <Badge variant={isAdmin ? "success" : "info"}>{currentUser.role}</Badge>
-                              {currentUser.teamName ? (
-                                <Badge variant="success">{currentUser.teamName}</Badge>
+                              {isPlatformAdmin ? (
+                                <Badge variant="danger">Platform Admin</Badge>
+                              ) : null}
+                              {activeLeagueMembership ? (
+                                <Badge variant={isLeagueAdmin ? "success" : "info"}>
+                                  {isLeagueAdmin ? "League Admin" : "Member"}
+                                </Badge>
                               ) : null}
                             </div>
                           </div>
                         </div>
+                        {userLeagues.length > 0 ? (
+                          <div className="border-b border-zinc-100 py-2">
+                            <div className="mb-1 flex items-center justify-between px-2">
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Leagues</span>
+                              <button
+                                className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs text-emerald-700 hover:bg-emerald-50"
+                                onClick={() => {
+                                  setUserMenuOpen(false);
+                                  setCreateLeagueModalOpen(true);
+                                }}
+                                title="Create a new league"
+                                type="button"
+                              >
+                                <Plus className="size-3" aria-hidden="true" />
+                                New
+                              </button>
+                            </div>
+                            {userLeagues.map((league) => {
+                              const isActive = league.id === activeLeagueId;
+                              return (
+                                <button
+                                  key={league.id}
+                                  className={cn(
+                                    "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                                    isActive
+                                      ? "bg-emerald-50 text-emerald-900"
+                                      : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950",
+                                  )}
+                                  onClick={() => {
+                                    if (!isActive) {
+                                      setUserMenuOpen(false);
+                                      void switchLeague(league.id);
+                                    }
+                                  }}
+                                  type="button"
+                                >
+                                  <AvatarImage
+                                    avatarDataUrl={league.avatarDataUrl}
+                                    className="size-7 shrink-0"
+                                    iconClassName="size-4"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-sm font-medium leading-tight">
+                                      {league.name}
+                                      <span className="ml-1 font-normal text-zinc-500">{league.seasonYear}</span>
+                                    </p>
+                                    <p className="text-[11px] text-zinc-400">
+                                      {league.leagueRole === "league_admin" ? "League Admin" : "Member"}
+                                    </p>
+                                  </div>
+                                  {isActive ? (
+                                    <span className="size-2 shrink-0 rounded-full bg-emerald-600" aria-label="Active" />
+                                  ) : null}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="border-b border-zinc-100 py-2 px-2">
+                            <button
+                              className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm text-emerald-700 hover:bg-emerald-50"
+                              onClick={() => {
+                                setUserMenuOpen(false);
+                                setCreateLeagueModalOpen(true);
+                              }}
+                              type="button"
+                            >
+                              <Plus className="size-4" aria-hidden="true" />
+                              Create your first league
+                            </button>
+                          </div>
+                        )}
                         <button
-                          className="mt-2 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
+                          className="mt-1 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
                           onClick={() => {
                             setActiveView("profile");
                             setUserMenuOpen(false);
@@ -1366,6 +1587,16 @@ export function DashboardApp() {
                     ) : null}
                   </div>
                 ) : null}
+                {createLeagueModalOpen ? (
+                  <CreateLeagueModal
+                    isBusy={isBusy}
+                    onClose={() => setCreateLeagueModalOpen(false)}
+                    onSubmit={async (form) => {
+                      await createLeagueNow(form);
+                      setCreateLeagueModalOpen(false);
+                    }}
+                  />
+                ) : null}
               </div>
             </div>
           </header>
@@ -1376,7 +1607,7 @@ export function DashboardApp() {
             {activeView === "teams" && <TeamsPage />}
             {activeView === "draft" && <DraftResultsPage />}
             {activeView === "rosters" && <FinalRostersPage />}
-            {activeView === "admin" && isAdmin && (
+            {activeView === "admin" && isLeagueAdmin && (
               <AdminPage
                 adpCsvText={adpCsvText}
                 draftCsvText={draftCsvText}
@@ -1621,18 +1852,21 @@ function AvatarImage({
   className,
   iconClassName = "size-5",
   user,
+  avatarDataUrl,
 }: {
   className?: string;
   iconClassName?: string;
-  user: AuthUser;
+  user?: AuthUser | null;
+  avatarDataUrl?: string | null;
 }) {
-  if (user.avatarDataUrl) {
+  const src = avatarDataUrl ?? user?.avatarDataUrl ?? null;
+  if (src) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
         alt=""
         className={cn("rounded-full object-cover", className)}
-        src={user.avatarDataUrl}
+        src={src}
       />
     );
   }
@@ -1649,8 +1883,207 @@ function AvatarImage({
   );
 }
 
+function LeagueAvatarRow({
+  isBusy,
+  league,
+  onUpload,
+  onRemove,
+}: {
+  isBusy: boolean;
+  league: LeagueWithRole;
+  onUpload: (dataUrl: string) => Promise<void>;
+  onRemove: () => Promise<void>;
+}) {
+  const [error, setError] = React.useState("");
+  const [pendingDataUrl, setPendingDataUrl] = React.useState<string | null>(null);
+  const [inputKey, setInputKey] = React.useState(0);
+
+  const handleFile = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") return;
+      if (reader.result.length > 1_500_000) {
+        setError("Image is too large.");
+        return;
+      }
+      setError("");
+      setPendingDataUrl(reader.result);
+    };
+    reader.onerror = () => setError("Could not read image.");
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = async () => {
+    if (!pendingDataUrl) return;
+    try {
+      await onUpload(pendingDataUrl);
+      setPendingDataUrl(null);
+      setInputKey((k) => k + 1);
+    } catch {
+      setError("Failed to save league avatar.");
+    }
+  };
+
+  const handleRemove = async () => {
+    setError("");
+    setPendingDataUrl(null);
+    setInputKey((k) => k + 1);
+    try {
+      await onRemove();
+    } catch {
+      setError("Failed to remove.");
+    }
+  };
+
+  const previewUrl = pendingDataUrl ?? league.avatarDataUrl;
+
+  return (
+    <div className="flex items-center gap-4 border-b border-zinc-100 pb-4 last:border-0 last:pb-0">
+      <AvatarImage avatarDataUrl={previewUrl} className="size-12 shrink-0" iconClassName="size-7" />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-zinc-950">{league.name} <span className="font-normal text-zinc-400">{league.seasonYear}</span></p>
+        <div className="mt-2 flex items-center gap-2">
+          <Input
+            key={inputKey}
+            accept="image/*"
+            disabled={isBusy}
+            onChange={(e) => handleFile(e.target.files?.[0])}
+            type="file"
+            className="h-8 text-xs"
+          />
+          {pendingDataUrl ? (
+            <Button
+              disabled={isBusy}
+              onClick={() => { void handleSave(); }}
+              size="sm"
+              type="button"
+            >
+              Save
+            </Button>
+          ) : null}
+          {!pendingDataUrl && league.avatarDataUrl ? (
+            <Button
+              disabled={isBusy}
+              onClick={() => { void handleRemove(); }}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <X className="size-3.5" aria-hidden="true" />
+              Remove
+            </Button>
+          ) : null}
+        </div>
+        {error ? <p className="mt-1 text-xs text-rose-700">{error}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function CreateLeagueModal({
+  isBusy,
+  onClose,
+  onSubmit,
+}: {
+  isBusy: boolean;
+  onClose: () => void;
+  onSubmit: (form: LeagueCreateForm) => Promise<void>;
+}) {
+  const currentYear = new Date().getFullYear();
+  const [name, setName] = React.useState("");
+  const [seasonYear, setSeasonYear] = React.useState(currentYear);
+  const [scoringFormat, setScoringFormat] = React.useState("superflex");
+  const [draftType, setDraftType] = React.useState("snake");
+  const [error, setError] = React.useState("");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
+          <h2 className="text-base font-semibold text-zinc-950">Create League</h2>
+          <button
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="size-4" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="space-y-4 px-5 py-4">
+          <div>
+            <Label htmlFor="cl-name">League Name</Label>
+            <Input
+              id="cl-name"
+              className="mt-1"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Maryland Mayhem"
+            />
+          </div>
+          <div>
+            <Label htmlFor="cl-year">Season Year</Label>
+            <Input
+              id="cl-year"
+              className="mt-1"
+              type="number"
+              value={seasonYear}
+              onChange={(e) => setSeasonYear(Number(e.target.value))}
+            />
+          </div>
+          <div>
+            <Label htmlFor="cl-scoring">Scoring Format</Label>
+            <select
+              id="cl-scoring"
+              className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+              value={scoringFormat}
+              onChange={(e) => setScoringFormat(e.target.value)}
+            >
+              <option value="superflex">Superflex</option>
+              <option value="standard">Standard</option>
+              <option value="half_ppr">Half PPR</option>
+              <option value="ppr">PPR</option>
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="cl-draft">Draft Type</Label>
+            <select
+              id="cl-draft"
+              className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+              value={draftType}
+              onChange={(e) => setDraftType(e.target.value)}
+            >
+              <option value="snake">Snake</option>
+              <option value="auction">Auction</option>
+            </select>
+          </div>
+          {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-zinc-100 px-5 py-4">
+          <Button variant="outline" onClick={onClose} disabled={isBusy}>
+            Cancel
+          </Button>
+          <Button
+            disabled={isBusy || !name.trim()}
+            onClick={async () => {
+              setError("");
+              try {
+                await onSubmit({ name: name.trim(), seasonYear, scoringFormat, draftType });
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Failed to create league.");
+              }
+            }}
+          >
+            Create League
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProfilePage() {
-  const { changePasswordNow, currentUser, isBusy, updateProfileAliasNow, updateProfileAvatarNow } = useDashboard();
+  const { changePasswordNow, currentUser, isBusy, updateLeagueAvatarNow, updateProfileAliasNow, updateProfileAvatarNow, userLeagues } = useDashboard();
   const [error, setError] = React.useState("");
   const [aliasError, setAliasError] = React.useState("");
   const [aliasSaved, setAliasSaved] = React.useState(false);
@@ -1722,7 +2155,7 @@ function ProfilePage() {
             <div className="min-w-0 space-y-1">
               <p className="truncate text-base font-semibold text-zinc-950">{currentUser.email}</p>
               <div>
-                <Badge variant={currentUser.role === "admin" ? "success" : "info"}>
+                <Badge variant={currentUser.role === "platform_admin" ? "success" : "info"}>
                   {currentUser.role}
                 </Badge>
               </div>
@@ -1803,6 +2236,26 @@ function ProfilePage() {
           </form>
         </CardContent>
       </Card>
+
+      {userLeagues.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>League Avatars</CardTitle>
+            <CardDescription>Upload a different profile image for each league you belong to.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {userLeagues.map((league) => (
+              <LeagueAvatarRow
+                key={league.id}
+                isBusy={isBusy}
+                league={league}
+                onUpload={async (dataUrl) => { await updateLeagueAvatarNow(league.id, dataUrl); }}
+                onRemove={async () => { await updateLeagueAvatarNow(league.id, null); }}
+              />
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -2215,10 +2668,10 @@ function LeagueDashboard() {
 }
 
 function GuidePage({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
-  const { isAdmin } = useDashboard();
+  const { isAdmin, isLeagueAdmin } = useDashboard();
   const visibleScreenGuides = React.useMemo(
-    () => screenGuides.filter((guide) => !guide.adminOnly || isAdmin),
-    [isAdmin],
+    () => screenGuides.filter((guide) => !guide.adminOnly || isAdmin || isLeagueAdmin),
+    [isAdmin, isLeagueAdmin],
   );
 
   return (
@@ -2575,104 +3028,396 @@ function AdminPage({
   setDraftCsvText: (value: string) => void;
   setRosterCsvText: (value: string) => void;
 }) {
+  const { isLeagueAdmin, isPlatformAdmin } = useDashboard();
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-          <Users className="size-5" aria-hidden="true" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-zinc-950">User Management</h2>
-          <p className="mt-1 text-sm text-zinc-600">
-            Create accounts, reset passwords, and assign teams.
-          </p>
-        </div>
-      </div>
-      <UserManagementPanel />
+      {isLeagueAdmin ? (
+        <>
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+              <CalendarDays className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">League Dates</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Set the keeper deadline and NFL regular season start date.
+              </p>
+            </div>
+          </div>
+          <LeagueCalendarSettingsPanel />
 
-      <div className="flex items-center gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-          <CalendarDays className="size-5" aria-hidden="true" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-zinc-950">League Dates</h2>
-          <p className="mt-1 text-sm text-zinc-600">
-            Set the keeper deadline and NFL regular season start date.
-          </p>
-        </div>
-      </div>
-      <LeagueCalendarSettingsPanel />
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+              <Users className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">League Management</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Add, edit, delete, and assign teams to application users.
+              </p>
+            </div>
+          </div>
+          <LeagueManagementPanel />
 
-      <div className="flex items-center gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-          <Users className="size-5" aria-hidden="true" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-zinc-950">League Management</h2>
-          <p className="mt-1 text-sm text-zinc-600">
-            Add, edit, delete, and assign teams to application users.
-          </p>
-        </div>
-      </div>
-      <LeagueManagementPanel />
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+              <SlidersHorizontal className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">League Settings</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Configure roster slots, bench limits, and draftable position caps.
+              </p>
+            </div>
+          </div>
+          <LeagueRosterSettingsPanel />
 
-      <div className="flex items-center gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-          <SlidersHorizontal className="size-5" aria-hidden="true" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-zinc-950">League Settings</h2>
-          <p className="mt-1 text-sm text-zinc-600">
-            Configure roster slots, bench limits, and draftable position caps.
-          </p>
-        </div>
-      </div>
-      <LeagueRosterSettingsPanel />
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+              <Upload className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">League Data Imports</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Upload draft results and final rosters used by the optimizer.
+              </p>
+            </div>
+          </div>
+          <AdminDataImports
+            draftCsvText={draftCsvText}
+            rosterCsvText={rosterCsvText}
+            setDraftCsvText={setDraftCsvText}
+            setRosterCsvText={setRosterCsvText}
+          />
 
-      <div className="flex items-center gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-          <Upload className="size-5" aria-hidden="true" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-zinc-950">League Data Imports</h2>
-          <p className="mt-1 text-sm text-zinc-600">
-            Upload draft results and final rosters used by the optimizer.
-          </p>
-        </div>
-      </div>
-      <AdminDataImports
-        draftCsvText={draftCsvText}
-        rosterCsvText={rosterCsvText}
-        setDraftCsvText={setDraftCsvText}
-        setRosterCsvText={setRosterCsvText}
-      />
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+              <CalendarDays className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">ADP Input</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Build, import, and review the league&apos;s active market snapshot.
+              </p>
+            </div>
+          </div>
+          <ADPInputPage csvText={adpCsvText} setCsvText={setAdpCsvText} />
 
-      <div className="flex items-center gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-          <CalendarDays className="size-5" aria-hidden="true" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-zinc-950">ADP Input</h2>
-          <p className="mt-1 text-sm text-zinc-600">
-            Build, import, and review the league&apos;s active market snapshot.
-          </p>
-        </div>
-      </div>
-      <ADPInputPage csvText={adpCsvText} setCsvText={setAdpCsvText} />
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+              <Users className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">League Members</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Add or remove members and manage their league roles.
+              </p>
+            </div>
+          </div>
+          <LeagueMembersPanel />
 
-      <div className="flex items-center gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-          <Bot className="size-5" aria-hidden="true" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-zinc-950">AI Usage</h2>
-          <p className="mt-1 text-sm text-zinc-600">
-            Token consumption, request counts, and active feature flags for the current month.
-          </p>
-        </div>
-      </div>
-      <AIUsagePanel />
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-rose-700 text-white">
+              <Trash2 className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">Danger Zone</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Permanently delete this league and all associated data.
+              </p>
+            </div>
+          </div>
+          <DeleteLeaguePanel />
+        </>
+      ) : null}
+
+      {isPlatformAdmin ? (
+        <>
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+              <Users className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">User Management</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Create accounts, reset passwords, and assign teams.
+              </p>
+            </div>
+          </div>
+          <UserManagementPanel />
+
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+              <Bot className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">AI Usage</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Token consumption, request counts, and active feature flags for the current month.
+              </p>
+            </div>
+          </div>
+          <AIUsagePanel />
+        </>
+      ) : null}
     </div>
+  );
+}
+
+function LeagueMembersPanel() {
+  const { activeLeagueId, currentUser, getLeagueMembershipsNow, isBusy, isPlatformAdmin, isLeagueAdmin, removeLeagueMemberNow, updateLeagueMemberRoleNow, upsertLeagueMemberNow } = useDashboard();
+  const [members, setMembers] = React.useState<LeagueMembership[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [addModalOpen, setAddModalOpen] = React.useState(false);
+  const [allUsers, setAllUsers] = React.useState<AdminUser[]>([]);
+  const [addUserId, setAddUserId] = React.useState("");
+  const [addRole, setAddRole] = React.useState<"league_admin" | "member">("member");
+
+  const leagueId = activeLeagueId ?? "";
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    setLoading(true);
+    getLeagueMembershipsNow(leagueId)
+      .then(setMembers)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load members."))
+      .finally(() => setLoading(false));
+  }, [leagueId, getLeagueMembershipsNow]);
+
+  const loadMembers = React.useCallback(async () => {
+    if (!leagueId) return;
+    try {
+      setMembers(await getLeagueMembershipsNow(leagueId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reload members.");
+    }
+  }, [leagueId, getLeagueMembershipsNow]);
+
+  const adminCount = members.filter((m) => m.role === "league_admin").length;
+
+  if (!leagueId) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle>League Members</CardTitle>
+          {isPlatformAdmin || isLeagueAdmin ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                try {
+                  const { listAdminUsers: loadUsers } = await import("@/lib/api");
+                  const users = await loadUsers();
+                  setAllUsers(users);
+                } catch {
+                  setAllUsers([]);
+                }
+                setAddUserId("");
+                setAddRole("member");
+                setAddModalOpen(true);
+              }}
+            >
+              <Plus className="size-4 mr-1" aria-hidden="true" />
+              Add Member
+            </Button>
+          ) : null}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {error ? <p className="mb-3 text-sm text-rose-700">{error}</p> : null}
+        {loading ? (
+          <p className="text-sm text-zinc-500">Loading members...</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  <th className="pb-2 pr-4">User</th>
+                  <th className="pb-2 pr-4">Role</th>
+                  <th className="pb-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {members.map((member) => {
+                  const isLastAdmin = member.role === "league_admin" && adminCount <= 1;
+                  const isSelf = currentUser?.id === member.userId;
+                  return (
+                    <tr key={member.id} className="py-2">
+                      <td className="py-2 pr-4">
+                        <div className="flex items-center gap-2">
+                          <AvatarImage avatarDataUrl={member.avatarDataUrl} className="size-7" iconClassName="size-4" />
+                          <div>
+                            <p className="font-medium text-zinc-900">{member.alias ?? member.email}</p>
+                            {member.alias ? <p className="text-xs text-zinc-400">{member.email}</p> : null}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-2 pr-4">
+                        <Badge variant={member.role === "league_admin" ? "success" : "info"}>
+                          {member.role === "league_admin" ? "League Admin" : "Member"}
+                        </Badge>
+                      </td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-2">
+                          {member.role === "member" ? (
+                            <button
+                              className="text-xs text-emerald-700 hover:underline disabled:text-zinc-300 disabled:no-underline"
+                              disabled={isBusy}
+                              onClick={async () => {
+                                try {
+                                  await updateLeagueMemberRoleNow(leagueId, member.userId, "league_admin");
+                                  await loadMembers();
+                                } catch (err) {
+                                  setError(err instanceof Error ? err.message : "Failed to promote.");
+                                }
+                              }}
+                            >
+                              Promote
+                            </button>
+                          ) : (
+                            <button
+                              className="text-xs text-amber-700 hover:underline disabled:text-zinc-300 disabled:no-underline"
+                              disabled={isBusy || isLastAdmin}
+                              title={isLastAdmin ? "Must have at least 1 admin" : undefined}
+                              onClick={async () => {
+                                try {
+                                  await updateLeagueMemberRoleNow(leagueId, member.userId, "member");
+                                  await loadMembers();
+                                } catch (err) {
+                                  setError(err instanceof Error ? err.message : "Failed to demote.");
+                                }
+                              }}
+                            >
+                              Demote
+                            </button>
+                          )}
+                          <button
+                            className="text-xs text-rose-700 hover:underline disabled:text-zinc-300 disabled:no-underline"
+                            disabled={isBusy || isLastAdmin || isSelf}
+                            title={isLastAdmin ? "Must have at least 1 admin" : isSelf ? "Cannot remove yourself" : undefined}
+                            onClick={async () => {
+                              try {
+                                await removeLeagueMemberNow(leagueId, member.userId);
+                                await loadMembers();
+                              } catch (err) {
+                                setError(err instanceof Error ? err.message : "Failed to remove.");
+                              }
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {addModalOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white shadow-xl">
+              <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
+                <h2 className="text-base font-semibold text-zinc-950">Add Member</h2>
+                <button className="rounded p-1 text-zinc-400 hover:bg-zinc-100" onClick={() => setAddModalOpen(false)} type="button">
+                  <X className="size-4" />
+                </button>
+              </div>
+              <div className="space-y-4 px-5 py-4">
+                <div>
+                  <Label htmlFor="add-user">User</Label>
+                  <select
+                    id="add-user"
+                    className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                    value={addUserId}
+                    onChange={(e) => setAddUserId(e.target.value)}
+                  >
+                    <option value="">Select a user…</option>
+                    {allUsers.filter((u) => !members.some((m) => m.userId === u.id)).map((u) => (
+                      <option key={u.id} value={u.id}>{u.alias ?? u.email}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Label htmlFor="add-role">Role</Label>
+                  <select
+                    id="add-role"
+                    className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                    value={addRole}
+                    onChange={(e) => setAddRole(e.target.value as "league_admin" | "member")}
+                  >
+                    <option value="member">Member</option>
+                    <option value="league_admin">League Admin</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 border-t border-zinc-100 px-5 py-4">
+                <Button variant="outline" onClick={() => setAddModalOpen(false)} disabled={isBusy}>Cancel</Button>
+                <Button
+                  disabled={isBusy || !addUserId}
+                  onClick={async () => {
+                    try {
+                      await upsertLeagueMemberNow(leagueId, addUserId, addRole);
+                      await loadMembers();
+                      setAddModalOpen(false);
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Failed to add member.");
+                    }
+                  }}
+                >
+                  Add
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DeleteLeaguePanel() {
+  const { activeLeagueId, data, deleteLeagueNow, isBusy } = useDashboard();
+  const [confirm, setConfirm] = React.useState("");
+  const [error, setError] = React.useState("");
+  const leagueName = data.league?.name ?? "";
+
+  return (
+    <Card className="border-rose-200">
+      <CardContent className="pt-5">
+        <p className="mb-3 text-sm text-zinc-700">
+          Permanently delete <strong>{leagueName}</strong> and all its data — teams, rosters, draft results, ADP, optimizer outputs, and mock drafts. This cannot be undone.
+        </p>
+        <p className="mb-2 text-sm text-zinc-600">Type the league name to confirm:</p>
+        <Input
+          className="mb-3"
+          placeholder={leagueName}
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+        />
+        {error ? <p className="mb-2 text-sm text-rose-700">{error}</p> : null}
+        <Button
+          className="bg-rose-700 text-white hover:bg-rose-800"
+          disabled={isBusy || confirm !== leagueName}
+          onClick={async () => {
+            if (!activeLeagueId) return;
+            try {
+              await deleteLeagueNow(activeLeagueId);
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Failed to delete league.");
+            }
+          }}
+        >
+          <Trash2 className="size-4 mr-2" aria-hidden="true" />
+          Delete League
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -3268,13 +4013,13 @@ function UserManagementPanel() {
                   onChange={(event) =>
                     setForm((current) => ({
                       ...current,
-                      role: event.target.value === "admin" ? "admin" : "user",
+                      role: event.target.value === "platform_admin" ? "platform_admin" : "user",
                     }))
                   }
                   value={form.role}
                 >
                   <option value="user">User</option>
-                  <option value="admin">Admin</option>
+                  <option value="platform_admin">Platform Admin</option>
                 </select>
               </div>
               <label className="flex items-center gap-2 self-end rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700">

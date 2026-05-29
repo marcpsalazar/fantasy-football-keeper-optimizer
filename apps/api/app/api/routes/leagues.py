@@ -24,7 +24,11 @@ from app.models import (
     KeeperCandidate,
     KeeperRecommendation,
     League,
+    LeagueMembership,
     ManualOverride,
+    MockDraftAnalysis,
+    MockDraftPick,
+    MockDraftSession,
     OptimizerSettings,
     Player,
     Team,
@@ -59,7 +63,11 @@ from app.services.optimizer import (
     run_scenario_comparison,
 )
 from app.services.pdf_export import PDFExportError, build_team_outlooks_pdf
-from app.services.auth import require_admin, require_current_user
+from app.services.auth import (
+    assert_league_admin,
+    require_current_user,
+    require_platform_admin,
+)
 from app.services import keeper_explanation_ai
 from app.services.keeper_explanation_ai import (
     ENTITY_TYPE as KEEPER_EXPLANATION_ENTITY_TYPE,
@@ -127,14 +135,63 @@ class ScenarioSelectionRequest(BaseModel):
     scenario_name: str | None = None
 
 
+class LeagueMembershipUpsertRequest(BaseModel):
+    user_id: uuid.UUID
+    role: Literal["league_admin", "member"] = "member"
+
+
+class LeagueMemberRoleRequest(BaseModel):
+    role: Literal["league_admin", "member"]
+
+
+class LeagueAvatarRequest(BaseModel):
+    avatar_data_url: str | None = None
+
+
+def _count_league_admins(session: Session, league_id: uuid.UUID) -> int:
+    return len(
+        session.exec(
+            select(LeagueMembership).where(
+                LeagueMembership.league_id == league_id,
+                LeagueMembership.role == "league_admin",
+            )
+        ).all()
+    )
+
+
+def _membership_row(membership: LeagueMembership, user: User | None = None) -> dict[str, Any]:
+    return {
+        "id": str(membership.id),
+        "user_id": str(membership.user_id),
+        "league_id": str(membership.league_id),
+        "role": membership.role,
+        "avatar_data_url": membership.avatar_data_url,
+        "user_email": user.email if user else None,
+        "user_alias": user.alias if user else None,
+        "created_at": membership.created_at.isoformat() if membership.created_at else None,
+        "updated_at": membership.updated_at.isoformat() if membership.updated_at else None,
+    }
+
+
 @router.post("/leagues", response_model=LeagueRead, status_code=status.HTTP_201_CREATED)
 def create_league(
     payload: LeagueCreate,
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> League:
-    league = League(**payload.model_dump())
+    league_data = payload.model_dump()
+    if user is not None:
+        league_data["created_by_user_id"] = user.id
+    league = League(**league_data)
     session.add(league)
+    session.flush()
+    if user is not None:
+        membership = LeagueMembership(
+            user_id=user.id,
+            league_id=league.id,
+            role="league_admin",
+        )
+        session.add(membership)
     session.commit()
     session.refresh(league)
     return league
@@ -147,18 +204,127 @@ def list_leagues(session: Session = Depends(get_session)) -> dict[str, Any]:
     return _table(rows)
 
 
+# NOTE: /leagues/my must be declared BEFORE /leagues/{league_id} — FastAPI resolves in order.
+@router.get("/leagues/my")
+def list_my_leagues(
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    if user is None:
+        return _table([])
+    if user.role == "platform_admin":
+        leagues = session.exec(select(League).order_by(League.season_year.desc(), League.name)).all()
+        league_ids = [lg.id for lg in leagues]
+        avatar_map: dict = {}
+        if league_ids:
+            admin_memberships = session.exec(
+                select(LeagueMembership).where(
+                    LeagueMembership.user_id == user.id,
+                    LeagueMembership.league_id.in_(league_ids),
+                )
+            ).all()
+            avatar_map = {m.league_id: m.avatar_data_url for m in admin_memberships}
+        rows = []
+        for league in leagues:
+            row = LeagueRead.model_validate(league).model_dump(mode="json")
+            row["league_role"] = "league_admin"
+            row["avatar_data_url"] = avatar_map.get(league.id)
+            rows.append(row)
+        return _table(rows)
+    memberships = session.exec(
+        select(LeagueMembership).where(LeagueMembership.user_id == user.id)
+    ).all()
+    if not memberships:
+        return _table([])
+    league_role_map = {m.league_id: m.role for m in memberships}
+    membership_avatar_map = {m.league_id: m.avatar_data_url for m in memberships}
+    leagues = session.exec(
+        select(League)
+        .where(League.id.in_(list(league_role_map.keys())))
+        .order_by(League.season_year.desc(), League.name)
+    ).all()
+    rows = []
+    for league in leagues:
+        row = LeagueRead.model_validate(league).model_dump(mode="json")
+        row["league_role"] = league_role_map.get(league.id, "member")
+        row["avatar_data_url"] = membership_avatar_map.get(league.id)
+        rows.append(row)
+    return _table(rows)
+
+
 @router.get("/leagues/{league_id}", response_model=LeagueRead)
 def read_league(league_id: uuid.UUID, session: Session = Depends(get_session)) -> League:
     return _require_league(session, league_id)
+
+
+@router.delete("/leagues/{league_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_league(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> Response:
+    league = _require_league(session, league_id)
+    assert_league_admin(session, user, league_id)
+
+    # Collect indirect IDs before deleting parents.
+    session_ids = [
+        r.id for r in session.exec(select(MockDraftSession).where(MockDraftSession.league_id == league_id)).all()
+    ]
+    snapshot_ids = [
+        r.id for r in session.exec(select(ADPSnapshot).where(ADPSnapshot.league_id == league_id)).all()
+    ]
+    team_ids = [
+        r.id for r in session.exec(select(Team).where(Team.league_id == league_id)).all()
+    ]
+
+    # Delete dependents of mock draft sessions.
+    if session_ids:
+        for row in session.exec(select(MockDraftAnalysis).where(MockDraftAnalysis.session_id.in_(session_ids))).all():
+            session.delete(row)
+        for row in session.exec(select(MockDraftPick).where(MockDraftPick.session_id.in_(session_ids))).all():
+            session.delete(row)
+
+    # Delete league-scoped rows.
+    for model in (MockDraftSession, KeeperRecommendation, ManualOverride, TeamScenarioSelection,
+                  OptimizerSettings, AIExplanation, ADPRefreshCandidate):
+        for row in session.exec(select(model).where(model.league_id == league_id)).all():
+            session.delete(row)
+
+    # Delete ADP entries via snapshots.
+    if snapshot_ids:
+        for row in session.exec(select(ADPEntry).where(ADPEntry.snapshot_id.in_(snapshot_ids))).all():
+            session.delete(row)
+    for row in session.exec(select(ADPSnapshot).where(ADPSnapshot.league_id == league_id)).all():
+        session.delete(row)
+
+    # Delete team dependents.
+    if team_ids:
+        for row in session.exec(select(KeeperCandidate).where(KeeperCandidate.team_id.in_(team_ids))).all():
+            session.delete(row)
+
+    for model in (FinalRosterEntry, DraftPick):
+        for row in session.exec(select(model).where(model.league_id == league_id)).all():
+            session.delete(row)
+    for row in session.exec(select(Team).where(Team.league_id == league_id)).all():
+        session.delete(row)
+
+    # Memberships cascade via FK, but delete explicitly too.
+    for row in session.exec(select(LeagueMembership).where(LeagueMembership.league_id == league_id)).all():
+        session.delete(row)
+
+    session.delete(league)
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch("/leagues/{league_id}", response_model=LeagueRead)
 def update_league(
     league_id: uuid.UUID,
     payload: LeagueUpdate,
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> League:
+    assert_league_admin(session, user, league_id)
     league = _require_league(session, league_id)
     for field_name, value in payload.model_dump(exclude_unset=True).items():
         setattr(league, field_name, value)
@@ -177,9 +343,10 @@ def update_league(
 def create_team(
     league_id: uuid.UUID,
     payload: TeamCreateRequest,
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> Team:
+    assert_league_admin(session, user, league_id)
     _require_league(session, league_id)
     if payload.user_id is not None:
         _require_user(session, payload.user_id)
@@ -214,12 +381,13 @@ def list_teams(league_id: uuid.UUID, session: Session = Depends(get_session)) ->
 def update_team(
     team_id: uuid.UUID,
     payload: TeamUpdate,
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> Team:
     team = session.get(Team, team_id)
     if team is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+    assert_league_admin(session, user, team.league_id)
 
     update_data = payload.model_dump(exclude_unset=True)
     update_data.pop("league_id", None)
@@ -237,12 +405,13 @@ def update_team(
 @router.delete("/teams/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_team(
     team_id: uuid.UUID,
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> Response:
     team = session.get(Team, team_id)
     if team is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+    assert_league_admin(session, user, team.league_id)
 
     for model in (
         TeamScenarioSelection,
@@ -279,9 +448,10 @@ def list_draft_results(
 def preview_draft_results(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
     try:
         return preview_draft_results_csv(session, league_id, csv_text).to_payload()
     except CSVPreviewError as exc:
@@ -292,9 +462,10 @@ def preview_draft_results(
 def import_draft_results(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
     try:
         result = import_draft_results_csv(session, league_id, csv_text)
     except CSVImportError as exc:
@@ -316,9 +487,10 @@ def list_final_rosters(
 def preview_final_rosters(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
     try:
         return preview_final_rosters_csv(session, league_id, csv_text).to_payload()
     except CSVPreviewError as exc:
@@ -329,9 +501,10 @@ def preview_final_rosters(
 def import_final_rosters(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
     try:
         result = import_final_rosters_csv(session, league_id, csv_text)
     except CSVImportError as exc:
@@ -346,9 +519,10 @@ def import_final_rosters(
 def create_adp_snapshot(
     league_id: uuid.UUID,
     payload: ADPSnapshotCreateRequest,
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
     league = _require_league(session, league_id)
     snapshot = ADPSnapshot(
         league_id=league.id,
@@ -390,9 +564,10 @@ def list_adp_snapshots(
 def import_adp(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
     try:
         result = import_adp_csv(session, league_id, csv_text)
     except CSVImportError as exc:
@@ -403,9 +578,10 @@ def import_adp(
 @router.post("/leagues/{league_id}/adp/refresh")
 def refresh_adp(
     league_id: uuid.UUID,
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
     _require_league(session, league_id)
     try:
         result = refresh_adp_from_api(session, league_id, get_settings())
@@ -424,9 +600,10 @@ def refresh_adp(
 )
 def create_ai_adp_refresh_candidate(
     league_id: uuid.UUID,
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
     league = _require_league(session, league_id)
     try:
         candidate = create_ai_adp_refresh_candidate_service(session, league, get_settings())
@@ -464,10 +641,11 @@ def read_ai_adp_refresh_candidate(
 @router.post("/adp/ai-refresh-candidates/{candidate_id}/approve")
 def approve_ai_adp_refresh_candidate(
     candidate_id: uuid.UUID,
-    admin: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     candidate = _require_adp_refresh_candidate(session, candidate_id)
+    assert_league_admin(session, user, candidate.league_id)
     if candidate.status != "pending":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending candidates can be approved")
     if not candidate.normalized_rows:
@@ -481,7 +659,7 @@ def approve_ai_adp_refresh_candidate(
         session.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     candidate.status = "approved"
-    candidate.approved_by_user_id = admin.id if admin else None
+    candidate.approved_by_user_id = user.id if user else None
     candidate.approved_at = datetime.now(UTC).isoformat()
     candidate.error_message = None
     session.add(candidate)
@@ -498,10 +676,11 @@ def approve_ai_adp_refresh_candidate(
 def reject_ai_adp_refresh_candidate(
     candidate_id: uuid.UUID,
     payload: ADPRefreshCandidateRejectRequest | None = None,
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     candidate = _require_adp_refresh_candidate(session, candidate_id)
+    assert_league_admin(session, user, candidate.league_id)
     if candidate.status != "pending":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending candidates can be rejected")
     candidate.status = "rejected"
@@ -515,9 +694,10 @@ def reject_ai_adp_refresh_candidate(
 @router.post("/leagues/{league_id}/adp/import-composite")
 def import_composite_adp(
     league_id: uuid.UUID,
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
     league = _require_league(session, league_id)
     try:
         composite = build_composite_adp_template_rows(session, league, get_settings())
@@ -540,9 +720,10 @@ def import_composite_adp(
 @router.get("/leagues/{league_id}/adp/coverage-summary")
 def adp_coverage_summary(
     league_id: uuid.UUID,
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
     league = _require_league(session, league_id)
     try:
         composite = build_composite_adp_template_rows(session, league, get_settings())
@@ -556,9 +737,10 @@ def adp_coverage_summary(
 def preview_adp(
     league_id: uuid.UUID,
     csv_text: str = Body(..., media_type="text/csv"),
-    _: User | None = Depends(require_admin),
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
     try:
         return preview_adp_csv(session, league_id, csv_text).to_payload()
     except CSVPreviewError as exc:
@@ -1838,7 +2020,7 @@ def _rows_to_csv_text(rows: list[dict[str, Any]]) -> str:
 
 @router.get("/admin/ai/usage")
 def get_ai_usage(
-    _: User | None = Depends(require_admin),
+    _: User | None = Depends(require_platform_admin),
     session: Session = Depends(get_session),
     settings=Depends(get_settings),
 ) -> dict[str, Any]:
@@ -1855,6 +2037,171 @@ def get_ai_usage(
             "mock_draft_ai_model": settings.mock_draft_ai_model,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# League membership endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/leagues/{league_id}/memberships")
+def list_league_memberships(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    assert_league_admin(session, user, league_id)
+    memberships = session.exec(
+        select(LeagueMembership).where(LeagueMembership.league_id == league_id)
+    ).all()
+    user_ids = {m.user_id for m in memberships}
+    users_map = {
+        u.id: u
+        for u in session.exec(select(User).where(User.id.in_(user_ids))).all()
+    } if user_ids else {}
+    rows = [_membership_row(m, users_map.get(m.user_id)) for m in memberships]
+    return _table(rows)
+
+
+@router.post("/leagues/{league_id}/memberships", status_code=status.HTTP_201_CREATED)
+def upsert_league_membership(
+    league_id: uuid.UUID,
+    payload: LeagueMembershipUpsertRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    assert_league_admin(session, user, league_id)
+    target = session.get(User, payload.user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    existing = session.exec(
+        select(LeagueMembership).where(
+            LeagueMembership.league_id == league_id,
+            LeagueMembership.user_id == payload.user_id,
+        )
+    ).first()
+    if existing is not None:
+        # Guard: cannot demote the last league admin.
+        if existing.role == "league_admin" and payload.role == "member":
+            if _count_league_admins(session, league_id) <= 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="League must have at least one admin",
+                )
+        existing.role = payload.role
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return _membership_row(existing, target)
+    membership = LeagueMembership(
+        user_id=payload.user_id,
+        league_id=league_id,
+        role=payload.role,
+    )
+    session.add(membership)
+    session.commit()
+    session.refresh(membership)
+    return _membership_row(membership, target)
+
+
+@router.patch("/leagues/{league_id}/memberships/{target_user_id}/role")
+def update_league_member_role(
+    league_id: uuid.UUID,
+    target_user_id: uuid.UUID,
+    payload: LeagueMemberRoleRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _require_league(session, league_id)
+    assert_league_admin(session, user, league_id)
+    membership = session.exec(
+        select(LeagueMembership).where(
+            LeagueMembership.league_id == league_id,
+            LeagueMembership.user_id == target_user_id,
+        )
+    ).first()
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found")
+    if membership.role == "league_admin" and payload.role == "member":
+        if _count_league_admins(session, league_id) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="League must have at least one admin",
+            )
+    membership.role = payload.role
+    session.add(membership)
+    session.commit()
+    session.refresh(membership)
+    target = session.get(User, target_user_id)
+    return _membership_row(membership, target)
+
+
+@router.delete("/leagues/{league_id}/memberships/{target_user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_league_member(
+    league_id: uuid.UUID,
+    target_user_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> Response:
+    _require_league(session, league_id)
+    assert_league_admin(session, user, league_id)
+    membership = session.exec(
+        select(LeagueMembership).where(
+            LeagueMembership.league_id == league_id,
+            LeagueMembership.user_id == target_user_id,
+        )
+    ).first()
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found")
+    if membership.role == "league_admin":
+        if _count_league_admins(session, league_id) <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="League must have at least one admin",
+            )
+    session.delete(membership)
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch("/leagues/{league_id}/memberships/me/avatar")
+def update_league_member_avatar(
+    league_id: uuid.UUID,
+    payload: LeagueAvatarRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    _require_league(session, league_id)
+    membership = session.exec(
+        select(LeagueMembership).where(
+            LeagueMembership.league_id == league_id,
+            LeagueMembership.user_id == user.id,
+        )
+    ).first()
+    # Platform admins may not have a membership row; create one on demand.
+    if membership is None:
+        if user.role != "platform_admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League membership required")
+        membership = LeagueMembership(
+            user_id=user.id,
+            league_id=league_id,
+            role="league_admin",
+        )
+        session.add(membership)
+        session.flush()
+    if payload.avatar_data_url is not None:
+        if len(payload.avatar_data_url) > 1_500_000:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Avatar image is too large")
+        if not payload.avatar_data_url.startswith("data:image/") or ";base64," not in payload.avatar_data_url:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Avatar must be a base64 image data URL")
+    membership.avatar_data_url = payload.avatar_data_url
+    session.add(membership)
+    session.commit()
+    session.refresh(membership)
+    return _membership_row(membership, user)
 
 
 def _require_league(session: Session, league_id: uuid.UUID) -> League:

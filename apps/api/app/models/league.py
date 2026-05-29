@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.auth import User
     from app.models.draft import DraftPick
     from app.models.keeper import KeeperCandidate
+    from app.models.membership import LeagueMembership
     from app.models.mock_draft import MockDraftPick, MockDraftSession
     from app.models.optimizer import (
         KeeperRecommendation,
@@ -30,6 +31,7 @@ class League(TimestampMixin, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     name: str = Field(index=True, max_length=120)
     season_year: int = Field(index=True)
+    created_by_user_id: uuid.UUID | None = Field(default=None, foreign_key="users.id", index=True)
     scoring_format: str = Field(default="superflex", max_length=80)
     draft_type: str = Field(default="snake", max_length=40)
     max_keepers: int = Field(default=4)
@@ -47,6 +49,7 @@ class League(TimestampMixin, table=True):
     )
 
     teams: list["Team"] = Relationship(back_populates="league")
+    memberships: list["LeagueMembership"] = Relationship(back_populates="league")
     draft_picks: list["DraftPick"] = Relationship(back_populates="league")
     final_roster_entries: list["FinalRosterEntry"] = Relationship(back_populates="league")
     adp_snapshots: list["ADPSnapshot"] = Relationship(back_populates="league")
