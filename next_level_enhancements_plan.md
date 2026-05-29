@@ -24,28 +24,9 @@ These are the highest-priority improvements because they determine whether new u
 
 ---
 
-### 1.1 Sleeper League Import
+### ~~1.1 Sleeper League Import~~ ✅ Complete
 
-**Why it matters:** CSV uploads are the single biggest adoption blocker. Sleeper is the dominant modern platform and has a fully public, no-auth-required API. Auto-importing draft history, rosters, and picks in one click removes the entire onboarding burden for Sleeper leagues.
-
-**Scope:**
-
-- Backend: new service `apps/api/app/services/sleeper_import.py`
-  - `GET https://api.sleeper.app/v1/league/{league_id}` → league settings
-  - `GET https://api.sleeper.app/v1/league/{league_id}/rosters` → team rosters
-  - `GET https://api.sleeper.app/v1/league/{league_id}/drafts` → draft IDs
-  - `GET https://api.sleeper.app/v1/draft/{draft_id}/picks` → full draft board
-  - Map Sleeper player IDs to our `Player` records (Sleeper publishes a full player DB at `/players/nfl`)
-  - Populate `DraftResult`, `FinalRoster`, and `Team` rows via the same import path as CSV imports
-- New endpoint: `POST /api/leagues/{league_id}/import/sleeper`
-- Frontend: "Import from Sleeper" button in admin League Data Imports section with a Sleeper league ID input field; shows a preview step before committing
-
-**Dependencies:** None. Sleeper API is public and unauthenticated for read access.
-
-**Acceptance criteria:**
-- Entering a valid Sleeper league ID populates draft results, final rosters, and team data in one step
-- Preview step shows expected row counts before commit
-- Import falls back gracefully when Sleeper API is unavailable
+Sleeper import shipped: `apps/api/app/services/sleeper_import.py` fetches league info, rosters, draft picks, and the full Sleeper player DB. Players are matched by Sleeper ID first (populates `Player.external_id` for fast re-import), then by name+position fallback. Two endpoints (`preview` / `commit`) follow the same preview-before-import pattern as CSV imports. The `SleeperImportPanel` UI lives at the top of League Data Imports: enter a Sleeper league ID, preview a team table with pick/roster counts and warnings, then import in one click.
 
 ---
 
@@ -221,8 +202,8 @@ These features increase the value of the app for power users who return year-rou
 | Priority | Feature | Impact | Effort |
 |----------|---------|--------|--------|
 | ✅ | ~~Multi-League Dashboard (1.3)~~ | — | — |
-| 1 | Sleeper League Import (1.1) | Removes onboarding friction for the largest modern platform | Medium |
-| 2 | Keeper Trade Calculator (2.1) | Unique differentiator; no competing tool does this | Medium-High |
+| ✅ | ~~Sleeper League Import (1.1)~~ | — | — |
+| 1 | Keeper Trade Calculator (2.1) | Unique differentiator; no competing tool does this | Medium-High |
 | 3 | Auction Draft Mode (1.2) | Opens a large excluded market segment | High |
 | 4 | Shareable Keeper Report Card (3.1) | Low effort, viral surface, organic acquisition | Low |
 | 5 | Commissioner Tools Pack (3.2) | Acquisition via commissioners = leverage | Medium |
@@ -235,8 +216,8 @@ These features increase the value of the app for power users who return year-rou
 
 ## What to Build First
 
-**Sleeper import + Keeper Trade Calculator**, in that order.
+**Keeper Trade Calculator** is next.
 
-Sleeper import removes the biggest friction point in the entire product for new users and takes advantage of a free, stable public API. The trade calculator is the feature most likely to be written about in fantasy football communities — it is genuinely unique, it is directly actionable, and it leverages the optimizer infrastructure already built. Together they represent the highest signal-to-effort ratio in this roadmap.
+Sleeper import is complete. The trade calculator is the feature most likely to be written about in fantasy football communities — it is genuinely unique, it is directly actionable, and it leverages the optimizer infrastructure already built.
 
 The shareable report card (3.1) is a low-effort companion once the mock draft grading is already producing letter grades and surplus summaries — it is worth adding shortly after the first two.

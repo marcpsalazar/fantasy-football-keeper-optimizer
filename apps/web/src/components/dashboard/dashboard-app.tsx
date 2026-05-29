@@ -34,6 +34,7 @@ import {
   X,
 } from "lucide-react";
 import * as React from "react";
+import { createPortal } from "react-dom";
 
 import { DataTable, resetDataTableDisplaySettings } from "@/components/dashboard/data-table";
 import { Badge } from "@/components/ui/badge";
@@ -577,6 +578,17 @@ export function DashboardApp() {
   );
   const [tableDisplayResetSignal, setTableDisplayResetSignal] = React.useState(0);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
+  const userMenuRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!userMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [userMenuOpen]);
   const [activeLeagueId, setActiveLeagueId] = React.useState<string | null>(null);
   const [userLeagues, setUserLeagues] = React.useState<LeagueWithRole[]>([]);
   const [createLeagueModalOpen, setCreateLeagueModalOpen] = React.useState(false);
@@ -1455,7 +1467,7 @@ export function DashboardApp() {
                   <span className="text-[11px] font-normal text-zinc-300">Recompute recommendations</span>
                 </Button>
                 {currentUser ? (
-                  <div className="relative">
+                  <div className="relative" ref={userMenuRef}>
                     <button
                       aria-expanded={userMenuOpen}
                       aria-label="Open user menu"
@@ -1590,19 +1602,20 @@ export function DashboardApp() {
                     ) : null}
                   </div>
                 ) : null}
-                {createLeagueModalOpen ? (
-                  <CreateLeagueModal
-                    isBusy={isBusy}
-                    onClose={() => setCreateLeagueModalOpen(false)}
-                    onSubmit={async (form) => {
-                      await createLeagueNow(form);
-                      setCreateLeagueModalOpen(false);
-                    }}
-                  />
-                ) : null}
               </div>
             </div>
           </header>
+
+          {createLeagueModalOpen ? (
+            <CreateLeagueModal
+              isBusy={isBusy}
+              onClose={() => setCreateLeagueModalOpen(false)}
+              onSubmit={async (form) => {
+                await createLeagueNow(form);
+                setCreateLeagueModalOpen(false);
+              }}
+            />
+          ) : null}
 
           <div className="px-4 py-5 md:px-6">
             {activeView === "dashboard" && <LeagueDashboard />}
@@ -1999,9 +2012,16 @@ function CreateLeagueModal({
   const [scoringFormat, setScoringFormat] = React.useState("superflex");
   const [draftType, setDraftType] = React.useState("snake");
   const [error, setError] = React.useState("");
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => { setMounted(true); }, []);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+  if (!mounted) return null;
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] overflow-y-auto bg-black/50"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="flex min-h-full items-center justify-center p-4">
       <div className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
           <h2 className="text-base font-semibold text-zinc-950">Create League</h2>
@@ -2081,7 +2101,9 @@ function CreateLeagueModal({
           </Button>
         </div>
       </div>
-    </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
