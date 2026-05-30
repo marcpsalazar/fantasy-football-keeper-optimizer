@@ -689,6 +689,156 @@ export async function commitSleeperImport(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Yahoo Fantasy import
+// ---------------------------------------------------------------------------
+
+export type YahooAuthStatus = {
+  connected: boolean;
+  expiresAt: string | null;
+};
+
+export type YahooUserLeague = {
+  leagueKey: string;
+  name: string;
+  season: string;
+  numTeams: number;
+  scoringType: string;
+};
+
+export type YahooLeagueSettingsPreview = {
+  scoringFormat: string;
+  draftType: string;
+  rosterSettings: Record<string, number>;
+};
+
+export type YahooPreviewTeam = {
+  teamKey: string;
+  draftPosition: number;
+  name: string;
+  ownerName: string | null;
+  playerCount: number;
+};
+
+export type YahooImportPreview = {
+  valid: boolean;
+  seasonYear: number;
+  leagueName: string;
+  teams: YahooPreviewTeam[];
+  draftPicksCount: number;
+  rosterEntriesCount: number;
+  leagueSettingsPreview: YahooLeagueSettingsPreview | null;
+  warnings: string[];
+  errors: string[];
+};
+
+export type YahooImportResult = {
+  seasonYear: number;
+  leagueName: string;
+  teamsUpserted: number;
+  draftPicksUpserted: number;
+  rosterEntriesUpserted: number;
+  leagueSettingsUpdated: boolean;
+  warnings: string[];
+};
+
+export async function getYahooAuthStatus(): Promise<YahooAuthStatus> {
+  const row = await fetchJson<{ connected: boolean; expires_at: string | null }>(
+    "/api/auth/yahoo/status",
+  );
+  return { connected: row.connected, expiresAt: row.expires_at };
+}
+
+export async function initYahooAuth(): Promise<string> {
+  const row = await fetchJson<{ auth_url: string }>("/api/auth/yahoo/init");
+  return row.auth_url;
+}
+
+export async function listYahooUserLeagues(leagueId: string): Promise<YahooUserLeague[]> {
+  const row = await fetchJson<{ leagues: Record<string, unknown>[] }>(
+    `/api/leagues/${leagueId}/import/yahoo/user-leagues`,
+  );
+  return row.leagues.map((lg) => ({
+    leagueKey: text(lg.league_key),
+    name: text(lg.name),
+    season: text(lg.season),
+    numTeams: number(lg.num_teams),
+    scoringType: text(lg.scoring_type),
+  }));
+}
+
+export async function previewYahooImport(
+  leagueId: string,
+  yahooLeagueKey: string,
+  seasonYear?: number,
+  importLeagueSettings = true,
+): Promise<YahooImportPreview> {
+  const row = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/import/yahoo/preview`,
+    {
+      body: JSON.stringify({
+        yahoo_league_key: yahooLeagueKey,
+        season_year: seasonYear ?? null,
+        import_league_settings: importLeagueSettings,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  return {
+    valid: Boolean(row.valid),
+    seasonYear: number(row.season_year),
+    leagueName: text(row.league_name),
+    teams: (Array.isArray(row.teams) ? row.teams : []).map((t: Record<string, unknown>) => ({
+      teamKey: text(t.team_key),
+      draftPosition: number(t.draft_position),
+      name: text(t.name),
+      ownerName: typeof t.owner_name === "string" ? t.owner_name : null,
+      playerCount: number(t.player_count),
+    })),
+    draftPicksCount: number(row.draft_picks_count),
+    rosterEntriesCount: number(row.roster_entries_count),
+    leagueSettingsPreview: row.league_settings_preview && typeof row.league_settings_preview === "object"
+      ? {
+          scoringFormat: text((row.league_settings_preview as Record<string, unknown>).scoring_format),
+          draftType: text((row.league_settings_preview as Record<string, unknown>).draft_type),
+          rosterSettings: objectRecord((row.league_settings_preview as Record<string, unknown>).roster_settings) as Record<string, number>,
+        }
+      : null,
+    warnings: Array.isArray(row.warnings) ? (row.warnings as string[]) : [],
+    errors: Array.isArray(row.errors) ? (row.errors as string[]) : [],
+  };
+}
+
+export async function commitYahooImport(
+  leagueId: string,
+  yahooLeagueKey: string,
+  seasonYear?: number,
+  importLeagueSettings = true,
+): Promise<YahooImportResult> {
+  const row = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/import/yahoo/commit`,
+    {
+      body: JSON.stringify({
+        yahoo_league_key: yahooLeagueKey,
+        season_year: seasonYear ?? null,
+        import_league_settings: importLeagueSettings,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  return {
+    seasonYear: number(row.season_year),
+    leagueName: text(row.league_name),
+    teamsUpserted: number(row.teams_upserted),
+    draftPicksUpserted: number(row.draft_picks_upserted),
+    rosterEntriesUpserted: number(row.roster_entries_upserted),
+    leagueSettingsUpdated: Boolean(row.league_settings_updated),
+    warnings: Array.isArray(row.warnings) ? (row.warnings as string[]) : [],
+  };
+}
+
 export async function getLeagueMemberships(leagueId: string): Promise<LeagueMembership[]> {
   const payload = await fetchTable(`/api/leagues/${leagueId}/memberships`);
   return payload.rows.map(mapLeagueMembership);

@@ -49,6 +49,18 @@ from app.services.sleeper_import import (
     commit_sleeper_import,
     preview_sleeper_import,
 )
+from app.services.yahoo_import import (
+    commit_yahoo_import,
+    list_user_leagues,
+    preview_yahoo_import,
+)
+from app.services.yahoo_oauth import (
+    YahooAPIError,
+    YahooTokenExpiredError,
+    YahooTokenMissingError,
+    get_valid_access_token,
+)
+from app.schemas.yahoo_import import YahooImportRequest
 from app.services.ai_adp import AIADPError
 from app.services.adp_review import create_ai_adp_refresh_candidate as create_ai_adp_refresh_candidate_service
 from app.services.csv_preview import (
@@ -567,6 +579,83 @@ def commit_sleeper(
         "roster_entries_upserted": result.roster_entries_upserted,
         "warnings": result.warnings,
     }
+
+
+def _yahoo_access_token(session: Session, user: User | None) -> str:
+    """Resolve a valid Yahoo access token for the current user or raise HTTP 4xx."""
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    settings = get_settings()
+    try:
+        return get_valid_access_token(session, user.id, settings)
+    except YahooTokenMissingError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except YahooTokenExpiredError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+
+@router.get("/leagues/{league_id}/import/yahoo/user-leagues")
+def list_yahoo_user_leagues(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    access_token = _yahoo_access_token(session, user)
+    try:
+        leagues = list_user_leagues(access_token)
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return {"leagues": [lg.model_dump() for lg in leagues]}
+
+
+@router.post("/leagues/{league_id}/import/yahoo/preview")
+def preview_yahoo(
+    league_id: uuid.UUID,
+    payload: YahooImportRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    access_token = _yahoo_access_token(session, user)
+    try:
+        result = preview_yahoo_import(
+            session,
+            league_id,
+            payload.yahoo_league_key,
+            access_token,
+            payload.season_year,
+        )
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return result.model_dump()
+
+
+@router.post("/leagues/{league_id}/import/yahoo/commit")
+def commit_yahoo(
+    league_id: uuid.UUID,
+    payload: YahooImportRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    access_token = _yahoo_access_token(session, user)
+    try:
+        result = commit_yahoo_import(
+            session,
+            league_id,
+            payload.yahoo_league_key,
+            access_token,
+            payload.season_year,
+            payload.import_league_settings,
+        )
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return result.model_dump()
 
 
 @router.post(

@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     player_summary_ai_timeout_seconds: float = 30.0
     mock_draft_ai_max_ai_round: int = 0
     ai_monthly_token_budget: int = 0
+    yahoo_client_id: str | None = None
+    yahoo_client_secret: str | None = None
+    yahoo_redirect_uri: str = "http://localhost:8000/api/auth/yahoo/callback"
+    frontend_url: str = "http://localhost:3000"
 
     @property
     def use_secure_session_cookie(self) -> bool:

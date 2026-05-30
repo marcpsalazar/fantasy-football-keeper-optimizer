@@ -3,10 +3,12 @@ from __future__ import annotations
 from typing import Any, Literal
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from app.core.config import get_settings
 from app.db.session import get_session
 from app.models import (
     AppDefaultOptimizerSettings,
@@ -25,6 +27,14 @@ from app.services.auth import (
     require_platform_admin,
     set_session_cookie,
     verify_password,
+)
+from app.services.yahoo_oauth import (
+    YahooOAuthError,
+    build_auth_url,
+    exchange_code,
+    get_token_status,
+    upsert_token,
+    validate_state,
 )
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -283,6 +293,69 @@ def delete_user(
     session.delete(user)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/auth/yahoo/init")
+def yahoo_init(
+    user: User | None = Depends(require_current_user),
+) -> dict[str, str]:
+    """Return a Yahoo OAuth2 authorization URL for the authenticated user."""
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    settings = get_settings()
+    if not settings.yahoo_client_id or not settings.yahoo_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Yahoo integration is not configured on this server.",
+        )
+    auth_url = build_auth_url(user.id, settings)
+    return {"auth_url": auth_url}
+
+
+@router.get("/auth/yahoo/callback")
+def yahoo_callback(
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    """Handle Yahoo OAuth2 callback. Exchanges code for tokens and redirects to frontend."""
+    settings = get_settings()
+    frontend_url = settings.frontend_url
+
+    if error:
+        return RedirectResponse(url=f"{frontend_url}?yahoo_error={error}")
+
+    if not code or not state:
+        return RedirectResponse(url=f"{frontend_url}?yahoo_error=missing_params")
+
+    try:
+        user_id = validate_state(state, settings)
+    except ValueError as exc:
+        return RedirectResponse(url=f"{frontend_url}?yahoo_error=invalid_state&detail={exc}")
+
+    user = session.get(User, user_id)
+    if user is None:
+        return RedirectResponse(url=f"{frontend_url}?yahoo_error=user_not_found")
+
+    try:
+        token_data = exchange_code(code, settings)
+    except YahooOAuthError as exc:
+        return RedirectResponse(url=f"{frontend_url}?yahoo_error=token_exchange_failed&detail={exc}")
+
+    upsert_token(session, user_id, token_data)
+    return RedirectResponse(url=f"{frontend_url}?yahoo_connected=1")
+
+
+@router.get("/auth/yahoo/status")
+def yahoo_status(
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Return whether the current user has a connected Yahoo account."""
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    return get_token_status(session, user.id)
 
 
 def _require_user(session: Session, user_id: str) -> User:
