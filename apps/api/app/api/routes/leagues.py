@@ -594,6 +594,16 @@ def _yahoo_access_token(session: Session, user: User | None) -> str:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
 
+def _yahoo_access_token_optional(session: Session, user: User | None) -> str | None:
+    """Return a Yahoo access token if one is available, otherwise None (no error)."""
+    if user is None:
+        return None
+    try:
+        return get_valid_access_token(session, user.id, get_settings())
+    except Exception:
+        return None
+
+
 @router.get("/leagues/{league_id}/import/yahoo/user-leagues")
 def list_yahoo_user_leagues(
     league_id: uuid.UUID,
@@ -845,8 +855,9 @@ def import_composite_adp(
 ) -> dict[str, Any]:
     assert_league_admin(session, user, league_id)
     league = _require_league(session, league_id)
+    yahoo_token = _yahoo_access_token_optional(session, user)
     try:
-        composite = build_composite_adp_template_rows(session, league, get_settings())
+        composite = build_composite_adp_template_rows(session, league, get_settings(), yahoo_access_token=yahoo_token)
         import_rows = [row for row in composite.rows if str(row.get("adp_pick", "")).strip()]
         if not import_rows:
             raise CompositeADPError("Composite ADP build returned no importable rows with ADP values")
@@ -871,8 +882,9 @@ def adp_coverage_summary(
 ) -> dict[str, Any]:
     assert_league_admin(session, user, league_id)
     league = _require_league(session, league_id)
+    yahoo_token = _yahoo_access_token_optional(session, user)
     try:
-        composite = build_composite_adp_template_rows(session, league, get_settings())
+        composite = build_composite_adp_template_rows(session, league, get_settings(), yahoo_access_token=yahoo_token)
     except CompositeADPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return composite.coverage
@@ -1693,11 +1705,13 @@ def export_keeper_recommendations_csv(
 @router.get("/leagues/{league_id}/exports/adp-template.csv")
 def export_adp_template_csv(
     league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> Response:
     league = _require_league(session, league_id)
+    yahoo_token = _yahoo_access_token_optional(session, user)
     try:
-        result = build_composite_adp_template_rows(session, league, get_settings())
+        result = build_composite_adp_template_rows(session, league, get_settings(), yahoo_access_token=yahoo_token)
     except CompositeADPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return _csv_response(

@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     yahoo_client_secret: str | None = None
     yahoo_redirect_uri: str = "http://localhost:8000/api/auth/yahoo/callback"
     frontend_url: str = "http://localhost:3000"
+    adp_yahoo_player_limit: int = 200
 
     @property
     def use_secure_session_cookie(self) -> bool:

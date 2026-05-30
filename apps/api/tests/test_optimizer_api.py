@@ -1946,7 +1946,7 @@ def test_optimizer_run_endpoint_returns_frontend_table(
     assert snapshot_response.json()["rows"][0]["player_name"] == "Value WR"
     adp_template_response = client.get(f"/api/leagues/{league_id}/exports/adp-template.csv")
     assert adp_template_response.status_code == 200
-    assert "player,position,nfl_team,adp_pick,adp_round,source,snapshot_name,snapshot_date,format,source_note,draftsharks_superflex_adp,ffc_2qb_adp,ffc_ppr_adp,existing_adp,composite_method,source_count,adp_spread,disagreement_flag,sleeper_player_id,sleeper_status,adp_movement,movement_flag,review_flag" in adp_template_response.text
+    assert "player,position,nfl_team,adp_pick,adp_round,source,snapshot_name,snapshot_date,format,source_note,draftsharks_superflex_adp,ffc_2qb_adp,ffc_ppr_adp,yahoo_adp,existing_adp,composite_method,source_count,adp_spread,disagreement_flag,sleeper_player_id,sleeper_status,adp_movement,movement_flag,review_flag" in adp_template_response.text
     assert "Composite Superflex ADP - Endpoint League,Endpoint League Composite ADP" in adp_template_response.text
 
     invalid_adp_preview = client.post(

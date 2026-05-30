@@ -18,6 +18,7 @@ from sqlmodel import Session, select
 
 from app.core.config import Settings
 from app.models import ADPEntry, ADPSnapshot, DraftPick, FinalRosterEntry, League, Player, Team
+from app.services.yahoo_oauth import YahooAPIError, yahoo_get
 
 
 class CompositeADPError(Exception):
@@ -65,6 +66,7 @@ class CompositeCandidate:
     draftsharks_adp: float | None
     ffc_2qb_adp: float | None
     ffc_ppr_adp: float | None
+    yahoo_adp: float | None
     existing_adp: float | None
     review_flag: str
     source_count: int = 0
@@ -111,7 +113,7 @@ def _compute_coverage_summary(
 
     return {
         "total_players": len(candidates),
-        "source_coverage": {str(k): source_counts[k] for k in range(4)},
+        "source_coverage": {str(k): source_counts[k] for k in range(5)},
         "review_flag_counts": dict(review_flag_counts),
         "top_150": {
             "total": len(top_150),
@@ -133,6 +135,7 @@ def build_composite_adp_template_rows(
     session: Session,
     league: League,
     settings: Settings,
+    yahoo_access_token: str | None = None,
 ) -> CompositeBuildResult:
     team_count = _team_count(session, league)
     _, current_entries = _load_current_snapshot(session, league.id)
@@ -145,6 +148,11 @@ def build_composite_adp_template_rows(
     source_draftsharks = _fetch_draftsharks_superflex_rows(settings, team_count)
     source_ffc_2qb = _fetch_ffc_rows(settings, league, team_count, "2qb")
     source_ffc_ppr = _fetch_ffc_rows(settings, league, team_count, "ppr")
+    source_yahoo = (
+        _fetch_yahoo_adp_rows(yahoo_access_token, settings)
+        if yahoo_access_token
+        else ProviderFetchResult(rows={})
+    )
     sleeper_players = _fetch_sleeper_players(settings)
 
     if not source_draftsharks.rows and not source_ffc_2qb.rows and not source_ffc_ppr.rows:
@@ -168,6 +176,7 @@ def build_composite_adp_template_rows(
         set(source_draftsharks.rows)
         | set(source_ffc_2qb.rows)
         | set(source_ffc_ppr.rows)
+        | set(source_yahoo.rows)
     )
     focus_limit = max(300, team_count * 25)
     early_board_cutoff = max(120, team_count * 10)
@@ -182,6 +191,7 @@ def build_composite_adp_template_rows(
                 source_draftsharks=source_draftsharks.rows,
                 source_ffc_2qb=source_ffc_2qb.rows,
                 source_ffc_ppr=source_ffc_ppr.rows,
+                source_yahoo=source_yahoo.rows,
                 sleeper_players=sleeper_players,
                 current_by_key=current_by_key,
                 league_player_by_key=league_player_by_key,
@@ -292,6 +302,7 @@ def _build_candidate(
     source_draftsharks: dict[tuple[str, str], ProviderRow],
     source_ffc_2qb: dict[tuple[str, str], ProviderRow],
     source_ffc_ppr: dict[tuple[str, str], ProviderRow],
+    source_yahoo: dict[tuple[str, str], ProviderRow],
     sleeper_players: dict[tuple[str, str], dict[str, str]],
     current_by_key: dict[tuple[str, str], tuple[Player, ADPEntry]],
     league_player_by_key: dict[tuple[str, str], Player] | None = None,
@@ -299,6 +310,7 @@ def _build_candidate(
     draftsharks_row = source_draftsharks.get(key)
     ffc_2qb_row = source_ffc_2qb.get(key)
     ffc_ppr_row = source_ffc_ppr.get(key)
+    yahoo_row = source_yahoo.get(key)
     current = current_by_key.get(key)
     sleeper = sleeper_players.get(key)
     league_player = league_player_by_key.get(key) if league_player_by_key else None
@@ -313,6 +325,7 @@ def _build_candidate(
         or (draftsharks_row.player if draftsharks_row else None)
         or (ffc_2qb_row.player if ffc_2qb_row else None)
         or (ffc_ppr_row.player if ffc_ppr_row else None)
+        or (yahoo_row.player if yahoo_row else None)
         or (league_player.full_name if league_player else "")
     )
     position = _normalize_position(
@@ -320,6 +333,7 @@ def _build_candidate(
         or (draftsharks_row.position if draftsharks_row else None)
         or (ffc_2qb_row.position if ffc_2qb_row else None)
         or (ffc_ppr_row.position if ffc_ppr_row else None)
+        or (yahoo_row.position if yahoo_row else None)
         or (sleeper.get("position") if sleeper else "")
         or ""
     )
@@ -329,6 +343,7 @@ def _build_candidate(
         or (draftsharks_row.nfl_team if draftsharks_row and draftsharks_row.nfl_team else None)
         or (ffc_2qb_row.nfl_team if ffc_2qb_row and ffc_2qb_row.nfl_team else None)
         or (ffc_ppr_row.nfl_team if ffc_ppr_row and ffc_ppr_row.nfl_team else None)
+        or (yahoo_row.nfl_team if yahoo_row and yahoo_row.nfl_team else None)
         or (current[0].nfl_team if current and current[0].nfl_team else None)
     )
     existing_adp = current[1].adp_pick if current else None
@@ -349,6 +364,7 @@ def _build_candidate(
         draftsharks_adp=ds_adp_for_composite,
         ffc_2qb_adp=ffc_2qb_row.adp_pick if ffc_2qb_row else None,
         ffc_ppr_adp=ffc_ppr_row.adp_pick if ffc_ppr_row else None,
+        yahoo_adp=yahoo_row.adp_pick if yahoo_row else None,
         existing_adp=existing_adp,
     )
     adp_movement, movement_flag = _compute_movement(composite_adp, existing_adp)
@@ -370,6 +386,7 @@ def _build_candidate(
         draftsharks_adp=draftsharks_row.adp_pick if draftsharks_row else None,
         ffc_2qb_adp=ffc_2qb_row.adp_pick if ffc_2qb_row else None,
         ffc_ppr_adp=ffc_ppr_row.adp_pick if ffc_ppr_row else None,
+        yahoo_adp=yahoo_row.adp_pick if yahoo_row else None,
         existing_adp=existing_adp,
         source_count=source_count,
         adp_spread=adp_spread,
@@ -394,16 +411,17 @@ def _source_weights(scoring_format: str, position: str = "") -> dict[str, float]
     fmt = scoring_format.strip().lower()
     if fmt in ("superflex", "2qb"):
         if position.upper() == "QB":
-            # QBs: 2QB format is highly relevant — keep 2QB as the primary FFC source
-            return {"draftsharks": 1.3, "ffc_2qb": 0.85, "ffc_ppr": 0.35, "existing": 0.15}
+            # QBs: 2QB format is highly relevant — keep 2QB as primary FFC source.
+            # Yahoo superflex leagues are rare so their QB ADP is diluted by standard drafts.
+            return {"draftsharks": 1.3, "ffc_2qb": 0.85, "ffc_ppr": 0.35, "yahoo": 0.20, "existing": 0.15}
         else:
             # Skill positions: FFC 2QB communities over-draft QBs, pushing WR/RB/TE too late.
             # PPR is a more reliable proxy for non-QB skill position values in superflex.
-            return {"draftsharks": 1.3, "ffc_2qb": 0.35, "ffc_ppr": 0.85, "existing": 0.15}
+            return {"draftsharks": 1.3, "ffc_2qb": 0.35, "ffc_ppr": 0.85, "yahoo": 0.70, "existing": 0.15}
     if fmt == "ppr":
-        return {"draftsharks": 0.45, "ffc_2qb": 0.35, "ffc_ppr": 1.0, "existing": 0.15}
+        return {"draftsharks": 0.45, "ffc_2qb": 0.35, "ffc_ppr": 1.0, "yahoo": 0.90, "existing": 0.15}
     # half-ppr, standard
-    return {"draftsharks": 0.40, "ffc_2qb": 0.30, "ffc_ppr": 0.90, "existing": 0.15}
+    return {"draftsharks": 0.40, "ffc_2qb": 0.30, "ffc_ppr": 0.90, "yahoo": 0.80, "existing": 0.15}
 
 
 def _weighted_median(values_weights: list[tuple[float, float]]) -> float:
@@ -424,6 +442,7 @@ def _compose_adp(
     draftsharks_adp: float | None,
     ffc_2qb_adp: float | None,
     ffc_ppr_adp: float | None,
+    yahoo_adp: float | None,
     existing_adp: float | None,
 ) -> tuple[float | None, str, int, float | None, bool]:
     weights = _source_weights(scoring_format, position)
@@ -435,6 +454,8 @@ def _compose_adp(
         real_sources.append((ffc_2qb_adp, weights["ffc_2qb"], "ffc_2qb"))
     if ffc_ppr_adp is not None:
         real_sources.append((ffc_ppr_adp, weights["ffc_ppr"], "ffc_ppr"))
+    if yahoo_adp is not None:
+        real_sources.append((yahoo_adp, weights["yahoo"], "yahoo"))
 
     source_count = len(real_sources)
 
@@ -521,6 +542,7 @@ def _candidate_row(
         "draftsharks_superflex_adp": _fmt(candidate.draftsharks_adp),
         "ffc_2qb_adp": _fmt(candidate.ffc_2qb_adp),
         "ffc_ppr_adp": _fmt(candidate.ffc_ppr_adp),
+        "yahoo_adp": _fmt(candidate.yahoo_adp),
         "existing_adp": _fmt(candidate.existing_adp),
         "composite_method": candidate.composite_method,
         "source_count": str(candidate.source_count),
@@ -550,6 +572,8 @@ def _source_note(candidate: CompositeCandidate) -> str:
         parts.append(f"FFC2QB:{candidate.ffc_2qb_adp:g}")
     if candidate.ffc_ppr_adp is not None:
         parts.append(f"FFCPPR:{candidate.ffc_ppr_adp:g}")
+    if candidate.yahoo_adp is not None:
+        parts.append(f"Y:{candidate.yahoo_adp:g}")
     if candidate.existing_adp is not None:
         parts.append(f"prev:{candidate.existing_adp:g}")
     if candidate.review_flag:
@@ -931,6 +955,84 @@ def _round_pick_to_overall(value: object, team_count: int) -> float | None:
         return None
 
     return float((round_number - 1) * team_count + pick_in_round)
+
+
+def _fetch_yahoo_adp_rows(access_token: str, settings: Settings) -> ProviderFetchResult:
+    rows: dict[tuple[str, str], ProviderRow] = {}
+    page_size = 25
+    player_limit = settings.adp_yahoo_player_limit
+
+    for start in range(0, player_limit, page_size):
+        try:
+            data = yahoo_get(
+                f"game/nfl/players;sort=DA_AP;count={page_size};start={start};out=draft_analysis",
+                access_token,
+            )
+        except YahooAPIError as exc:
+            if not rows:
+                return ProviderFetchResult(rows={}, error=f"Yahoo ADP fetch failed: {exc}")
+            break
+
+        game_data = data.get("fantasy_content", {}).get("game", [])
+        if len(game_data) < 2 or not isinstance(game_data[1], dict):
+            break
+
+        players_data = game_data[1].get("players", {})
+        if not isinstance(players_data, dict):
+            break
+        count = int(players_data.get("count", 0))
+        if count == 0:
+            break
+
+        for i in range(count):
+            player_item = players_data.get(str(i), {}).get("player", [])
+            if not isinstance(player_item, list) or len(player_item) < 2:
+                continue
+
+            attr_list = player_item[0] if isinstance(player_item[0], list) else []
+            attrs: dict[str, object] = {}
+            for attr in attr_list:
+                if isinstance(attr, dict):
+                    attrs.update(attr)
+
+            name_data = attrs.get("name", {})
+            full_name = name_data.get("full", "") if isinstance(name_data, dict) else ""
+            full_name = _string(full_name)
+            if not full_name:
+                continue
+
+            position = _normalize_position(_string(attrs.get("display_position", "")))
+            if position not in ("QB", "RB", "WR", "TE", "K", "DST", "DEF"):
+                continue
+            position = "DST" if position == "DEF" else position
+
+            nfl_team = _string(attrs.get("editorial_team_abbr", "")).upper() or None
+
+            sub = player_item[1] if isinstance(player_item[1], dict) else {}
+            draft_analysis = sub.get("draft_analysis", {})
+            if not isinstance(draft_analysis, dict):
+                continue
+            avg_pick = _coerce_float(draft_analysis.get("average_pick"))
+            if avg_pick is None or avg_pick <= 0:
+                continue
+
+            canonical_pos = _normalize_position(position)
+            if canonical_pos in ("K", "DST") and avg_pick < 100:
+                continue
+
+            rows[_player_key(full_name, position)] = ProviderRow(
+                player=full_name,
+                position=position,
+                adp_pick=avg_pick,
+                nfl_team=nfl_team,
+            )
+
+        if count < page_size:
+            break
+
+    if not rows:
+        return ProviderFetchResult(rows={}, error="Yahoo ADP returned no usable rows")
+    return ProviderFetchResult(rows=rows)
 
 
 def _fetch_sleeper_players(settings: Settings) -> dict[tuple[str, str], dict[str, str]]:
