@@ -27,16 +27,22 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
   - Excel workbook for keeper recommendations and supporting sheets.
   - CSV keeper recommendations.
   - PDF team outlook reports.
+- **Multi-league platform**: create or join multiple leagues, switch between them with the league selector. Platform admins can access all leagues without a per-league membership.
+- **Trade Analyzer**: model the keeper value impact of a proposed trade before agreeing to it. Supports player-for-player trades and draft pick swaps. Shows baseline vs. hypothetical keeper lineups, surplus delta, gained and lost players, and an optional AI narrative verdict.
+- **Sleeper league import**: paste a Sleeper League ID to automatically pull teams, draft results, and final rosters — preview first, then commit.
 - **Mock Draft**: run a simulated draft against AI-powered bots, get a personalized pre-draft strategy plan, and receive a graded post-draft analysis.
   - Full snake draft board with keeper forfeit pre-placement.
   - 9 bot personalities × 3 difficulty levels, configurable per team.
+  - Bot pick speed: Slow / Medium / Fast animation delay.
   - AI bot picks, AI strategy plans, and AI post-draft analysis (all optional; deterministic fallbacks always available).
+  - AI player detail summaries in the player dialog (opt-in; requires `PLAYER_SUMMARY_AI_ENABLED=true`).
   - Position draft limits enforced — Draft button disabled and roster tiles highlighted when a position cap is reached.
   - Pick timer (30 / 60 / 90 / 120 seconds) with auto-pick on expiry.
-  - Completed mock history with letter grade, score, and recap. Side-by-side draft comparison.
+  - Completed mock history with letter grade, score, and recap. Side-by-side draft comparison. Rerun analysis on any completed session.
 - **AI keeper explanations**: click any player name in Keeper Recommendations for a plain-English explanation of why the optimizer recommended or passed on that player (short reason, value explanation, risk note, opportunity cost, decision badge). Responses are cached.
 - **AI scenario narratives**: click "Generate AI Analysis" in Scenario Comparison for a plain-English tradeoff summary across all five presets. Personalized for the signed-in user's assigned team when available.
 - **Composite ADP**: one-click "Update ADP" button builds a weighted-median board from DraftSharks + Fantasy Football Calculator and imports it directly.
+- **AI cost controls**: set a monthly token budget (`AI_MONTHLY_TOKEN_BUDGET`) to cap all AI spending. Platform admins can review token usage and estimated costs in the Admin AI Usage panel.
 
 ## Stack
 
@@ -46,6 +52,18 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
 - Local DB bootstrap: SQLModel `create_all`
 - Seed data: CSV files in `sample-data`
 - Production hosting: Railway web service, Railway API service, and Railway Postgres
+
+## User Roles
+
+Three role tiers control access:
+
+| Role | Scope | Capabilities |
+|---|---|---|
+| `platform_admin` | Global | Manage all leagues and all users; access Admin panel for every league; review AI usage |
+| `league_admin` | Per-league | Manage one league's teams, imports, ADP, and memberships |
+| `member` | Per-league | View league data, run optimizer, use mock draft, export reports |
+
+Platform admins are created by seeding or by direct DB assignment. League admins are assigned per-league from `Admin` → `Members`. A platform admin always has league admin privileges in every league without needing an explicit membership.
 
 ## Repository Layout
 
@@ -140,24 +158,11 @@ CREATE_TABLES_ON_STARTUP=false
 SEED_DATA_ON_STARTUP=false
 SAMPLE_DATA_PATH=sample-data
 SESSION_SECRET=change-me
+SESSION_COOKIE_NAME=keeper_optimizer_session
 SESSION_COOKIE_SECURE=false
 SESSION_COOKIE_SAMESITE=lax
 INITIAL_ADMIN_EMAIL=admin@example.com
 INITIAL_ADMIN_PASSWORD=change-me
-OPENAI_API_KEY=
-MOCK_DRAFT_AI_ENABLED=false
-MOCK_DRAFT_AI_MODEL=gpt-5.4-mini
-MOCK_DRAFT_AI_TIMEOUT_SECONDS=90
-KEEPER_EXPLANATION_AI_ENABLED=false
-SCENARIO_NARRATIVE_AI_ENABLED=false
-ADP_PROVIDER=fantasyfootballcalculator
-ADP_AUTO_REFRESH_ENABLED=false
-ADP_AUTO_REFRESH_INTERVAL_HOURS=168
-ADP_AI_BOARD_SIZE=250
-ADP_AI_EXTRA_CANDIDATES=100
-ADP_AI_REVIEW_REQUIRED=true
-ADP_AI_TIMEOUT_SECONDS=180
-ADP_AI_MAX_OUTPUT_TOKENS=32000
 ```
 
 `apps/api/.env` is loaded by FastAPI:
@@ -171,31 +176,63 @@ CREATE_TABLES_ON_STARTUP=false
 SEED_DATA_ON_STARTUP=false
 SAMPLE_DATA_PATH=sample-data
 SESSION_SECRET=change-me
+SESSION_COOKIE_NAME=keeper_optimizer_session
 SESSION_COOKIE_SECURE=false
 SESSION_COOKIE_SAMESITE=lax
 INITIAL_ADMIN_EMAIL=admin@example.com
 INITIAL_ADMIN_PASSWORD=change-me
-OPENAI_API_KEY=
-MOCK_DRAFT_AI_ENABLED=false
-MOCK_DRAFT_AI_MODEL=gpt-5.4-mini
-MOCK_DRAFT_AI_TIMEOUT_SECONDS=90
-KEEPER_EXPLANATION_AI_ENABLED=false
-SCENARIO_NARRATIVE_AI_ENABLED=false
+
+# ADP
 ADP_PROVIDER=fantasyfootballcalculator
+FANTASY_FOOTBALL_CALCULATOR_ADP_URL=https://fantasyfootballcalculator.com/api/v1/adp
+ADP_REFRESH_URL=
+ADP_REFRESH_TOKEN=
+ADP_REFRESH_TIMEOUT_SECONDS=20
 ADP_AUTO_REFRESH_ENABLED=false
 ADP_AUTO_REFRESH_INTERVAL_HOURS=168
+ADP_AUTO_REFRESH_ON_STARTUP=true
+
+# AI-synthesized ADP (ADP_PROVIDER=ai_synthesized)
 ADP_AI_BOARD_SIZE=250
 ADP_AI_EXTRA_CANDIDATES=100
 ADP_AI_REVIEW_REQUIRED=true
 ADP_AI_TIMEOUT_SECONDS=180
 ADP_AI_MAX_OUTPUT_TOKENS=32000
+ADP_AI_MAX_JUMP_WARNING=60
+ADP_AI_MAX_JUMP_WARNING_COUNT=25
+
+# AI features
+OPENAI_API_KEY=
+OPENAI_BASE_URL=https://api.openai.com/v1
+AI_MONTHLY_TOKEN_BUDGET=0
+
+MOCK_DRAFT_AI_ENABLED=false
+MOCK_DRAFT_AI_MODEL=gpt-5.4-mini
+MOCK_DRAFT_AI_TIMEOUT_SECONDS=90
+MOCK_DRAFT_AI_CANDIDATE_LIMIT=40
+MOCK_DRAFT_AI_MAX_AI_ROUND=0
+
+KEEPER_EXPLANATION_AI_ENABLED=false
+KEEPER_EXPLANATION_MODEL=gpt-5.4-mini
+KEEPER_EXPLANATION_AI_TIMEOUT_SECONDS=30
+
+SCENARIO_NARRATIVE_AI_ENABLED=false
+SCENARIO_NARRATIVE_MODEL=gpt-5.4-mini
+SCENARIO_NARRATIVE_AI_TIMEOUT_SECONDS=45
+
+PLAYER_SUMMARY_AI_ENABLED=false
+PLAYER_SUMMARY_MODEL=gpt-5.4-mini
+PLAYER_SUMMARY_AI_TIMEOUT_SECONDS=30
 ```
 
 AI features are opt-in. All AI calls require `OPENAI_API_KEY` to be set. Each feature has its own enable flag:
 
-- `MOCK_DRAFT_AI_ENABLED=true` — bot picks, post-draft analysis, and strategy plans call an OpenAI model. Falls back to deterministic logic if the model call fails or returns an invalid player.
+- `MOCK_DRAFT_AI_ENABLED=true` — bot picks, post-draft analysis, and strategy plans call an OpenAI model. Falls back to deterministic logic if the model call fails or returns an invalid player. Set `MOCK_DRAFT_AI_MAX_AI_ROUND` to a round number to limit AI picks to early rounds only (0 = no limit).
 - `KEEPER_EXPLANATION_AI_ENABLED=true` — keeper recommendation explanations are generated on demand and cached.
 - `SCENARIO_NARRATIVE_AI_ENABLED=true` — scenario comparison narratives are generated on demand and cached.
+- `PLAYER_SUMMARY_AI_ENABLED=true` — player detail summaries in the mock draft player dialog are generated on demand and cached.
+
+Set `AI_MONTHLY_TOKEN_BUDGET` to a positive integer (total tokens) to enforce a monthly spending cap across all AI features. When the budget is exceeded, all AI calls are blocked until the next calendar month. Platform admins can review usage in `Admin` → `AI Usage`.
 
 AI-synthesized ADP is also opt-in. Set `ADP_PROVIDER=ai_synthesized`,
 `ADP_AUTO_REFRESH_ENABLED=true`, and `OPENAI_API_KEY` on the API service to refresh ADP weekly.
@@ -294,36 +331,13 @@ railway logs --service api --environment production --lines 120
 railway logs --service '@keeper-optimizer/web' --environment production --lines 120
 ```
 
-Deploy the API (uses `apps/api/Dockerfile`, so `--path-as-root` scopes the upload to avoid the
-monorepo root `package.json` triggering Railway's Node.js builder):
+Deploy from the repository root:
 
 ```bash
-railway up ./apps/api --path-as-root --service api
-```
-
-Deploy the web frontend. **Two rules before deploying:**
-
-1. **Commit first.** Railway's diff engine is git-aware and silently skips uncommitted file
-   changes, so the old cached build image is reused if changes are not committed before deploying.
-2. **Bump `apps/web/package.json` version for source-only changes.** Railway's build cache is
-   keyed on `package.json` content. If only `.tsx`/`.ts` source files changed (no dependency
-   changes), bump the patch version (e.g. `0.1.2` → `0.1.3`) so Railway produces a fresh image
-   instead of reusing the last cached one.
-
-```bash
-# bump apps/web/package.json version if only source files changed
-git add apps/web/...
-git commit -m "your message"
-railway up --service "@keeper-optimizer/web"
-```
-
-The web service is deployed from the monorepo root (no `--path-as-root`) so that Railway picks up
-the workspace `package.json` and runs `npm run build --workspace=@keeper-optimizer/web`.
-
-To inspect build logs (separate from runtime logs):
-
-```bash
-railway logs --service "@keeper-optimizer/web" --build
+# API: pass-as-root is required to avoid Node.js builder detection from the monorepo package.json
+railway up ./apps/api --path-as-root --service api --environment production --detach
+# Web: must have a committed git state first
+railway up --service '@keeper-optimizer/web' --environment production --detach
 ```
 
 Add the custom domain from the Railway dashboard if the CLI domain command returns an authorization
@@ -443,21 +457,19 @@ Supported positions:
 
 ## How to Use the App
 
-The app is a shared league workspace with user-specific modeling. Admins manage league inputs,
-ADP, teams, users, and shared setup. Every signed-in user can review the league data, tune their
-own optimizer settings, run recommendations, choose scenario views, apply manual overrides, and
-export their reports.
+The app is a multi-league platform with user-specific modeling. Platform admins manage users globally. League admins manage league inputs, ADP, teams, and memberships. Every signed-in member can review league data, tune their own optimizer settings, run recommendations, choose scenario views, apply manual overrides, and export their reports.
 
 The main workflow is:
 
 1. Sign in.
-2. Confirm the league, teams, draft results, final rosters, and ADP snapshot are loaded.
-3. Adjust `Optimizer Settings` when the model should use a different strategy or league rule.
-4. Click `Run Optimizer` to recompute keeper recommendations from the current inputs.
-5. Review `Keeper Recommendations`.
-6. Use manual overrides only for context the model cannot know.
-7. Review `Scenario Comparison`, `Draft Impact`, and `Team Outlook`.
-8. Export Excel, CSV, or PDF reports when the recommendations are ready.
+2. Select the active league from the league selector (top of sidebar) if you belong to more than one.
+3. Confirm the league, teams, draft results, final rosters, and ADP snapshot are loaded.
+4. Adjust `Optimizer Settings` when the model should use a different strategy or league rule.
+5. Click `Run Optimizer` to recompute keeper recommendations from the current inputs.
+6. Review `Keeper Recommendations`.
+7. Use manual overrides only for context the model cannot know.
+8. Review `Scenario Comparison`, `Draft Impact`, and `Team Outlook`.
+9. Export Excel, CSV, or PDF reports when the recommendations are ready.
 
 ### Core Concepts
 
@@ -489,7 +501,9 @@ Open the web app and sign in with an account created by an admin. The user menu 
 shows your role and assigned team. Open `View Profile` from that menu to upload or remove a profile
 image, review your assigned team, or change your password.
 
-Admins see the `Admin` navigation item. Regular users do not see admin-only controls.
+League admins and platform admins see the `Admin` navigation item. Regular members do not see admin-only controls.
+
+After signing in, the league selector at the top of the sidebar shows all leagues you belong to. Select a league to switch the active workspace. Platform admins can access any league without an explicit membership.
 
 ### League Dashboard
 
@@ -529,13 +543,13 @@ rosters will not be considered by the optimizer.
 
 ### Admin
 
-Admins use `Admin` for account management, team management, and shared league imports.
+Admins use `Admin` for account management, team management, shared league imports, league settings, and AI observability.
 
-`Users` lets admins create accounts, set roles, activate or deactivate users, assign users to teams,
-view generated credentials, reset passwords, edit users, and delete users.
+`Users` (platform admin only) lets admins create accounts, set global roles (`user` or `platform_admin`), activate or deactivate users, view generated credentials, reset passwords, edit users, and delete users.
 
-`Managed Teams` lets admins add teams, edit team names and draft slots, assign teams to users, set
-fallback owner names, and delete teams.
+`Managed Teams` lets admins add teams, edit team names and draft slots, assign teams to users, set fallback owner names, and delete teams.
+
+`Members` lets league admins add or remove league members and set per-league roles (`league_admin` or `member`).
 
 `League Data Imports` handles draft results and final rosters. The import workflow is always:
 
@@ -548,6 +562,17 @@ fallback owner names, and delete teams.
 Preview validation catches missing headers, missing required values, invalid positions, invalid
 numeric picks or ADP values, duplicate draft picks, duplicate player rows, and missing teams.
 Missing teams are warnings because the import path can create missing teams automatically.
+
+`Import from Sleeper` pulls teams, draft results, and final rosters from a live Sleeper league:
+
+1. Paste the Sleeper League ID (found in the Sleeper URL, e.g. `sleeper.com/leagues/123456789`).
+2. Select the season year.
+3. Click `Preview` to validate the import — the panel shows which teams, draft picks, and roster entries will be created.
+4. Click `Import` to commit.
+
+`Roster Settings` lets admins configure the mock draft round count, allowed positions, roster slot counts, position caps, and bench limits for the league.
+
+`AI Usage` (platform admin only) shows a log of recent AI requests with token counts, estimated cost, feature type, and whether the monthly budget is currently exceeded. Use this to monitor spending when AI features are enabled.
 
 ### ADP Input and ADP Preview
 
@@ -705,6 +730,23 @@ shareable report for one manager.
 Outlooks are summaries of the active selected keeper plan. The detailed math remains in `Keeper
 Recommendations`.
 
+### Trade Analyzer
+
+Use `Trade Analyzer` to model the keeper value impact of a proposed trade before agreeing to it.
+
+1. Select your team from the dropdown.
+2. In the **Give** section, choose one or more players from your roster to trade away. For pick-only or pick-included trades, add draft rounds under **Give Picks**.
+3. In the **Receive** section, choose players you would receive. If a received player comes with a draft pick (which becomes the keeper cost), set the round under **Receive Picks**.
+4. Click `Analyze Trade` to run the optimizer on both the baseline (current roster) and the hypothetical (post-trade roster).
+5. Review:
+   - **Baseline Keepers**: which players the optimizer would currently recommend keeping.
+   - **Hypothetical Keepers**: which players would be recommended after the trade.
+   - **Surplus Delta**: the net change in keeper pick surplus from the trade.
+   - **Gained / Lost**: the players added and removed from the keeper plan.
+6. Enable AI narrative (requires `KEEPER_EXPLANATION_AI_ENABLED=true`) for a plain-English verdict: `Good`, `Neutral`, or `Bad`, with a summary, key risk, and opportunity cost.
+
+The trade analyzer does not commit any changes. It is a modeling tool only.
+
 ### Mock Draft
 
 Use `Mock Draft` to simulate a draft against AI-powered bots using real league keeper context and
@@ -714,24 +756,27 @@ the current ADP snapshot.
 
 1. Select your team (or have an admin assign you one).
 2. Choose bot personality and difficulty per opposing team, or use the defaults.
-3. Set an optional pick timer (30–120 seconds). Expired picks are filled automatically with the top available player.
-4. Click `Generate Strategy Plan` to get an AI-generated pre-draft plan with targets, fades, round priorities, and contingencies.
-5. Click `Start Draft` to begin.
+3. Choose a bot pick speed: `Slow` (1.5 s delay), `Medium` (0.6 s), or `Fast` (0.15 s).
+4. Set an optional pick timer (30–120 seconds). Expired picks are filled automatically with the top available player.
+5. Click `Generate Strategy Plan` to get an AI-generated pre-draft plan with targets, fades, round priorities, and contingencies (requires `MOCK_DRAFT_AI_ENABLED=true`).
+6. Click `Start Draft` to begin.
 
 **During the draft:**
 
 - Keeper forfeits are pre-placed on the draft board. They do not count as picks and cannot be changed.
-- When it is your pick, use `Available Players` to browse by position or scroll by ADP. Click `Draft` to select a player.
+- When it is your pick, use `Available Players` to browse by position or scroll by ADP. Click a player row to open the player detail dialog; if `PLAYER_SUMMARY_AI_ENABLED=true`, click `Generate Summary` for an AI scouting note on that player.
+- Click `Draft` to select a player.
 - If a position's draft limit is reached, the `Draft` button for players of that position is grayed out and the corresponding roster tile turns red.
-- Bots pick automatically with a brief delay. AI bot picks are used when `MOCK_DRAFT_AI_ENABLED=true`; otherwise bots fall back to deterministic scoring.
+- Bots pick automatically. AI bot picks are used when `MOCK_DRAFT_AI_ENABLED=true`; otherwise bots fall back to deterministic scoring. Set `MOCK_DRAFT_AI_MAX_AI_ROUND` to limit AI picks to early rounds (0 = unlimited).
 - `Pause` and `Resume` are available if you need to step away.
 
 **After the draft:**
 
 - `Complete` ends the draft and generates a post-draft analysis with a letter grade, numeric score, pick feedback, what-if scenarios, and future advice.
 - Completed mocks are saved to history. Select two or more from history to compare side-by-side.
+- `Rerun Analysis` is available on any completed session to regenerate the post-draft grade and feedback.
 
-**League roster settings** control the mock draft round count, allowed positions, slot counts, position caps, and bench limits. Admins can edit these from `Roster Settings` in the league settings section.
+**League roster settings** control the mock draft round count, allowed positions, slot counts, position caps, and bench limits. Admins can edit these from `Roster Settings` under `Admin`.
 
 ## Scoring Model
 
@@ -827,15 +872,24 @@ POST   /api/admin/users/{user_id}/reset-password
 DELETE /api/admin/users/{user_id}
 GET    /api/admin/defaults/optimizer-settings
 PATCH  /api/admin/defaults/optimizer-settings
+GET    /api/admin/ai/usage
 
 POST   /api/leagues
 GET    /api/leagues
+GET    /api/leagues/my
 GET    /api/leagues/{league_id}
 PATCH  /api/leagues/{league_id}
+DELETE /api/leagues/{league_id}
 POST   /api/leagues/{league_id}/teams
 GET    /api/leagues/{league_id}/teams
 PATCH  /api/teams/{team_id}
 DELETE /api/teams/{team_id}
+
+GET    /api/leagues/{league_id}/memberships
+POST   /api/leagues/{league_id}/memberships
+PATCH  /api/leagues/{league_id}/memberships/{user_id}/role
+DELETE /api/leagues/{league_id}/memberships/{user_id}
+PATCH  /api/leagues/{league_id}/memberships/me/avatar
 
 GET    /api/leagues/{league_id}/draft-results
 POST   /api/leagues/{league_id}/draft-results/preview
@@ -845,6 +899,9 @@ GET    /api/leagues/{league_id}/final-rosters
 POST   /api/leagues/{league_id}/final-rosters/preview
 POST   /api/leagues/{league_id}/final-rosters/import
 
+POST   /api/leagues/{league_id}/import/sleeper/preview
+POST   /api/leagues/{league_id}/import/sleeper/commit
+
 POST   /api/leagues/{league_id}/adp-snapshots
 GET    /api/leagues/{league_id}/adp-snapshots
 GET    /api/adp-snapshots/{snapshot_id}
@@ -852,12 +909,16 @@ POST   /api/leagues/{league_id}/adp/preview
 POST   /api/leagues/{league_id}/adp/import
 POST   /api/leagues/{league_id}/adp/refresh
 POST   /api/leagues/{league_id}/adp/import-composite
+GET    /api/leagues/{league_id}/adp/coverage-summary
+GET    /api/leagues/{league_id}/adp/players/{player_id}/summary
+POST   /api/leagues/{league_id}/adp/players/{player_id}/summary
 
 GET    /api/leagues/{league_id}/optimizer/settings
 PATCH  /api/leagues/{league_id}/optimizer/settings
 POST   /api/leagues/{league_id}/optimizer/run
 GET    /api/leagues/{league_id}/optimizer/results
 POST   /api/leagues/{league_id}/optimizer/scenarios
+POST   /api/leagues/{league_id}/optimizer/trade-analysis
 
 GET    /api/leagues/{league_id}/manual-overrides
 PUT    /api/leagues/{league_id}/manual-overrides
@@ -873,20 +934,23 @@ GET    /api/leagues/{league_id}/exports/team-outlooks.pdf
 
 POST   /api/mock-drafts
 GET    /api/mock-drafts/{session_id}
+PATCH  /api/mock-drafts/{session_id}
 DELETE /api/mock-drafts/{session_id}
 POST   /api/mock-drafts/{session_id}/start
 POST   /api/mock-drafts/{session_id}/pause
 POST   /api/mock-drafts/{session_id}/resume
 POST   /api/mock-drafts/{session_id}/pick
+POST   /api/mock-drafts/{session_id}/bot-pick
 POST   /api/mock-drafts/{session_id}/complete
 POST   /api/mock-drafts/{session_id}/end
 POST   /api/mock-drafts/{session_id}/strategy-plan
-GET    /api/leagues/{league_id}/mock-drafts/history
+POST   /api/mock-drafts/{session_id}/analysis/rerun
+GET    /api/leagues/{league_id}/mock-drafts
 
-POST   /api/leagues/{league_id}/keeper-recommendations/{rec_id}/explanation
-GET    /api/leagues/{league_id}/keeper-recommendations/{rec_id}/explanation
-POST   /api/leagues/{league_id}/scenario-narrative
-GET    /api/leagues/{league_id}/scenario-narrative
+POST   /api/leagues/{league_id}/optimizer/results/{rec_id}/explanation
+GET    /api/leagues/{league_id}/optimizer/results/{rec_id}/explanation
+POST   /api/leagues/{league_id}/optimizer/scenarios/narrative
+GET    /api/leagues/{league_id}/optimizer/scenarios/narrative
 ```
 
 Interactive OpenAPI docs are available at:
@@ -977,6 +1041,6 @@ CREATE_TABLES_ON_STARTUP=true uvicorn app.main:app --reload
 
 ## Current Limitations
 
-- Yahoo or external league-provider integration is not implemented yet.
+- Yahoo and ESPN league imports are not implemented. Sleeper is the only supported third-party league provider.
 - Frontend CRUD is focused on users, teams, imports, optimizer runs, overrides, scenarios, draft impact, and exports.
 - PDF reports are intentionally simple and dependency-free.
