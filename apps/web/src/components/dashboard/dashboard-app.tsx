@@ -2397,7 +2397,7 @@ function ProfilePage() {
 }
 
 function LeagueDashboard() {
-  const { currentUser, data } = useDashboard();
+  const { currentUser, data, downloadCurrentAdpNow, isBusy } = useDashboard();
   const recommendedKeepers = data.keeperRecommendations.filter(
     (recommendation) => recommendation.status === "Recommended",
   );
@@ -2612,9 +2612,20 @@ function LeagueDashboard() {
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Model Status</CardTitle>
-            <CardDescription>Input freshness and the settings currently driving the answer.</CardDescription>
+          <CardHeader className="flex flex-row items-start justify-between gap-2">
+            <div>
+              <CardTitle>Model Status</CardTitle>
+              <CardDescription>Input freshness and the settings currently driving the answer.</CardDescription>
+            </div>
+            <Button
+              disabled={isBusy || !data.adpEntries.length || !data.league?.id}
+              onClick={downloadCurrentAdpNow}
+              size="sm"
+              variant="outline"
+            >
+              <Download className="size-4" aria-hidden="true" />
+              Download ADP
+            </Button>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -4864,7 +4875,6 @@ function ADPInputPage({
     csvPreviews,
     data,
     downloadAdpTemplateNow,
-    downloadCurrentAdpNow,
     importCompositeAdpNow,
     importCsvText,
     isAdmin,
@@ -4954,20 +4964,9 @@ function ADPInputPage({
       </Card> : null}
 
       <Card className="h-full min-h-0">
-        <CardHeader className="flex flex-row items-start justify-between gap-2">
-          <div>
-            <CardTitle>ADP Preview</CardTitle>
-            <CardDescription>Parsed player market data ready for optimizer runs.</CardDescription>
-          </div>
-          <Button
-            disabled={isBusy || !data.adpEntries.length || !data.league?.id}
-            onClick={downloadCurrentAdpNow}
-            size="sm"
-            variant="outline"
-          >
-            <Download className="size-4" aria-hidden="true" />
-            Download ADP
-          </Button>
+        <CardHeader>
+          <CardTitle>ADP Preview</CardTitle>
+          <CardDescription>Parsed player market data ready for optimizer runs.</CardDescription>
         </CardHeader>
         <CardContent>
           <DataTable
