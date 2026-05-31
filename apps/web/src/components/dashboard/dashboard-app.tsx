@@ -2612,21 +2612,20 @@ function LeagueDashboard() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-2">
-            <div>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-3">
               <CardTitle>Model Status</CardTitle>
-              <CardDescription>Input freshness and the settings currently driving the answer.</CardDescription>
+              <Button
+                disabled={isBusy || !data.adpEntries.length || !data.league?.id}
+                onClick={downloadCurrentAdpNow}
+                size="sm"
+                variant="outline"
+              >
+                <Download className="size-4" aria-hidden="true" />
+                Download ADP
+              </Button>
             </div>
-            <Button
-              className="shrink-0 whitespace-nowrap"
-              disabled={isBusy || !data.adpEntries.length || !data.league?.id}
-              onClick={downloadCurrentAdpNow}
-              size="sm"
-              variant="outline"
-            >
-              <Download className="size-4" aria-hidden="true" />
-              Download ADP
-            </Button>
+            <CardDescription>Input freshness and the settings currently driving the answer.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
