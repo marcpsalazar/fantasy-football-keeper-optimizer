@@ -2618,6 +2618,7 @@ function LeagueDashboard() {
               <CardDescription>Input freshness and the settings currently driving the answer.</CardDescription>
             </div>
             <Button
+              className="shrink-0 whitespace-nowrap"
               disabled={isBusy || !data.adpEntries.length || !data.league?.id}
               onClick={downloadCurrentAdpNow}
               size="sm"
