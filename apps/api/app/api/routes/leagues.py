@@ -1720,6 +1720,40 @@ def export_adp_template_csv(
     )
 
 
+@router.get("/leagues/{league_id}/exports/adp-current.csv")
+def export_current_adp_csv(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> Response:
+    league = _require_league(session, league_id)
+    snapshot = session.exec(
+        select(ADPSnapshot)
+        .where(ADPSnapshot.league_id == league.id)
+        .order_by(ADPSnapshot.snapshot_date.desc(), ADPSnapshot.created_at.desc())
+    ).first()
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No ADP snapshot found for this league")
+    rows = _adp_entry_rows(session, snapshot)
+    csv_rows = [
+        {
+            "player": row["player_name"],
+            "position": row["position"],
+            "nfl_team": row["nfl_team"],
+            "adp_pick": row["adp_pick"],
+            "adp_round": row["adp_round"],
+            "source": row["source"],
+            "snapshot_date": row["snapshot_date"],
+            "format": row["format_type"],
+        }
+        for row in rows
+    ]
+    return _csv_response(
+        rows=csv_rows,
+        filename=f"adp-{league_id}-{snapshot.snapshot_date.strftime('%Y%m%d')}.csv",
+    )
+
+
 @router.get("/leagues/{league_id}/exports/team-outlooks.pdf")
 def export_team_outlooks_pdf(
     league_id: uuid.UUID,

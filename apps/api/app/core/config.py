@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     adp_refresh_url: str | None = None
     adp_refresh_token: str | None = None
     adp_refresh_timeout_seconds: float = 20.0
-    adp_auto_refresh_enabled: bool = False
+    adp_auto_refresh_enabled: bool = True
     adp_auto_refresh_interval_hours: int = 168
     adp_auto_refresh_on_startup: bool = True
     adp_ai_board_size: int = 250

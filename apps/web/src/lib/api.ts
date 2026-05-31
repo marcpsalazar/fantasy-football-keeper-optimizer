@@ -1277,6 +1277,34 @@ export function exportUrl(
   return `${API_BASE_URL}${path}`;
 }
 
+export async function downloadCurrentAdp(leagueId: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/leagues/${leagueId}/exports/adp-current.csv?ts=${Date.now()}`,
+    {
+      cache: "no-store",
+      credentials: "include",
+      headers: { Accept: "text/csv,application/json" },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  const blob = await response.blob();
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const contentDisposition = response.headers.get("content-disposition") ?? "";
+  const filenameMatch = contentDisposition.match(/filename=\"?([^"]+)\"?/i);
+  link.href = downloadUrl;
+  link.download =
+    filenameMatch?.[1] ?? `adp-${leagueId}-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(downloadUrl);
+}
+
 export async function downloadAdpTemplate(leagueId: string): Promise<void> {
   const response = await fetch(
     `${API_BASE_URL}/api/leagues/${leagueId}/exports/adp-template.csv?ts=${Date.now()}`,

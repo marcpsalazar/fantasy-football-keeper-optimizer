@@ -72,6 +72,7 @@ import {
   deleteMockDraft,
   deleteTeam,
   downloadAdpTemplate,
+  downloadCurrentAdp,
   endMockDraft,
   exportUrl,
   generateKeeperExplanation,
@@ -533,6 +534,7 @@ type DashboardContextValue = {
   saveLeagueCalendarSettings: (settings: LeagueCalendarSettings) => Promise<void>;
   saveRosterSettings: (settings: LeagueRosterSettings) => Promise<void>;
   downloadAdpTemplateNow: () => Promise<void>;
+  downloadCurrentAdpNow: () => Promise<void>;
   importCompositeAdpNow: () => Promise<void>;
   createUserNow: (form: UserForm) => Promise<void>;
   updateUserNow: (userId: string, form: UserForm) => Promise<void>;
@@ -986,6 +988,24 @@ export function DashboardApp() {
     }
   }, [requireLeagueId]);
 
+  const downloadCurrentAdpNow = React.useCallback(async () => {
+    const leagueId = requireLeagueId();
+    if (!leagueId) {
+      return;
+    }
+    setIsBusy(true);
+    try {
+      await downloadCurrentAdp(leagueId);
+      setApiStatus("live");
+      setStatusMessage("ADP CSV downloaded.");
+    } catch {
+      setApiStatus("error");
+      setStatusMessage("ADP download failed. No ADP snapshot may be loaded yet.");
+    } finally {
+      setIsBusy(false);
+    }
+  }, [requireLeagueId]);
+
   const importCompositeAdpNow = React.useCallback(async () => {
     const leagueId = requireLeagueId();
     if (!leagueId) {
@@ -1294,6 +1314,7 @@ export function DashboardApp() {
       resetUserPasswordNow,
       deleteUserNow,
       downloadAdpTemplateNow,
+      downloadCurrentAdpNow,
       importCompositeAdpNow,
       createTeamNow,
       updateTeamNow,
@@ -1337,6 +1358,7 @@ export function DashboardApp() {
       deleteUserNow,
       deleteTeamNow,
       downloadAdpTemplateNow,
+      downloadCurrentAdpNow,
       exportRecommendations,
       getLeagueMembershipsNow,
       importCompositeAdpNow,
@@ -4842,6 +4864,7 @@ function ADPInputPage({
     csvPreviews,
     data,
     downloadAdpTemplateNow,
+    downloadCurrentAdpNow,
     importCompositeAdpNow,
     importCsvText,
     isAdmin,
@@ -4931,9 +4954,20 @@ function ADPInputPage({
       </Card> : null}
 
       <Card className="h-full min-h-0">
-        <CardHeader>
-          <CardTitle>ADP Preview</CardTitle>
-          <CardDescription>Parsed player market data ready for optimizer runs.</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-2">
+          <div>
+            <CardTitle>ADP Preview</CardTitle>
+            <CardDescription>Parsed player market data ready for optimizer runs.</CardDescription>
+          </div>
+          <Button
+            disabled={isBusy || !data.adpEntries.length || !data.league?.id}
+            onClick={downloadCurrentAdpNow}
+            size="sm"
+            variant="outline"
+          >
+            <Download className="size-4" aria-hidden="true" />
+            Download ADP
+          </Button>
         </CardHeader>
         <CardContent>
           <DataTable
