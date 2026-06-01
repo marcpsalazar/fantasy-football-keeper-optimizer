@@ -798,6 +798,156 @@ export async function analyzeKeeperTrade(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Yahoo Fantasy import
+// ---------------------------------------------------------------------------
+
+export type YahooAuthStatus = {
+  connected: boolean;
+  expiresAt: string | null;
+};
+
+export type YahooUserLeague = {
+  leagueKey: string;
+  name: string;
+  season: string;
+  numTeams: number;
+  scoringType: string;
+};
+
+export type YahooLeagueSettingsPreview = {
+  scoringFormat: string;
+  draftType: string;
+  rosterSettings: Record<string, number>;
+};
+
+export type YahooPreviewTeam = {
+  teamKey: string;
+  draftPosition: number;
+  name: string;
+  ownerName: string | null;
+  playerCount: number;
+};
+
+export type YahooImportPreview = {
+  valid: boolean;
+  seasonYear: number;
+  leagueName: string;
+  teams: YahooPreviewTeam[];
+  draftPicksCount: number;
+  rosterEntriesCount: number;
+  leagueSettingsPreview: YahooLeagueSettingsPreview | null;
+  warnings: string[];
+  errors: string[];
+};
+
+export type YahooImportResult = {
+  seasonYear: number;
+  leagueName: string;
+  teamsUpserted: number;
+  draftPicksUpserted: number;
+  rosterEntriesUpserted: number;
+  leagueSettingsUpdated: boolean;
+  warnings: string[];
+};
+
+export async function getYahooAuthStatus(): Promise<YahooAuthStatus> {
+  const row = await fetchJson<{ connected: boolean; expires_at: string | null }>(
+    "/api/auth/yahoo/status",
+  );
+  return { connected: row.connected, expiresAt: row.expires_at };
+}
+
+export async function initYahooAuth(): Promise<string> {
+  const row = await fetchJson<{ auth_url: string }>("/api/auth/yahoo/init");
+  return row.auth_url;
+}
+
+export async function listYahooUserLeagues(leagueId: string): Promise<YahooUserLeague[]> {
+  const row = await fetchJson<{ leagues: Record<string, unknown>[] }>(
+    `/api/leagues/${leagueId}/import/yahoo/user-leagues`,
+  );
+  return row.leagues.map((lg) => ({
+    leagueKey: text(lg.league_key),
+    name: text(lg.name),
+    season: text(lg.season),
+    numTeams: number(lg.num_teams),
+    scoringType: text(lg.scoring_type),
+  }));
+}
+
+export async function previewYahooImport(
+  leagueId: string,
+  yahooLeagueKey: string,
+  seasonYear?: number,
+  importLeagueSettings = true,
+): Promise<YahooImportPreview> {
+  const row = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/import/yahoo/preview`,
+    {
+      body: JSON.stringify({
+        yahoo_league_key: yahooLeagueKey,
+        season_year: seasonYear ?? null,
+        import_league_settings: importLeagueSettings,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  return {
+    valid: Boolean(row.valid),
+    seasonYear: number(row.season_year),
+    leagueName: text(row.league_name),
+    teams: (Array.isArray(row.teams) ? row.teams : []).map((t: Record<string, unknown>) => ({
+      teamKey: text(t.team_key),
+      draftPosition: number(t.draft_position),
+      name: text(t.name),
+      ownerName: typeof t.owner_name === "string" ? t.owner_name : null,
+      playerCount: number(t.player_count),
+    })),
+    draftPicksCount: number(row.draft_picks_count),
+    rosterEntriesCount: number(row.roster_entries_count),
+    leagueSettingsPreview: row.league_settings_preview && typeof row.league_settings_preview === "object"
+      ? {
+          scoringFormat: text((row.league_settings_preview as Record<string, unknown>).scoring_format),
+          draftType: text((row.league_settings_preview as Record<string, unknown>).draft_type),
+          rosterSettings: objectRecord((row.league_settings_preview as Record<string, unknown>).roster_settings) as Record<string, number>,
+        }
+      : null,
+    warnings: Array.isArray(row.warnings) ? (row.warnings as string[]) : [],
+    errors: Array.isArray(row.errors) ? (row.errors as string[]) : [],
+  };
+}
+
+export async function commitYahooImport(
+  leagueId: string,
+  yahooLeagueKey: string,
+  seasonYear?: number,
+  importLeagueSettings = true,
+): Promise<YahooImportResult> {
+  const row = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/import/yahoo/commit`,
+    {
+      body: JSON.stringify({
+        yahoo_league_key: yahooLeagueKey,
+        season_year: seasonYear ?? null,
+        import_league_settings: importLeagueSettings,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  return {
+    seasonYear: number(row.season_year),
+    leagueName: text(row.league_name),
+    teamsUpserted: number(row.teams_upserted),
+    draftPicksUpserted: number(row.draft_picks_upserted),
+    rosterEntriesUpserted: number(row.roster_entries_upserted),
+    leagueSettingsUpdated: Boolean(row.league_settings_updated),
+    warnings: Array.isArray(row.warnings) ? (row.warnings as string[]) : [],
+  };
+}
+
 export async function getLeagueMemberships(leagueId: string): Promise<LeagueMembership[]> {
   const payload = await fetchTable(`/api/leagues/${leagueId}/memberships`);
   return payload.rows.map(mapLeagueMembership);
@@ -1224,6 +1374,59 @@ export async function deleteMockDraft(sessionId: string): Promise<void> {
   });
 }
 
+export type TeamDraftHistory = {
+  teamId: string;
+  teamName: string | null;
+  ownerName: string | null;
+  seasonsFound: number[];
+  seasonsWithData: number;
+  totalPicksAnalyzed: number;
+  positionPickRates: Record<string, number>;
+  earlyRoundPositions: Record<string, number>;
+  midRoundPositions: Record<string, number>;
+  lateRoundPositions: Record<string, number>;
+  adpTendency: number;
+  positionAdpTendencies: Record<string, number>;
+  keeperPositions: string[];
+  keeperCountAvg: number;
+};
+
+function mapTeamDraftHistory(row: ApiRow): TeamDraftHistory {
+  return {
+    teamId: text(row.team_id),
+    teamName: text(row.team_name) || null,
+    ownerName: text(row.owner_name) || null,
+    seasonsFound: (row.seasons_found as number[]) ?? [],
+    seasonsWithData: number(row.seasons_with_data),
+    totalPicksAnalyzed: number(row.total_picks_analyzed),
+    positionPickRates: (row.position_pick_rates as Record<string, number>) ?? {},
+    earlyRoundPositions: (row.early_round_positions as Record<string, number>) ?? {},
+    midRoundPositions: (row.mid_round_positions as Record<string, number>) ?? {},
+    lateRoundPositions: (row.late_round_positions as Record<string, number>) ?? {},
+    adpTendency: number(row.adp_tendency),
+    positionAdpTendencies: (row.position_adp_tendencies as Record<string, number>) ?? {},
+    keeperPositions: (row.keeper_positions as string[]) ?? [],
+    keeperCountAvg: number(row.keeper_count_avg),
+  };
+}
+
+export async function getLeagueDraftHistory(leagueId: string): Promise<TeamDraftHistory[]> {
+  const payload = await fetchJson<ApiRow[]>(`/api/leagues/${leagueId}/draft-history`);
+  return payload.map(mapTeamDraftHistory);
+}
+
+export async function getTeamDraftHistory(
+  leagueId: string,
+  teamId: string,
+): Promise<TeamDraftHistory | null> {
+  try {
+    const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/teams/${teamId}/draft-history`);
+    return mapTeamDraftHistory(payload);
+  } catch {
+    return null;
+  }
+}
+
 export function exportUrl(
   leagueId: string,
   format: "xlsx" | "csv" | "pdf" | "adp-template" = "xlsx",
@@ -1234,6 +1437,34 @@ export function exportUrl(
   }
   const path = exportPath(leagueId, format, teamId);
   return `${API_BASE_URL}${path}`;
+}
+
+export async function downloadCurrentAdp(leagueId: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/leagues/${leagueId}/exports/adp-current.csv?ts=${Date.now()}`,
+    {
+      cache: "no-store",
+      credentials: "include",
+      headers: { Accept: "text/csv,application/json" },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  const blob = await response.blob();
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const contentDisposition = response.headers.get("content-disposition") ?? "";
+  const filenameMatch = contentDisposition.match(/filename=\"?([^"]+)\"?/i);
+  link.href = downloadUrl;
+  link.download =
+    filenameMatch?.[1] ?? `adp-${leagueId}-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(downloadUrl);
 }
 
 export async function downloadAdpTemplate(leagueId: string): Promise<void> {

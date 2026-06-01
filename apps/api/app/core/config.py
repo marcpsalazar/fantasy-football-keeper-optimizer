@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     adp_refresh_url: str | None = None
     adp_refresh_token: str | None = None
     adp_refresh_timeout_seconds: float = 20.0
-    adp_auto_refresh_enabled: bool = False
+    adp_auto_refresh_enabled: bool = True
     adp_auto_refresh_interval_hours: int = 168
     adp_auto_refresh_on_startup: bool = True
     adp_ai_board_size: int = 250
@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     player_summary_ai_timeout_seconds: float = 30.0
     mock_draft_ai_max_ai_round: int = 0
     ai_monthly_token_budget: int = 0
+    yahoo_client_id: str | None = None
+    yahoo_client_secret: str | None = None
+    yahoo_redirect_uri: str = "http://localhost:8000/api/auth/yahoo/callback"
+    frontend_url: str = "http://localhost:3000"
+    adp_yahoo_player_limit: int = 200
 
     @property
     def use_secure_session_cookie(self) -> bool:

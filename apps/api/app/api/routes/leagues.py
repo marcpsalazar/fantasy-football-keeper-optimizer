@@ -49,6 +49,18 @@ from app.services.sleeper_import import (
     commit_sleeper_import,
     preview_sleeper_import,
 )
+from app.services.yahoo_import import (
+    commit_yahoo_import,
+    list_user_leagues,
+    preview_yahoo_import,
+)
+from app.services.yahoo_oauth import (
+    YahooAPIError,
+    YahooTokenExpiredError,
+    YahooTokenMissingError,
+    get_valid_access_token,
+)
+from app.schemas.yahoo_import import YahooImportRequest
 from app.services.ai_adp import AIADPError
 from app.services.adp_review import create_ai_adp_refresh_candidate as create_ai_adp_refresh_candidate_service
 from app.services.csv_preview import (
@@ -89,6 +101,8 @@ from app.services import player_summary_ai
 from app.services.player_summary_ai import ENTITY_TYPE as PLAYER_SUMMARY_ENTITY_TYPE
 from app.services.mock_draft_ai import MockDraftAIError
 from app.services.ai_log import is_over_monthly_budget, monthly_usage_summary, recent_logs, write_ai_log
+from app.services import draft_history as draft_history_svc
+from app.schemas.draft_history import TeamDraftHistoryRead
 
 router = APIRouter(
     prefix="/api",
@@ -597,6 +611,93 @@ def commit_sleeper(
     }
 
 
+def _yahoo_access_token(session: Session, user: User | None) -> str:
+    """Resolve a valid Yahoo access token for the current user or raise HTTP 4xx."""
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    settings = get_settings()
+    try:
+        return get_valid_access_token(session, user.id, settings)
+    except YahooTokenMissingError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except YahooTokenExpiredError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+
+def _yahoo_access_token_optional(session: Session, user: User | None) -> str | None:
+    """Return a Yahoo access token if one is available, otherwise None (no error)."""
+    if user is None:
+        return None
+    try:
+        return get_valid_access_token(session, user.id, get_settings())
+    except Exception:
+        return None
+
+
+@router.get("/leagues/{league_id}/import/yahoo/user-leagues")
+def list_yahoo_user_leagues(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    access_token = _yahoo_access_token(session, user)
+    try:
+        leagues = list_user_leagues(access_token)
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return {"leagues": [lg.model_dump() for lg in leagues]}
+
+
+@router.post("/leagues/{league_id}/import/yahoo/preview")
+def preview_yahoo(
+    league_id: uuid.UUID,
+    payload: YahooImportRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    access_token = _yahoo_access_token(session, user)
+    try:
+        result = preview_yahoo_import(
+            session,
+            league_id,
+            payload.yahoo_league_key,
+            access_token,
+            payload.season_year,
+        )
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return result.model_dump()
+
+
+@router.post("/leagues/{league_id}/import/yahoo/commit")
+def commit_yahoo(
+    league_id: uuid.UUID,
+    payload: YahooImportRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    access_token = _yahoo_access_token(session, user)
+    try:
+        result = commit_yahoo_import(
+            session,
+            league_id,
+            payload.yahoo_league_key,
+            access_token,
+            payload.season_year,
+            payload.import_league_settings,
+        )
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return result.model_dump()
+
+
 @router.post(
     "/leagues/{league_id}/adp-snapshots",
     status_code=status.HTTP_201_CREATED,
@@ -784,8 +885,9 @@ def import_composite_adp(
 ) -> dict[str, Any]:
     assert_league_admin(session, user, league_id)
     league = _require_league(session, league_id)
+    yahoo_token = _yahoo_access_token_optional(session, user)
     try:
-        composite = build_composite_adp_template_rows(session, league, get_settings())
+        composite = build_composite_adp_template_rows(session, league, get_settings(), yahoo_access_token=yahoo_token)
         import_rows = [row for row in composite.rows if str(row.get("adp_pick", "")).strip()]
         if not import_rows:
             raise CompositeADPError("Composite ADP build returned no importable rows with ADP values")
@@ -810,8 +912,9 @@ def adp_coverage_summary(
 ) -> dict[str, Any]:
     assert_league_admin(session, user, league_id)
     league = _require_league(session, league_id)
+    yahoo_token = _yahoo_access_token_optional(session, user)
     try:
-        composite = build_composite_adp_template_rows(session, league, get_settings())
+        composite = build_composite_adp_template_rows(session, league, get_settings(), yahoo_access_token=yahoo_token)
     except CompositeADPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return composite.coverage
@@ -1710,16 +1813,52 @@ def export_keeper_recommendations_csv(
 @router.get("/leagues/{league_id}/exports/adp-template.csv")
 def export_adp_template_csv(
     league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> Response:
     league = _require_league(session, league_id)
+    yahoo_token = _yahoo_access_token_optional(session, user)
     try:
-        result = build_composite_adp_template_rows(session, league, get_settings())
+        result = build_composite_adp_template_rows(session, league, get_settings(), yahoo_access_token=yahoo_token)
     except CompositeADPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return _csv_response(
         rows=result.rows,
         filename=f"adp-template-{league_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv",
+    )
+
+
+@router.get("/leagues/{league_id}/exports/adp-current.csv")
+def export_current_adp_csv(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> Response:
+    league = _require_league(session, league_id)
+    snapshot = session.exec(
+        select(ADPSnapshot)
+        .where(ADPSnapshot.league_id == league.id)
+        .order_by(ADPSnapshot.snapshot_date.desc(), ADPSnapshot.created_at.desc())
+    ).first()
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No ADP snapshot found for this league")
+    rows = _adp_entry_rows(session, snapshot)
+    csv_rows = [
+        {
+            "player": row["player_name"],
+            "position": row["position"],
+            "nfl_team": row["nfl_team"],
+            "adp_pick": row["adp_pick"],
+            "adp_round": row["adp_round"],
+            "source": row["source"],
+            "snapshot_date": row["snapshot_date"],
+            "format": row["format_type"],
+        }
+        for row in rows
+    ]
+    return _csv_response(
+        rows=csv_rows,
+        filename=f"adp-{league_id}-{snapshot.snapshot_date.strftime('%Y%m%d')}.csv",
     )
 
 
@@ -2365,6 +2504,84 @@ def update_league_member_avatar(
     session.commit()
     session.refresh(membership)
     return _membership_row(membership, user)
+
+
+@router.get("/leagues/{league_id}/draft-history", response_model=list[TeamDraftHistoryRead])
+def get_league_draft_history(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> list[TeamDraftHistoryRead]:
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    league = _require_league(session, league_id)
+    profiles = draft_history_svc.get_league_draft_profiles(
+        session, league.id, league.name, league.season_year
+    )
+    teams = session.exec(select(Team).where(Team.league_id == league_id)).all()
+    result: list[TeamDraftHistoryRead] = []
+    for team in teams:
+        profile = profiles.get(team.id)
+        if profile is None:
+            continue
+        result.append(
+            TeamDraftHistoryRead(
+                team_id=team.id,
+                team_name=team.name,
+                owner_name=team.owner_name,
+                seasons_found=profile.seasons_found,
+                seasons_with_data=profile.seasons_with_data,
+                total_picks_analyzed=profile.total_picks_analyzed,
+                position_pick_rates=profile.position_pick_rates,
+                early_round_positions=profile.early_round_positions,
+                mid_round_positions=profile.mid_round_positions,
+                late_round_positions=profile.late_round_positions,
+                adp_tendency=profile.adp_tendency,
+                position_adp_tendencies=profile.position_adp_tendencies,
+                keeper_positions=profile.keeper_positions,
+                keeper_count_avg=profile.keeper_count_avg,
+            )
+        )
+    return result
+
+
+@router.get(
+    "/leagues/{league_id}/teams/{team_id}/draft-history",
+    response_model=TeamDraftHistoryRead,
+)
+def get_team_draft_history(
+    league_id: uuid.UUID,
+    team_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> TeamDraftHistoryRead:
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    league = _require_league(session, league_id)
+    team = session.get(Team, team_id)
+    if team is None or team.league_id != league_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+    profile = draft_history_svc.get_owner_draft_profile(
+        session, league.name, team_id, current_season_year=league.season_year
+    )
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No draft history available for this team")
+    return TeamDraftHistoryRead(
+        team_id=team.id,
+        team_name=team.name,
+        owner_name=team.owner_name,
+        seasons_found=profile.seasons_found,
+        seasons_with_data=profile.seasons_with_data,
+        total_picks_analyzed=profile.total_picks_analyzed,
+        position_pick_rates=profile.position_pick_rates,
+        early_round_positions=profile.early_round_positions,
+        mid_round_positions=profile.mid_round_positions,
+        late_round_positions=profile.late_round_positions,
+        adp_tendency=profile.adp_tendency,
+        position_adp_tendencies=profile.position_adp_tendencies,
+        keeper_positions=profile.keeper_positions,
+        keeper_count_avg=profile.keeper_count_avg,
+    )
 
 
 def _require_league(session: Session, league_id: uuid.UUID) -> League:

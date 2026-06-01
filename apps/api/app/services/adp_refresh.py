@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from datetime import date
+from io import StringIO
 import json
 import urllib.error
 import urllib.parse
@@ -37,6 +39,8 @@ def refresh_adp_from_api(
         raise ADPRefreshError(f"League {league_id} was not found")
 
     provider = _resolve_provider(settings)
+    if provider in {"composite", "multi"}:
+        return _refresh_composite(session, league, settings)
     if provider in {"fantasyfootballcalculator", "ffc"}:
         return _refresh_from_fantasy_football_calculator(session, league, settings)
     if provider == "fantasynerds":
@@ -46,6 +50,35 @@ def refresh_adp_from_api(
     if provider == "csv_url":
         return _refresh_from_csv_url(session, league_id, settings)
     raise ADPRefreshError(f"Unsupported ADP provider: {provider}")
+
+
+def _refresh_composite(
+    session: Session,
+    league: League,
+    settings: Settings,
+) -> ADPRefreshResult:
+    from app.services.composite_adp import CompositeADPError, build_composite_adp_template_rows
+    try:
+        composite = build_composite_adp_template_rows(session, league, settings, yahoo_access_token=None)
+        import_rows = [row for row in composite.rows if str(row.get("adp_pick", "")).strip()]
+        if not import_rows:
+            raise ADPRefreshError("Composite ADP build returned no importable rows")
+        result = import_adp_csv(session, league.id, _rows_to_csv(import_rows))
+    except (CompositeADPError, CSVImportError) as exc:
+        raise ADPRefreshError(str(exc)) from exc
+    return ADPRefreshResult(
+        provider="composite",
+        source_url="composite",
+        import_result=result,
+    )
+
+
+def _rows_to_csv(rows: list[dict[str, object]]) -> str:
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()), extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return output.getvalue()
 
 
 def _refresh_from_fantasy_football_calculator(
@@ -235,7 +268,7 @@ def _resolve_provider(settings: Settings) -> str:
         return settings.adp_provider.strip().lower()
     if settings.adp_refresh_url:
         return "csv_url"
-    return "fantasyfootballcalculator"
+    return "composite"
 
 
 def _fantasy_football_calculator_scoring(scoring_format: str) -> str:

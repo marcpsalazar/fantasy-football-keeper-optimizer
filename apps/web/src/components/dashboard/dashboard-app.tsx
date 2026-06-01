@@ -73,6 +73,7 @@ import {
   deleteMockDraft,
   deleteTeam,
   downloadAdpTemplate,
+  downloadCurrentAdp,
   endMockDraft,
   exportUrl,
   generateKeeperExplanation,
@@ -101,7 +102,12 @@ import {
   readMockDraft,
   analyzeKeeperTrade,
   commitSleeperImport,
+  commitYahooImport,
+  getYahooAuthStatus,
+  initYahooAuth,
+  listYahooUserLeagues,
   previewSleeperImport,
+  previewYahooImport,
   removeLeagueMember,
   resumeMockDraft,
   recommendScenarioSelections,
@@ -126,6 +132,9 @@ import {
   type CsvImportKind,
   type CsvPreviewResult,
   type SleeperImportPreview,
+  type YahooAuthStatus,
+  type YahooImportPreview,
+  type YahooUserLeague,
   type DraftImpactPick,
   type LeagueCalendarSettings,
   type LeagueCreateForm,
@@ -139,6 +148,8 @@ import {
   type MockDraftHistoryRow,
   type MockDraftSession,
   type NewsHeadline,
+  type TeamDraftHistory,
+  getLeagueDraftHistory,
   type OptimizerSettingsForm,
   type PlayerSummary,
   type ScenarioNarrative,
@@ -531,6 +542,7 @@ type DashboardContextValue = {
   saveLeagueCalendarSettings: (settings: LeagueCalendarSettings) => Promise<void>;
   saveRosterSettings: (settings: LeagueRosterSettings) => Promise<void>;
   downloadAdpTemplateNow: () => Promise<void>;
+  downloadCurrentAdpNow: () => Promise<void>;
   importCompositeAdpNow: () => Promise<void>;
   createUserNow: (form: UserForm) => Promise<void>;
   updateUserNow: (userId: string, form: UserForm) => Promise<void>;
@@ -984,6 +996,24 @@ export function DashboardApp() {
     }
   }, [requireLeagueId]);
 
+  const downloadCurrentAdpNow = React.useCallback(async () => {
+    const leagueId = requireLeagueId();
+    if (!leagueId) {
+      return;
+    }
+    setIsBusy(true);
+    try {
+      await downloadCurrentAdp(leagueId);
+      setApiStatus("live");
+      setStatusMessage("ADP CSV downloaded.");
+    } catch {
+      setApiStatus("error");
+      setStatusMessage("ADP download failed. No ADP snapshot may be loaded yet.");
+    } finally {
+      setIsBusy(false);
+    }
+  }, [requireLeagueId]);
+
   const importCompositeAdpNow = React.useCallback(async () => {
     const leagueId = requireLeagueId();
     if (!leagueId) {
@@ -1292,6 +1322,7 @@ export function DashboardApp() {
       resetUserPasswordNow,
       deleteUserNow,
       downloadAdpTemplateNow,
+      downloadCurrentAdpNow,
       importCompositeAdpNow,
       createTeamNow,
       updateTeamNow,
@@ -1335,6 +1366,7 @@ export function DashboardApp() {
       deleteUserNow,
       deleteTeamNow,
       downloadAdpTemplateNow,
+      downloadCurrentAdpNow,
       exportRecommendations,
       getLeagueMembershipsNow,
       importCompositeAdpNow,
@@ -2374,7 +2406,7 @@ function ProfilePage() {
 }
 
 function LeagueDashboard() {
-  const { currentUser, data } = useDashboard();
+  const { currentUser, data, downloadCurrentAdpNow, isBusy } = useDashboard();
   const recommendedKeepers = data.keeperRecommendations.filter(
     (recommendation) => recommendation.status === "Recommended",
   );
@@ -2590,7 +2622,18 @@ function LeagueDashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Model Status</CardTitle>
+            <div className="flex items-center justify-between gap-3">
+              <CardTitle>Model Status</CardTitle>
+              <Button
+                disabled={isBusy || !data.adpEntries.length || !data.league?.id}
+                onClick={downloadCurrentAdpNow}
+                size="sm"
+                variant="outline"
+              >
+                <Download className="size-4" aria-hidden="true" />
+                Download ADP
+              </Button>
+            </div>
             <CardDescription>Input freshness and the settings currently driving the answer.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -4111,6 +4154,7 @@ function AdminDataImports({
   return (
     <div className="space-y-5">
       <SleeperImportPanel />
+      <YahooImportPanel />
       <div className="grid gap-5 xl:grid-cols-2">
         <CsvImportPanel
           buttonLabel="Import Draft Results"
@@ -4304,6 +4348,301 @@ function SleeperPreviewSummary({ preview }: { preview: SleeperImportPreview }) {
                 <tr key={team.rosterId} className="border-b border-zinc-100 last:border-0">
                   <td className="py-1 pr-3 text-zinc-500">{team.rosterId}</td>
                   <td className="py-1 pr-3 font-medium text-zinc-900">{team.teamName}</td>
+                  <td className="py-1 pr-3 text-zinc-500">{team.ownerName ?? "—"}</td>
+                  <td className="py-1 text-right text-zinc-700">{team.playerCount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function YahooImportPanel() {
+  const { activeLeagueId, data, isBusy, refreshData } = useDashboard();
+
+  const [authStatus, setAuthStatus] = React.useState<YahooAuthStatus | null>(null);
+  const [userLeagues, setUserLeagues] = React.useState<YahooUserLeague[]>([]);
+  const [selectedLeagueKey, setSelectedLeagueKey] = React.useState("");
+  const [seasonYear, setSeasonYear] = React.useState<string>("");
+  const [importLeagueSettings, setImportLeagueSettings] = React.useState(true);
+  const [preview, setPreview] = React.useState<YahooImportPreview | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [successMessage, setSuccessMessage] = React.useState("");
+
+  const defaultYear = data?.league?.seasonYear ?? new Date().getFullYear();
+
+  // Check OAuth status + handle callback redirect on mount
+  React.useEffect(() => {
+    if (!activeLeagueId) return;
+    void (async () => {
+      setLoading(true);
+      try {
+        const status = await getYahooAuthStatus();
+        setAuthStatus(status);
+        if (status.connected) {
+          const leagues = await listYahooUserLeagues(activeLeagueId);
+          setUserLeagues(leagues);
+        }
+        // Pick up ?yahoo_connected=1 from the OAuth callback redirect
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("yahoo_connected")) {
+          setSuccessMessage("Yahoo account connected! Select your league below to import.");
+          const url = new URL(window.location.href);
+          url.searchParams.delete("yahoo_connected");
+          window.history.replaceState({}, "", url.toString());
+        }
+        if (params.get("yahoo_error")) {
+          setError(`Yahoo connection failed: ${params.get("yahoo_error")}`);
+          const url = new URL(window.location.href);
+          url.searchParams.delete("yahoo_error");
+          url.searchParams.delete("detail");
+          window.history.replaceState({}, "", url.toString());
+        }
+      } catch {
+        // silently fail — panel will show "not connected"
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [activeLeagueId]);
+
+  const handleConnect = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const authUrl = await initYahooAuth();
+      window.location.href = authUrl;
+    } catch {
+      setError("Could not start Yahoo authorization. Is Yahoo integration configured on this server?");
+      setLoading(false);
+    }
+  };
+
+  const handlePreview = async () => {
+    if (!activeLeagueId || !selectedLeagueKey.trim()) return;
+    setLoading(true);
+    setError("");
+    setSuccessMessage("");
+    setPreview(null);
+    try {
+      const year = seasonYear ? parseInt(seasonYear, 10) : undefined;
+      const result = await previewYahooImport(activeLeagueId, selectedLeagueKey.trim(), year, importLeagueSettings);
+      setPreview(result);
+    } catch (err) {
+      setError(err instanceof Error && err.message.includes("403")
+        ? "Yahoo account not connected or token expired. Please reconnect."
+        : "Preview failed — check the league key and try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!activeLeagueId || !selectedLeagueKey.trim() || !preview?.valid) return;
+    setLoading(true);
+    setError("");
+    try {
+      const year = seasonYear ? parseInt(seasonYear, 10) : undefined;
+      const result = await commitYahooImport(activeLeagueId, selectedLeagueKey.trim(), year, importLeagueSettings);
+      await refreshData();
+      const parts = [
+        `${result.teamsUpserted} teams`,
+        `${result.draftPicksUpserted} draft picks`,
+        `${result.rosterEntriesUpserted} roster entries`,
+      ];
+      if (result.leagueSettingsUpdated) parts.push("league settings updated");
+      setSuccessMessage(`Import complete: ${parts.join(", ")}.`);
+      setPreview(null);
+      setSelectedLeagueKey("");
+      setSeasonYear("");
+    } catch {
+      setError("Import failed. Check the API logs.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const busy = isBusy || loading;
+  const isConnected = authStatus?.connected ?? false;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Import from Yahoo Fantasy</CardTitle>
+        <CardDescription>
+          Pull teams, draft results, final rosters, and league settings from a Yahoo Fantasy league.
+          Requires a Yahoo account connected via OAuth.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!isConnected ? (
+          <div className="space-y-3">
+            <p className="text-sm text-zinc-600">
+              Connect your Yahoo account to enable import. You will be redirected to Yahoo to authorize access, then returned here.
+            </p>
+            <Button disabled={busy} onClick={() => { void handleConnect(); }} variant="outline">
+              Connect Yahoo Account
+            </Button>
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+              <div className="grid gap-2">
+                <Label htmlFor="yahoo-league-key">Yahoo League</Label>
+                {userLeagues.length > 0 ? (
+                  <select
+                    id="yahoo-league-key"
+                    className="flex h-9 w-full rounded-md border border-zinc-200 bg-white px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-zinc-400 disabled:opacity-50"
+                    disabled={busy}
+                    value={selectedLeagueKey}
+                    onChange={(e) => { setSelectedLeagueKey(e.target.value); setPreview(null); }}
+                  >
+                    <option value="">Select a league…</option>
+                    {userLeagues.map((lg) => (
+                      <option key={lg.leagueKey} value={lg.leagueKey}>
+                        {lg.name} ({lg.season}, {lg.numTeams} teams)
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    id="yahoo-league-key"
+                    disabled={busy}
+                    onChange={(e) => { setSelectedLeagueKey(e.target.value); setPreview(null); }}
+                    placeholder="e.g. nfl.l.12345"
+                    value={selectedLeagueKey}
+                  />
+                )}
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="yahoo-season-year">Season Year</Label>
+                <Input
+                  id="yahoo-season-year"
+                  disabled={busy}
+                  min={2000}
+                  max={2100}
+                  onChange={(e) => { setSeasonYear(e.target.value); setPreview(null); }}
+                  placeholder={String(defaultYear)}
+                  type="number"
+                  className="w-28"
+                  value={seasonYear}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                id="yahoo-import-settings"
+                type="checkbox"
+                checked={importLeagueSettings}
+                disabled={busy}
+                onChange={(e) => setImportLeagueSettings(e.target.checked)}
+                className="size-4 rounded border-zinc-300"
+              />
+              <Label htmlFor="yahoo-import-settings" className="text-sm font-normal">
+                Also import league settings (scoring format, roster slots)
+              </Label>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Button
+                disabled={busy || !selectedLeagueKey.trim()}
+                onClick={() => { void handlePreview(); }}
+                variant="outline"
+              >
+                <ListChecks className="size-4" aria-hidden="true" />
+                Preview
+              </Button>
+              <Button
+                disabled={busy || !preview?.valid}
+                onClick={() => { void handleImport(); }}
+              >
+                <Upload className="size-4" aria-hidden="true" />
+                Import
+              </Button>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="text-xs text-zinc-400 underline hover:text-zinc-600"
+                onClick={() => { void handleConnect(); }}
+                disabled={busy}
+              >
+                Reconnect Yahoo account
+              </button>
+            </div>
+          </>
+        )}
+        {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+        {successMessage && !preview ? (
+          <p className="text-sm text-emerald-700">{successMessage}</p>
+        ) : null}
+        {preview ? <YahooPreviewSummary preview={preview} /> : isConnected ? (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">
+            Select a Yahoo league and click Preview to validate before importing.
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function YahooPreviewSummary({ preview }: { preview: YahooImportPreview }) {
+  return (
+    <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={preview.valid ? "success" : "danger"}>
+          {preview.valid ? "Ready" : "Error"}
+        </Badge>
+        {preview.valid ? (
+          <span className="text-sm text-zinc-700">
+            {preview.leagueName} · Season {preview.seasonYear} · {preview.teams.length} teams ·{" "}
+            {preview.draftPicksCount} draft picks · {preview.rosterEntriesCount} roster entries
+          </span>
+        ) : null}
+      </div>
+
+      {preview.leagueSettingsPreview ? (
+        <div className="text-xs text-zinc-500">
+          <span className="font-medium">League settings: </span>
+          Scoring: {preview.leagueSettingsPreview.scoringFormat} · Draft: {preview.leagueSettingsPreview.draftType}
+        </div>
+      ) : null}
+
+      {preview.errors.length > 0 ? (
+        <div className="space-y-1">
+          {preview.errors.map((e, i) => (
+            <p key={i} className="text-sm text-rose-700">{e}</p>
+          ))}
+        </div>
+      ) : null}
+
+      {preview.warnings.length > 0 ? (
+        <div className="space-y-1">
+          {preview.warnings.map((w, i) => (
+            <p key={i} className="text-xs text-amber-700">{w}</p>
+          ))}
+        </div>
+      ) : null}
+
+      {preview.valid && preview.teams.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-zinc-200 text-left text-zinc-500">
+                <th className="pb-1 pr-3 font-medium">Slot</th>
+                <th className="pb-1 pr-3 font-medium">Team</th>
+                <th className="pb-1 pr-3 font-medium">Owner</th>
+                <th className="pb-1 font-medium text-right">Players</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.teams.map((team) => (
+                <tr key={team.teamKey} className="border-b border-zinc-100 last:border-0">
+                  <td className="py-1 pr-3 text-zinc-500">{team.draftPosition}</td>
+                  <td className="py-1 pr-3 font-medium text-zinc-900">{team.name}</td>
                   <td className="py-1 pr-3 text-zinc-500">{team.ownerName ?? "—"}</td>
                   <td className="py-1 text-right text-zinc-700">{team.playerCount}</td>
                 </tr>
@@ -5668,17 +6007,80 @@ function ScenarioComparisonPage() {
 
 function TeamOutlooksPage() {
   const { currentUser, data, exportRecommendations, isBusy } = useDashboard();
+  const leagueId = data.source === "api" ? data.league?.id : null;
+  const [draftHistories, setDraftHistories] = React.useState<TeamDraftHistory[]>([]);
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    getLeagueDraftHistory(leagueId).then(setDraftHistories).catch(() => {});
+  }, [leagueId]);
+
   return (
-    <div className="grid gap-4 xl:grid-cols-3">
-      {data.outlooks.map((outlook) => (
-        <OutlookCard
-          currentUser={currentUser}
-          disabled={isBusy}
-          key={outlook.team}
-          onExport={() => exportRecommendations("pdf", outlook.teamId)}
-          outlook={outlook}
-        />
-      ))}
+    <div className="space-y-6">
+      <div className="grid gap-4 xl:grid-cols-3">
+        {data.outlooks.map((outlook) => (
+          <OutlookCard
+            currentUser={currentUser}
+            disabled={isBusy}
+            key={outlook.team}
+            onExport={() => exportRecommendations("pdf", outlook.teamId)}
+            outlook={outlook}
+          />
+        ))}
+      </div>
+      {draftHistories.length > 0 && (
+        <div>
+          <h2 className="mb-3 text-base font-semibold text-zinc-950">Historical Draft Tendencies</h2>
+          <p className="mb-3 text-sm text-zinc-500">
+            Based on past draft picks across seasons. Positive ADP tendency means the owner drafts
+            value picks; negative means they tend to reach.
+          </p>
+          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium uppercase text-zinc-500">
+                  <th className="px-4 py-2 text-left">Team</th>
+                  <th className="px-4 py-2 text-left">Seasons</th>
+                  <th className="px-4 py-2 text-left">Early-Round Preferences (R1-4)</th>
+                  <th className="px-4 py-2 text-left">ADP Tendency</th>
+                  <th className="px-4 py-2 text-left">Avg Keepers</th>
+                </tr>
+              </thead>
+              <tbody>
+                {draftHistories.map((h) => {
+                  const topPos = Object.entries(h.earlyRoundPositions)
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 3)
+                    .map(([pos, rate]) => `${pos} ${Math.round(rate * 100)}%`)
+                    .join(", ");
+                  const adpLabel =
+                    h.adpTendency > 3 ? "Value" : h.adpTendency < -3 ? "Reach" : "Neutral";
+                  const adpColor =
+                    h.adpTendency > 3
+                      ? "text-emerald-700"
+                      : h.adpTendency < -3
+                        ? "text-red-700"
+                        : "text-zinc-500";
+                  return (
+                    <tr className="border-b border-zinc-100 last:border-0" key={h.teamId}>
+                      <td className="px-4 py-2 font-medium text-zinc-950">
+                        {h.teamName ?? h.ownerName ?? "—"}
+                      </td>
+                      <td className="px-4 py-2 text-zinc-500">{h.seasonsWithData}</td>
+                      <td className="px-4 py-2 text-zinc-600">{topPos || "—"}</td>
+                      <td className={`px-4 py-2 font-medium ${adpColor}`}>
+                        {adpLabel} ({h.adpTendency > 0 ? "+" : ""}
+                        {h.adpTendency.toFixed(1)})
+                      </td>
+                      <td className="px-4 py-2 text-zinc-500">{h.keeperCountAvg.toFixed(1)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5768,6 +6170,7 @@ function MockDraftPage() {
     teamBotOverrides: {},
   });
   const [history, setHistory] = React.useState<MockDraftHistoryRow[]>([]);
+  const [draftHistories, setDraftHistories] = React.useState<TeamDraftHistory[]>([]);
   const [activeSession, setActiveSession] = React.useState<MockDraftSession | null>(null);
   const [selectedComparisonIds, setSelectedComparisonIds] = React.useState<string[]>([]);
   const [comparisonSessions, setComparisonSessions] = React.useState<MockDraftSession[]>([]);
@@ -5802,11 +6205,17 @@ function MockDraftPage() {
   const refreshHistory = React.useCallback(async () => {
     if (!leagueId) {
       setHistory([]);
+      setDraftHistories([]);
       return;
     }
     setIsLoading(true);
     try {
-      setHistory(await listMockDrafts(leagueId));
+      const [mockDrafts, ownerHistories] = await Promise.allSettled([
+        listMockDrafts(leagueId),
+        getLeagueDraftHistory(leagueId),
+      ]);
+      if (mockDrafts.status === "fulfilled") setHistory(mockDrafts.value);
+      if (ownerHistories.status === "fulfilled") setDraftHistories(ownerHistories.value);
       setErrorMessage("");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Loading mock draft history failed.");
@@ -6475,6 +6884,52 @@ function MockDraftPage() {
                   })}
               </div>
             </div>
+
+            {draftHistories.length > 0 && (
+              <div className="mt-5">
+                <div className="mb-2 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-950">Owner Draft Tendencies</h3>
+                    <p className="text-xs text-zinc-500">Based on historical draft data. Bots use this to mimic each owner&apos;s style.</p>
+                  </div>
+                  <Badge variant="info">{draftHistories.length} owners</Badge>
+                </div>
+                <div className="max-h-64 space-y-1.5 overflow-auto pr-1">
+                  {draftHistories.map((h) => {
+                    const topPos = Object.entries(h.earlyRoundPositions)
+                      .sort(([, a], [, b]) => b - a)
+                      .slice(0, 3)
+                      .map(([pos, rate]) => `${pos} ${Math.round(rate * 100)}%`)
+                      .join(", ");
+                    const adpLabel =
+                      h.adpTendency > 3 ? "Value Drafter" : h.adpTendency < -3 ? "Reach Drafter" : "Neutral";
+                    const adpColor =
+                      h.adpTendency > 3
+                        ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                        : h.adpTendency < -3
+                          ? "text-red-700 bg-red-50 border-red-200"
+                          : "text-zinc-600 bg-zinc-50 border-zinc-200";
+                    return (
+                      <div
+                        className="flex items-center gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                        key={h.teamId}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <span className="font-medium text-zinc-950">{h.teamName ?? h.ownerName ?? "Unknown"}</span>
+                          <span className="ml-2 text-xs text-zinc-500">
+                            {h.seasonsWithData} season{h.seasonsWithData !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                        <div className="shrink-0 text-xs text-zinc-500">{topPos || "—"}</div>
+                        <span className={`shrink-0 rounded border px-1.5 py-0.5 text-xs font-medium ${adpColor}`}>
+                          {adpLabel}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="mt-5 flex flex-wrap gap-2">
               <Button disabled={isBusy || isLoading || !leagueId || !userTeam} onClick={startNewSession}>

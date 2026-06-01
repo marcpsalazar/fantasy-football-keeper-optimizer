@@ -71,7 +71,10 @@ def choose_bot_player(
         instructions=(
             "You are making one fantasy football mock draft pick for a bot team. "
             "Choose exactly one player_id from candidate_players. Respect roster needs, "
-            "position limits, ADP value, projections, and the bot personality. Return concise JSON only."
+            "position limits, ADP value, projections, and the bot personality. "
+            "If bot_owner_history is present, factor in the owner's historical position preferences "
+            "and ADP tendencies to make the pick feel authentic to that specific owner. "
+            "Return concise JSON only."
         ),
         user_payload=context,
         max_output_tokens=700,

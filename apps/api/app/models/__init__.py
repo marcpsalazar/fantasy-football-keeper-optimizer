@@ -7,6 +7,7 @@ from app.models.keeper import KeeperCandidate
 from app.models.league import League, Team
 from app.models.membership import LeagueMembership
 from app.models.mock_draft import MockDraftAnalysis, MockDraftPick, MockDraftSession
+from app.models.oauth import YahooOAuthToken
 from app.models.optimizer import (
     KeeperRecommendation,
     ManualOverride,
@@ -38,4 +39,5 @@ __all__ = [
     "Team",
     "TeamScenarioSelection",
     "User",
+    "YahooOAuthToken",
 ]
