@@ -24,7 +24,7 @@ from app.models import (
     TeamScenarioSelection,
 )
 from app.models.league import League
-from app.services import mock_draft_ai
+from app.services import draft_history, mock_draft_ai
 from app.services.ai_log import write_ai_log
 from app.services.optimizer import latest_recommendation_batch
 
@@ -102,6 +102,9 @@ def create_mock_draft_session(
 
     _add_keeper_forfeit_picks(session, league, draft_session, recommendations)
     generate_strategy_plan(session, draft_session)
+    enriched = _enrich_bot_config_with_history(session, league, draft_session.bot_config)
+    if enriched is not draft_session.bot_config:
+        draft_session.bot_config = enriched
     session.commit()
     session.refresh(draft_session)
     return draft_session
@@ -1210,6 +1213,7 @@ def _choose_ai_bot_player(
                     "team_id": str(current_slot.team_id),
                 },
                 "bot": config,
+                "bot_owner_history": _format_history_for_ai(config.get("history_profile")),
                 "team_roster_counts": _roster_counts(session, draft_session, current_slot.team_id)
                 if current_slot.team_id
                 else {},
@@ -1286,11 +1290,40 @@ def _truncate_reasoning(reasoning: str) -> str:
     return reasoning[:1000]
 
 
+def _format_history_for_ai(profile_data: Any) -> dict[str, Any] | None:
+    """Compact history summary for the AI bot-pick context."""
+    if not isinstance(profile_data, dict):
+        return None
+    profile = draft_history.profile_from_dict(profile_data)
+    if profile is None or profile.seasons_with_data == 0:
+        return None
+    top_early = sorted(profile.early_round_positions, key=profile.early_round_positions.get, reverse=True)[:3]  # type: ignore[arg-type]
+    tendency_label = (
+        "value drafter" if profile.adp_tendency > 3
+        else "reach drafter" if profile.adp_tendency < -3
+        else "neutral"
+    )
+    return {
+        "seasons_analyzed": profile.seasons_with_data,
+        "early_round_tendencies": profile.early_round_positions,
+        "position_adp_tendencies": profile.position_adp_tendencies,
+        "keeper_history": {
+            "avg_keepers_per_season": profile.keeper_count_avg,
+            "preferred_positions": profile.keeper_positions[:4],
+        },
+        "summary": (
+            f"This owner has {profile.seasons_with_data} season(s) of data. "
+            f"ADP tendency: {tendency_label} ({profile.adp_tendency:+.1f} picks avg). "
+            f"Early-round favorites: {', '.join(top_early) or 'unknown'}."
+        ),
+    }
+
+
 def _bot_score(
     player: Player,
     overall_pick: int,
     adp: ADPEntry | None,
-    config: dict[str, str],
+    config: dict[str, Any],
 ) -> float:
     adp_pick = adp.adp_pick if adp else 999
     value_score = max(-50, min(75, adp_pick - overall_pick))
@@ -1313,20 +1346,54 @@ def _bot_score(
         base -= (hash(str(player.id)) % 20)
     elif config["difficulty"] == "Hard":
         base += value_score * 0.25
+    profile_data = config.get("history_profile")
+    if isinstance(profile_data, dict):
+        profile = draft_history.profile_from_dict(profile_data)
+        if profile is not None:
+            base += _history_position_boost(player, overall_pick, profile)
     return base
 
 
-def _team_bot_config(draft_session: MockDraftSession, team_id: uuid.UUID | None) -> dict[str, str]:
+def _history_position_boost(
+    player: Player,
+    overall_pick: int,
+    profile: draft_history.OwnerDraftProfile,
+) -> float:
+    """Nudge score (±20 pts) based on owner's historical position preferences."""
+    position = player.position.upper().strip()
+    if position in ("D/ST", "DST", "DEF"):
+        position = "DST"
+
+    if overall_pick <= 48:
+        rates = profile.early_round_positions
+    elif overall_pick <= 108:
+        rates = profile.mid_round_positions
+    else:
+        rates = profile.late_round_positions
+
+    if not rates:
+        return 0.0
+
+    rate = rates.get(position, 0.0)
+    baseline = 1.0 / max(len(rates), 4)
+    deviation = rate - baseline
+    return max(-20.0, min(20.0, deviation * 80.0))
+
+
+def _team_bot_config(draft_session: MockDraftSession, team_id: uuid.UUID | None) -> dict[str, Any]:
     config = draft_session.bot_config or {}
     team_configs = config.get("teams", {}) if isinstance(config.get("teams"), dict) else {}
     team_config = team_configs.get(str(team_id), {}) if team_id is not None else {}
-    return {
+    result: dict[str, Any] = {
         "personality": team_config.get(
             "personality",
             config.get("default_personality", "Balanced"),
         ),
         "difficulty": team_config.get("difficulty", config.get("default_difficulty", "Medium")),
     }
+    if "history_profile" in team_config:
+        result["history_profile"] = team_config["history_profile"]
+    return result
 
 
 def _default_bot_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -1335,6 +1402,34 @@ def _default_bot_config(config: dict[str, Any]) -> dict[str, Any]:
         "default_difficulty": config.get("default_difficulty", "Medium"),
         "teams": config.get("teams", {}),
     }
+
+
+def _enrich_bot_config_with_history(
+    session: Session,
+    league: League,
+    bot_config: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        profiles = draft_history.get_league_draft_profiles(
+            session,
+            league.id,
+            league.name,
+            league.season_year,
+        )
+    except Exception:
+        return bot_config
+
+    if not profiles:
+        return bot_config
+
+    config = dict(bot_config)
+    teams_config = dict(config.get("teams") or {})
+    for team_id, profile in profiles.items():
+        entry = dict(teams_config.get(str(team_id)) or {})
+        entry["history_profile"] = draft_history.profile_to_dict(profile)
+        teams_config[str(team_id)] = entry
+    config["teams"] = teams_config
+    return config
 
 
 def _round_count_from_settings(roster_settings: dict[str, Any]) -> int:

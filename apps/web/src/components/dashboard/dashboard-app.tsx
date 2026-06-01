@@ -146,6 +146,8 @@ import {
   type MockDraftHistoryRow,
   type MockDraftSession,
   type NewsHeadline,
+  type TeamDraftHistory,
+  getLeagueDraftHistory,
   type OptimizerSettingsForm,
   type PlayerSummary,
   type ScenarioNarrative,
@@ -5354,17 +5356,80 @@ function ScenarioComparisonPage() {
 
 function TeamOutlooksPage() {
   const { currentUser, data, exportRecommendations, isBusy } = useDashboard();
+  const leagueId = data.source === "api" ? data.league?.id : null;
+  const [draftHistories, setDraftHistories] = React.useState<TeamDraftHistory[]>([]);
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    getLeagueDraftHistory(leagueId).then(setDraftHistories).catch(() => {});
+  }, [leagueId]);
+
   return (
-    <div className="grid gap-4 xl:grid-cols-3">
-      {data.outlooks.map((outlook) => (
-        <OutlookCard
-          currentUser={currentUser}
-          disabled={isBusy}
-          key={outlook.team}
-          onExport={() => exportRecommendations("pdf", outlook.teamId)}
-          outlook={outlook}
-        />
-      ))}
+    <div className="space-y-6">
+      <div className="grid gap-4 xl:grid-cols-3">
+        {data.outlooks.map((outlook) => (
+          <OutlookCard
+            currentUser={currentUser}
+            disabled={isBusy}
+            key={outlook.team}
+            onExport={() => exportRecommendations("pdf", outlook.teamId)}
+            outlook={outlook}
+          />
+        ))}
+      </div>
+      {draftHistories.length > 0 && (
+        <div>
+          <h2 className="mb-3 text-base font-semibold text-zinc-950">Historical Draft Tendencies</h2>
+          <p className="mb-3 text-sm text-zinc-500">
+            Based on past draft picks across seasons. Positive ADP tendency means the owner drafts
+            value picks; negative means they tend to reach.
+          </p>
+          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium uppercase text-zinc-500">
+                  <th className="px-4 py-2 text-left">Team</th>
+                  <th className="px-4 py-2 text-left">Seasons</th>
+                  <th className="px-4 py-2 text-left">Early-Round Preferences (R1-4)</th>
+                  <th className="px-4 py-2 text-left">ADP Tendency</th>
+                  <th className="px-4 py-2 text-left">Avg Keepers</th>
+                </tr>
+              </thead>
+              <tbody>
+                {draftHistories.map((h) => {
+                  const topPos = Object.entries(h.earlyRoundPositions)
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 3)
+                    .map(([pos, rate]) => `${pos} ${Math.round(rate * 100)}%`)
+                    .join(", ");
+                  const adpLabel =
+                    h.adpTendency > 3 ? "Value" : h.adpTendency < -3 ? "Reach" : "Neutral";
+                  const adpColor =
+                    h.adpTendency > 3
+                      ? "text-emerald-700"
+                      : h.adpTendency < -3
+                        ? "text-red-700"
+                        : "text-zinc-500";
+                  return (
+                    <tr className="border-b border-zinc-100 last:border-0" key={h.teamId}>
+                      <td className="px-4 py-2 font-medium text-zinc-950">
+                        {h.teamName ?? h.ownerName ?? "—"}
+                      </td>
+                      <td className="px-4 py-2 text-zinc-500">{h.seasonsWithData}</td>
+                      <td className="px-4 py-2 text-zinc-600">{topPos || "—"}</td>
+                      <td className={`px-4 py-2 font-medium ${adpColor}`}>
+                        {adpLabel} ({h.adpTendency > 0 ? "+" : ""}
+                        {h.adpTendency.toFixed(1)})
+                      </td>
+                      <td className="px-4 py-2 text-zinc-500">{h.keeperCountAvg.toFixed(1)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5454,6 +5519,7 @@ function MockDraftPage() {
     teamBotOverrides: {},
   });
   const [history, setHistory] = React.useState<MockDraftHistoryRow[]>([]);
+  const [draftHistories, setDraftHistories] = React.useState<TeamDraftHistory[]>([]);
   const [activeSession, setActiveSession] = React.useState<MockDraftSession | null>(null);
   const [selectedComparisonIds, setSelectedComparisonIds] = React.useState<string[]>([]);
   const [comparisonSessions, setComparisonSessions] = React.useState<MockDraftSession[]>([]);
@@ -5488,11 +5554,17 @@ function MockDraftPage() {
   const refreshHistory = React.useCallback(async () => {
     if (!leagueId) {
       setHistory([]);
+      setDraftHistories([]);
       return;
     }
     setIsLoading(true);
     try {
-      setHistory(await listMockDrafts(leagueId));
+      const [mockDrafts, ownerHistories] = await Promise.allSettled([
+        listMockDrafts(leagueId),
+        getLeagueDraftHistory(leagueId),
+      ]);
+      if (mockDrafts.status === "fulfilled") setHistory(mockDrafts.value);
+      if (ownerHistories.status === "fulfilled") setDraftHistories(ownerHistories.value);
       setErrorMessage("");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Loading mock draft history failed.");
@@ -6161,6 +6233,52 @@ function MockDraftPage() {
                   })}
               </div>
             </div>
+
+            {draftHistories.length > 0 && (
+              <div className="mt-5">
+                <div className="mb-2 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-950">Owner Draft Tendencies</h3>
+                    <p className="text-xs text-zinc-500">Based on historical draft data. Bots use this to mimic each owner&apos;s style.</p>
+                  </div>
+                  <Badge variant="info">{draftHistories.length} owners</Badge>
+                </div>
+                <div className="max-h-64 space-y-1.5 overflow-auto pr-1">
+                  {draftHistories.map((h) => {
+                    const topPos = Object.entries(h.earlyRoundPositions)
+                      .sort(([, a], [, b]) => b - a)
+                      .slice(0, 3)
+                      .map(([pos, rate]) => `${pos} ${Math.round(rate * 100)}%`)
+                      .join(", ");
+                    const adpLabel =
+                      h.adpTendency > 3 ? "Value Drafter" : h.adpTendency < -3 ? "Reach Drafter" : "Neutral";
+                    const adpColor =
+                      h.adpTendency > 3
+                        ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                        : h.adpTendency < -3
+                          ? "text-red-700 bg-red-50 border-red-200"
+                          : "text-zinc-600 bg-zinc-50 border-zinc-200";
+                    return (
+                      <div
+                        className="flex items-center gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                        key={h.teamId}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <span className="font-medium text-zinc-950">{h.teamName ?? h.ownerName ?? "Unknown"}</span>
+                          <span className="ml-2 text-xs text-zinc-500">
+                            {h.seasonsWithData} season{h.seasonsWithData !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                        <div className="shrink-0 text-xs text-zinc-500">{topPos || "—"}</div>
+                        <span className={`shrink-0 rounded border px-1.5 py-0.5 text-xs font-medium ${adpColor}`}>
+                          {adpLabel}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="mt-5 flex flex-wrap gap-2">
               <Button disabled={isBusy || isLoading || !leagueId || !userTeam} onClick={startNewSession}>

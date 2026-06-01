@@ -101,6 +101,8 @@ from app.services import player_summary_ai
 from app.services.player_summary_ai import ENTITY_TYPE as PLAYER_SUMMARY_ENTITY_TYPE
 from app.services.mock_draft_ai import MockDraftAIError
 from app.services.ai_log import is_over_monthly_budget, monthly_usage_summary, recent_logs, write_ai_log
+from app.services import draft_history as draft_history_svc
+from app.schemas.draft_history import TeamDraftHistoryRead
 
 router = APIRouter(
     prefix="/api",
@@ -2396,6 +2398,84 @@ def update_league_member_avatar(
     session.commit()
     session.refresh(membership)
     return _membership_row(membership, user)
+
+
+@router.get("/leagues/{league_id}/draft-history", response_model=list[TeamDraftHistoryRead])
+def get_league_draft_history(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> list[TeamDraftHistoryRead]:
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    league = _require_league(session, league_id)
+    profiles = draft_history_svc.get_league_draft_profiles(
+        session, league.id, league.name, league.season_year
+    )
+    teams = session.exec(select(Team).where(Team.league_id == league_id)).all()
+    result: list[TeamDraftHistoryRead] = []
+    for team in teams:
+        profile = profiles.get(team.id)
+        if profile is None:
+            continue
+        result.append(
+            TeamDraftHistoryRead(
+                team_id=team.id,
+                team_name=team.name,
+                owner_name=team.owner_name,
+                seasons_found=profile.seasons_found,
+                seasons_with_data=profile.seasons_with_data,
+                total_picks_analyzed=profile.total_picks_analyzed,
+                position_pick_rates=profile.position_pick_rates,
+                early_round_positions=profile.early_round_positions,
+                mid_round_positions=profile.mid_round_positions,
+                late_round_positions=profile.late_round_positions,
+                adp_tendency=profile.adp_tendency,
+                position_adp_tendencies=profile.position_adp_tendencies,
+                keeper_positions=profile.keeper_positions,
+                keeper_count_avg=profile.keeper_count_avg,
+            )
+        )
+    return result
+
+
+@router.get(
+    "/leagues/{league_id}/teams/{team_id}/draft-history",
+    response_model=TeamDraftHistoryRead,
+)
+def get_team_draft_history(
+    league_id: uuid.UUID,
+    team_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> TeamDraftHistoryRead:
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    league = _require_league(session, league_id)
+    team = session.get(Team, team_id)
+    if team is None or team.league_id != league_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+    profile = draft_history_svc.get_owner_draft_profile(
+        session, league.name, team_id, current_season_year=league.season_year
+    )
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No draft history available for this team")
+    return TeamDraftHistoryRead(
+        team_id=team.id,
+        team_name=team.name,
+        owner_name=team.owner_name,
+        seasons_found=profile.seasons_found,
+        seasons_with_data=profile.seasons_with_data,
+        total_picks_analyzed=profile.total_picks_analyzed,
+        position_pick_rates=profile.position_pick_rates,
+        early_round_positions=profile.early_round_positions,
+        mid_round_positions=profile.mid_round_positions,
+        late_round_positions=profile.late_round_positions,
+        adp_tendency=profile.adp_tendency,
+        position_adp_tendencies=profile.position_adp_tendencies,
+        keeper_positions=profile.keeper_positions,
+        keeper_count_avg=profile.keeper_count_avg,
+    )
 
 
 def _require_league(session: Session, league_id: uuid.UUID) -> League:
