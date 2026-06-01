@@ -1265,6 +1265,59 @@ export async function deleteMockDraft(sessionId: string): Promise<void> {
   });
 }
 
+export type TeamDraftHistory = {
+  teamId: string;
+  teamName: string | null;
+  ownerName: string | null;
+  seasonsFound: number[];
+  seasonsWithData: number;
+  totalPicksAnalyzed: number;
+  positionPickRates: Record<string, number>;
+  earlyRoundPositions: Record<string, number>;
+  midRoundPositions: Record<string, number>;
+  lateRoundPositions: Record<string, number>;
+  adpTendency: number;
+  positionAdpTendencies: Record<string, number>;
+  keeperPositions: string[];
+  keeperCountAvg: number;
+};
+
+function mapTeamDraftHistory(row: ApiRow): TeamDraftHistory {
+  return {
+    teamId: text(row.team_id),
+    teamName: text(row.team_name) || null,
+    ownerName: text(row.owner_name) || null,
+    seasonsFound: (row.seasons_found as number[]) ?? [],
+    seasonsWithData: number(row.seasons_with_data),
+    totalPicksAnalyzed: number(row.total_picks_analyzed),
+    positionPickRates: (row.position_pick_rates as Record<string, number>) ?? {},
+    earlyRoundPositions: (row.early_round_positions as Record<string, number>) ?? {},
+    midRoundPositions: (row.mid_round_positions as Record<string, number>) ?? {},
+    lateRoundPositions: (row.late_round_positions as Record<string, number>) ?? {},
+    adpTendency: number(row.adp_tendency),
+    positionAdpTendencies: (row.position_adp_tendencies as Record<string, number>) ?? {},
+    keeperPositions: (row.keeper_positions as string[]) ?? [],
+    keeperCountAvg: number(row.keeper_count_avg),
+  };
+}
+
+export async function getLeagueDraftHistory(leagueId: string): Promise<TeamDraftHistory[]> {
+  const payload = await fetchJson<ApiRow[]>(`/api/leagues/${leagueId}/draft-history`);
+  return payload.map(mapTeamDraftHistory);
+}
+
+export async function getTeamDraftHistory(
+  leagueId: string,
+  teamId: string,
+): Promise<TeamDraftHistory | null> {
+  try {
+    const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/teams/${teamId}/draft-history`);
+    return mapTeamDraftHistory(payload);
+  } catch {
+    return null;
+  }
+}
+
 export function exportUrl(
   leagueId: string,
   format: "xlsx" | "csv" | "pdf" | "adp-template" = "xlsx",
