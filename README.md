@@ -29,6 +29,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
   - PDF team outlook reports.
 - **Multi-league platform**: create or join multiple leagues, switch between them with the league selector. Platform admins can access all leagues without a per-league membership.
 - **Trade Analyzer**: model the keeper value impact of a proposed trade before agreeing to it. Supports player-for-player trades and draft pick swaps. Shows baseline vs. hypothetical keeper lineups, surplus delta, gained and lost players, and an optional AI narrative verdict.
+- **Opponent Keeper Intelligence**: surfaces probable keeper choices for every team in the league, derived from each team's optimizer recommendations. Visible in Mock Draft setup as an expandable panel showing opponent teams, their likely-kept players (name, position, ADP round, confidence), and a position breakdown. Probable keepers are also injected into the AI strategy plan context so the plan accounts for players likely off the board before pick 1.
 - **Sleeper league import**: paste a Sleeper League ID to automatically pull teams, draft results, and final rosters — preview first, then commit.
 - **Mock Draft**: run a simulated draft against AI-powered bots, get a personalized pre-draft strategy plan, and receive a graded post-draft analysis.
   - Full snake draft board with keeper forfeit pre-placement.
@@ -919,6 +920,7 @@ POST   /api/leagues/{league_id}/optimizer/run
 GET    /api/leagues/{league_id}/optimizer/results
 POST   /api/leagues/{league_id}/optimizer/scenarios
 POST   /api/leagues/{league_id}/optimizer/trade-analysis
+GET    /api/leagues/{league_id}/keeper-signals
 
 GET    /api/leagues/{league_id}/manual-overrides
 PUT    /api/leagues/{league_id}/manual-overrides

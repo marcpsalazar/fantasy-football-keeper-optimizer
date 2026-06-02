@@ -24,7 +24,7 @@ from app.models import (
     TeamScenarioSelection,
 )
 from app.models.league import League
-from app.services import draft_history, mock_draft_ai
+from app.services import draft_history, keeper_signals, mock_draft_ai
 from app.services.ai_log import write_ai_log
 from app.services.optimizer import latest_recommendation_batch
 
@@ -464,6 +464,11 @@ def _strategy_context(
             for player in _strategy_available_players(session, draft_session, limit=60)
         ],
         "completed_mock_summary": _latest_completed_mock_summary(session, draft_session),
+        "opponent_probable_keepers": keeper_signals.signals_to_strategy_context(
+            session,
+            draft_session.league_id,
+            draft_session.user_team_id,
+        ),
     }
 
 
@@ -487,6 +492,11 @@ def _strategy_cache_key(
         "keeper_context": draft_session.keeper_context,
         "round_count": draft_session.round_count,
         "bot_config": draft_session.bot_config,
+        "opponent_probable_keepers": keeper_signals.signals_to_strategy_context(
+            session,
+            draft_session.league_id,
+            draft_session.user_team_id,
+        ),
     }
     encoded = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

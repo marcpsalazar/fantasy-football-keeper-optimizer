@@ -64,44 +64,11 @@ These features have no direct equivalent in competing tools. They represent the 
 
 Trade calculator shipped: `apps/api/app/services/trade_analysis.py` runs the optimizer twice — baseline and hypothetical — using a DB savepoint to apply temporary roster/pick changes without persisting them. The `POST /api/leagues/{league_id}/optimizer/trade-analysis` endpoint accepts give/receive player lists with optional per-player keeper cost round overrides. The frontend `TradeAnalyzerPage` (reachable via "Trade Analyzer" in the sidebar) provides team selection, checkbox pickers for given-away players, a searchable receive panel with keeper round inputs, before/after surplus comparison, gained/lost keeper badges, and a "+1 round sensitivity" toggle. Optional AI narrative (verdict + summary + key risk + opportunity cost) is generated via the same OpenAI Responses API pattern used elsewhere. `FinalRosterEntry` type extended with `teamId` and `playerId` to support roster-based player lookups in the frontend.
 
-**Why it matters:** Keeper leagues are defined by trade strategy, and no tool evaluates trades in keeper cost terms. The trade calculator answers: "If I trade for Player X with a Year 2 keeper cost of Pick Y, what does my optimal keeper set become, and what's the net value swing vs. what I'm giving up?" The optimizer already solves the hard part — this is a UI and hypothetical re-run wrapper around it.
-
-**Scope:**
-
-- New endpoint: `POST /api/leagues/{league_id}/optimizer/trade-analysis`
-  - Body: `{ give: [{player_id, team_id}], receive: [{player_id, keeper_cost_override}] }`
-  - Runs optimizer twice: current state, then hypothetical post-trade state
-  - Returns: current vs. projected keeper sets, delta in total surplus rounds, net recommendation change per team
-- AI layer: optional narrative explaining the tradeoff
-  - Inputs: trade summary, pre/post optimizer results, positional context
-  - Output: `{ verdict: "good/neutral/bad", summary, key_risk, opportunity_cost }`
-- Frontend: "Trade Analyzer" tab within Keeper Recommendations page
-  - Drag-and-drop or dropdown pickers for give/receive players
-  - Shows before/after keeper tables side by side with delta highlighted
-  - One-click "What if I extend the keeper cost by 1 round?" sensitivity toggle
-
-**Dependencies:** Requires Phase 2.2 (Opponent Keeper Intelligence) to be fully accurate, but useful standalone.
-
-**Acceptance criteria:**
-- Trade analysis reruns the optimizer with hypothetical roster changes without writing to the DB
-- Delta calculation is accurate (net rounds gained vs. lost)
-- AI narrative correctly identifies the dominant consideration (value, positional fit, pick savings)
-
 ---
 
-### 2.2 Opponent Keeper Intelligence
+### ~~2.2 Opponent Keeper Intelligence~~ ✅ Complete
 
-**Why it matters:** When multiple teams in the same league use the app, their individually optimal keeper sets can be inferred and fed back into each other's analysis. If you know opponents are likely to keep Ja'Marr Chase, his value to you in the draft changes because he is no longer available. This creates network effects — every additional leaguemate makes the app more valuable for everyone.
-
-**Scope:**
-
-- New model: `TeamKeeperSignal` — stores whether a team's assigned user has run the optimizer, and what their top recommendations are (not keepers they've committed to, just signals)
-- New endpoint: `GET /api/leagues/{league_id}/keeper-signals` — returns inferred keeper signals for all teams (admin-visible; individual user sees only their own team + aggregate impact)
-- Optimizer enhancement: optional `exclude_probable_keepers` flag — if enabled, probable opponent keepers (above a confidence threshold) are removed from the draft pool before running mock strategy analysis
-- Frontend: "Opponent Intelligence" section in Mock Draft setup — shows which players opposing teams are likely to keep, and how that affects available-at-your-slot projections
-- Privacy: individual team keeper choices are not exposed to other league members without consent; signals are based on optimizer recommendations, not explicit commitments
-
-**Dependencies:** Requires multi-user league setup (already exists). Requires league-wide optimizer results (already exists).
+Opponent intelligence shipped: `apps/api/app/services/keeper_signals.py` derives probable keeper choices for every team directly from existing `KeeperRecommendation` rows — no new DB table required. The `GET /api/leagues/{league_id}/keeper-signals` endpoint returns per-team signal objects with player name, position, ADP round, and a confidence score (normalised 0.6–1.0 from keeper_score within the team's recommended set). Running the optimizer is treated as implicit consent to share recommendations as signals; league admins see all teams' details. Probable opponent keepers are also injected into the mock draft strategy plan context via `signals_to_strategy_context`, so AI plans account for players likely off the board before pick 1. The `OpponentIntelligencePanel` frontend component lives in Mock Draft setup — it expands to show each opponent's probable keepers as position-coloured chips (player name, position badge, ADP round) and a summary of the position breakdown across all signals.
 
 ---
 
@@ -206,18 +173,18 @@ These features increase the value of the app for power users who return year-rou
 | ✅ | ~~Multi-League Dashboard (1.3)~~ | — | — |
 | ✅ | ~~Sleeper League Import (1.1)~~ | — | — |
 | ✅ | ~~Keeper Trade Calculator (2.1)~~ | — | — |
+| ✅ | ~~Opponent Keeper Intelligence (2.2)~~ | — | — |
 | 3 | Auction Draft Mode (1.2) | Opens a large excluded market segment | High |
 | 4 | Shareable Keeper Report Card (3.1) | Low effort, viral surface, organic acquisition | Low |
 | 5 | Commissioner Tools Pack (3.2) | Acquisition via commissioners = leverage | Medium |
 | 6 | Historical Keeper ROI Tracker (2.3) | Long-term data moat; requires at least one full season | Medium |
-| 7 | Opponent Keeper Intelligence (2.2) | Network effects; valuable but requires multi-user adoption | Medium |
-| 8 | News → Keeper Value Alerts (4.1) | Drives offseason re-engagement | Medium |
-| 9 | Value Window Projection (4.2) | Depth feature for power users | Medium |
+| 7 | News → Keeper Value Alerts (4.1) | Drives offseason re-engagement | Medium |
+| 8 | Value Window Projection (4.2) | Depth feature for power users | Medium |
 
 ---
 
 ## What to Build Next
 
-**Auction Draft Mode (1.2)** or **Shareable Keeper Report Card (3.1)** are the top candidates.
+**Shareable Keeper Report Card (3.1)** or **Auction Draft Mode (1.2)** are the top candidates.
 
-The trade calculator is complete. The report card (3.1) is low effort and viral — it leverages the optimizer surplus data already computed. Auction mode (1.2) opens a large excluded market segment but requires a parallel optimizer path and new ADP source integration.
+The trade calculator and opponent intelligence are complete. The report card (3.1) is low effort and viral — it leverages the optimizer surplus data already computed and would get shared in league group chats. Auction mode (1.2) opens a large excluded market segment but requires a parallel optimizer path and new ADP source integration.

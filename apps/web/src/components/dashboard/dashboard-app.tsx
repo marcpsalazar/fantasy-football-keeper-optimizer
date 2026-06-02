@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ClipboardList,
   Download,
+  Eye,
   FileText,
   Gauge,
   GitCompare,
@@ -150,6 +151,9 @@ import {
   type NewsHeadline,
   type TeamDraftHistory,
   getLeagueDraftHistory,
+  getLeagueKeeperSignals,
+  type LeagueKeeperSignals,
+  type TeamKeeperSignal,
   type OptimizerSettingsForm,
   type PlayerSummary,
   type ScenarioNarrative,
@@ -6216,6 +6220,7 @@ function MockDraftPage() {
   });
   const [history, setHistory] = React.useState<MockDraftHistoryRow[]>([]);
   const [draftHistories, setDraftHistories] = React.useState<TeamDraftHistory[]>([]);
+  const [keeperSignals, setKeeperSignals] = React.useState<LeagueKeeperSignals | null>(null);
   const [activeSession, setActiveSession] = React.useState<MockDraftSession | null>(null);
   const [selectedComparisonIds, setSelectedComparisonIds] = React.useState<string[]>([]);
   const [comparisonSessions, setComparisonSessions] = React.useState<MockDraftSession[]>([]);
@@ -6251,16 +6256,19 @@ function MockDraftPage() {
     if (!leagueId) {
       setHistory([]);
       setDraftHistories([]);
+      setKeeperSignals(null);
       return;
     }
     setIsLoading(true);
     try {
-      const [mockDrafts, ownerHistories] = await Promise.allSettled([
+      const [mockDrafts, ownerHistories, signals] = await Promise.allSettled([
         listMockDrafts(leagueId),
         getLeagueDraftHistory(leagueId),
+        getLeagueKeeperSignals(leagueId),
       ]);
       if (mockDrafts.status === "fulfilled") setHistory(mockDrafts.value);
       if (ownerHistories.status === "fulfilled") setDraftHistories(ownerHistories.value);
+      if (signals.status === "fulfilled") setKeeperSignals(signals.value);
       setErrorMessage("");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Loading mock draft history failed.");
@@ -6974,6 +6982,10 @@ function MockDraftPage() {
                   })}
                 </div>
               </div>
+            )}
+
+            {keeperSignals && keeperSignals.signals.some((s) => s.hasRunOptimizer) && (
+              <OpponentIntelligencePanel myTeamId={keeperSignals.myTeamId} signals={keeperSignals.signals} />
             )}
 
             <div className="mt-5 flex flex-wrap gap-2">
@@ -7701,6 +7713,126 @@ function MockDraftBoardPreview({
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function OpponentIntelligencePanel({
+  myTeamId,
+  signals,
+}: {
+  myTeamId: string | null;
+  signals: TeamKeeperSignal[];
+}) {
+  const [isExpanded, setIsExpanded] = React.useState(false);
+  const opponentSignals = signals.filter(
+    (s) => s.teamId !== myTeamId && s.hasRunOptimizer && s.probableKeepers.length > 0,
+  );
+  const mySignal = signals.find((s) => s.teamId === myTeamId);
+  if (opponentSignals.length === 0) return null;
+
+  const totalProbableKeepers = opponentSignals.reduce(
+    (sum, s) => sum + s.probableKeepers.length,
+    0,
+  );
+  const positionCounts: Record<string, number> = {};
+  for (const sig of opponentSignals) {
+    for (const pk of sig.probableKeepers) {
+      positionCounts[pk.position] = (positionCounts[pk.position] ?? 0) + 1;
+    }
+  }
+  const positionSummary = Object.entries(positionCounts)
+    .sort(([, a], [, b]) => b - a)
+    .map(([pos, count]) => `${count} ${pos}`)
+    .join(", ");
+
+  return (
+    <div className="mt-5">
+      <button
+        className="mb-2 flex w-full items-center justify-between text-left"
+        onClick={() => setIsExpanded((v) => !v)}
+        type="button"
+      >
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-950">Opponent Intelligence</h3>
+          <p className="text-xs text-zinc-500">
+            Probable keeper choices based on optimizer results. {totalProbableKeepers} players
+            likely off the board before the draft starts.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Badge variant="warning">{opponentSignals.length} teams signaled</Badge>
+          <Eye className="size-4 text-zinc-400" aria-hidden="true" />
+        </div>
+      </button>
+
+      {isExpanded && (
+        <div className="space-y-2">
+          {mySignal && mySignal.probableKeepers.length > 0 && (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
+              <p className="text-xs font-semibold text-emerald-800">
+                Your team: {mySignal.probableKeepers.map((pk) => pk.playerName).join(", ")}
+              </p>
+            </div>
+          )}
+
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
+            <p className="text-xs text-zinc-500">
+              Position breakdown: <span className="font-medium text-zinc-700">{positionSummary || "—"}</span>
+            </p>
+          </div>
+
+          <div className="max-h-64 space-y-1.5 overflow-auto pr-1">
+            {opponentSignals.map((sig) => (
+              <div
+                className="rounded-md border border-zinc-200 bg-white px-3 py-2"
+                key={sig.teamId}
+              >
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-zinc-950">
+                    {sig.teamName}
+                    {sig.ownerName ? (
+                      <span className="ml-1.5 text-xs font-normal text-zinc-500">
+                        ({sig.ownerName})
+                      </span>
+                    ) : null}
+                  </span>
+                  <Badge variant="default">{sig.probableKeepers.length} keepers</Badge>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {sig.probableKeepers.map((pk) => (
+                    <span
+                      className="inline-flex items-center gap-1 rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-xs text-zinc-700"
+                      key={pk.playerId}
+                    >
+                      <span
+                        className={cn(
+                          "font-semibold",
+                          pk.position === "QB"
+                            ? "text-violet-700"
+                            : pk.position === "RB"
+                              ? "text-emerald-700"
+                              : pk.position === "WR"
+                                ? "text-sky-700"
+                                : pk.position === "TE"
+                                  ? "text-amber-700"
+                                  : "text-zinc-500",
+                        )}
+                      >
+                        {pk.position}
+                      </span>
+                      {pk.playerName}
+                      {pk.adpRound != null ? (
+                        <span className="text-zinc-400">Rd {Math.round(pk.adpRound)}</span>
+                      ) : null}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

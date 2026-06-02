@@ -103,6 +103,7 @@ from app.services.mock_draft_ai import MockDraftAIError
 from app.services.ai_log import is_over_monthly_budget, monthly_usage_summary, recent_logs, write_ai_log
 from app.services import draft_history as draft_history_svc
 from app.schemas.draft_history import TeamDraftHistoryRead
+from app.services import keeper_signals as keeper_signals_svc
 
 router = APIRouter(
     prefix="/api",
@@ -2596,6 +2597,71 @@ def get_team_draft_history(
         keeper_positions=profile.keeper_positions,
         keeper_count_avg=profile.keeper_count_avg,
     )
+
+
+@router.get("/leagues/{league_id}/keeper-signals")
+def get_keeper_signals(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Return keeper signals (probable keeper choices) for every team in the league.
+
+    League admins and platform admins see all teams' player details.
+    Regular members see full signal data for every team that has run the
+    optimizer — running the optimizer is treated as implicit consent to
+    share recommendations as signals.
+    """
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    _require_league(session, league_id)
+    is_admin = _is_league_admin(session, user, league_id)
+    signals = keeper_signals_svc.get_league_keeper_signals(
+        session,
+        league_id,
+        requesting_user_id=_user_id(user),
+        is_admin=is_admin,
+    )
+    return {
+        "my_team_id": signals.my_team_id,
+        "all_probable_keeper_ids": list(signals.all_probable_keeper_ids),
+        "signals": [
+            {
+                "team_id": sig.team_id,
+                "team_name": sig.team_name,
+                "owner_name": sig.owner_name,
+                "has_run_optimizer": sig.has_run_optimizer,
+                "probable_keepers": [
+                    {
+                        "player_id": sp.player_id,
+                        "player_name": sp.player_name,
+                        "position": sp.position,
+                        "nfl_team": sp.nfl_team,
+                        "adp_pick": sp.adp_pick,
+                        "adp_round": sp.adp_round,
+                        "keeper_score": sp.keeper_score,
+                        "confidence": sp.confidence,
+                    }
+                    for sp in sig.probable_keepers
+                ],
+            }
+            for sig in signals.signals
+        ],
+    }
+
+
+def _is_league_admin(session: Session, user: User | None, league_id: uuid.UUID) -> bool:
+    if user is None:
+        return False
+    if getattr(user, "role", None) == "platform_admin":
+        return True
+    membership = session.exec(
+        select(LeagueMembership).where(
+            LeagueMembership.league_id == league_id,
+            LeagueMembership.user_id == user.id,
+        )
+    ).first()
+    return membership is not None and membership.role == "league_admin"
 
 
 def _require_league(session: Session, league_id: uuid.UUID) -> League:
