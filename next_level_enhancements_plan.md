@@ -4,29 +4,44 @@ This document captures the product roadmap beyond the current AI-backed feature 
 
 ---
 
-## Status at Plan Creation
+## Status as of June 2026
 
-The core product is fully functional and deployed:
+The core product is fully functional and deployed. All Tier 1, Tier 2, and several post-plan features have shipped:
 
-- Keeper optimizer with composite ADP (DraftSharks + FFC weighted median)
+- Keeper optimizer with composite ADP (DraftSharks + FFC 2QB + FFC PPR + Yahoo — weighted median, auto-refreshed weekly)
 - AI keeper explanations, scenario narratives, strategy plans, bot picks, post-draft analysis
-- Mock draft with 9 bot personalities × 3 difficulty levels
+- Mock draft with 9 bot personalities × 3 difficulty levels, cross-season owner profiles in AI context
 - Role-based auth, admin panel, CSV imports, Excel/CSV/PDF exports
-- **Multi-league support** — any user can create leagues, switch between them, manage members, and upload per-league avatars; platform admin role sits above league admins *(shipped after plan creation)*
+- **Multi-league support** — any user can create leagues, switch between them, manage members, and upload per-league avatars; platform admin role sits above league admins
+- **Sleeper league import** — preview + commit pattern; player matching by Sleeper ID then name+position fallback
+- **Yahoo Fantasy league import** — OAuth2 flow, PPR detection, batch player name lookups, same preview/commit pattern
+- **Keeper Trade Calculator** — dual-optimizer savepoint approach; AI verdict with surplus comparison, sensitivity toggle
+- **Opponent Keeper Intelligence** — confidence-scored signals derived from recommendations; injected into mock draft AI strategy context
+- **Historical Keeper ROI Tracker** — `KeeperOutcome` model with full economics; League/Team/Player drill-down views
+- **End-of-Season Keeper Finalization Workflow** (4-step):
+  1. Final Keeper Selections — admin finalizes per-team keepers, pre-populated from recommendations
+  2. Sleeper Season Stats — fetches actual fantasy points and finish rank for each kept player
+  3. End-of-Season Analysis — decision categorization (HIT / MISS / BUST / LEFT_ON_TABLE / DODGED / BELOW_ADP) with league ROI summary
+  4. Final Draft Board — snake-draft grid showing forfeited keeper picks by round/team
+- **Draft History / Owner Profiles** — cross-season pick data used to generate AI bot enrichment and real owner tendency profiles in mock draft strategy plans
 
-The biggest product gaps are not AI-depth — they are **onboarding friction** (manual CSVs), **market coverage** (auction leagues unsupported), and **viral surface area** (nothing shareable, no network effects).
+The biggest remaining gaps are **auction league support** (entire excluded market segment), **viral surface area** (nothing shareable), and **commissioner tooling** (no reminders, compliance checks, or reveal mechanics).
 
 ---
 
 ## Tier 1 — Remove Friction
 
-These are the highest-priority improvements because they determine whether new users adopt the app or leave before seeing its value.
-
 ---
 
 ### ~~1.1 Sleeper League Import~~ ✅ Complete
 
-Sleeper import shipped: `apps/api/app/services/sleeper_import.py` fetches league info, rosters, draft picks, and the full Sleeper player DB. Players are matched by Sleeper ID first (populates `Player.external_id` for fast re-import), then by name+position fallback. Two endpoints (`preview` / `commit`) follow the same preview-before-import pattern as CSV imports. The `SleeperImportPanel` UI lives at the top of League Data Imports: enter a Sleeper league ID, preview a team table with pick/roster counts and warnings, then import in one click.
+Sleeper import shipped: `apps/api/app/services/sleeper_import.py` fetches league info, rosters, draft picks, and the full Sleeper player DB. Players are matched by Sleeper ID first (populates `Player.external_id` for fast re-import), then by name+position fallback. Two endpoints (`preview` / `commit`) follow the same preview-before-import pattern as CSV imports. The `SleeperImportPanel` UI lives at the top of League Data Imports.
+
+---
+
+### ~~1.1b Yahoo Fantasy League Import~~ ✅ Complete *(shipped after plan creation)*
+
+Yahoo import shipped: `apps/api/app/services/yahoo_import.py` and `yahoo_oauth.py` implement a full OAuth2 flow (authorize → callback → token storage in `YahooOAuthToken`). Handles Yahoo API quirks: numeric-keyed collections, flattened team metadata, batch player name lookups, PPR detection via reception stat modifier. Same preview/commit pattern as Sleeper import. Users connect their Yahoo account via the League Data Imports panel.
 
 ---
 
@@ -56,31 +71,38 @@ Multi-league support shipped: users can create leagues, switch between them via 
 
 ## Tier 2 — Unique Differentiation
 
-These features have no direct equivalent in competing tools. They represent the strongest arguments for why this product is worth paying for.
-
 ---
 
 ### ~~2.1 Keeper Trade Calculator~~ ✅ Complete
 
-Trade calculator shipped: `apps/api/app/services/trade_analysis.py` runs the optimizer twice — baseline and hypothetical — using a DB savepoint to apply temporary roster/pick changes without persisting them. The `POST /api/leagues/{league_id}/optimizer/trade-analysis` endpoint accepts give/receive player lists with optional per-player keeper cost round overrides. The frontend `TradeAnalyzerPage` (reachable via "Trade Analyzer" in the sidebar) provides team selection, checkbox pickers for given-away players, a searchable receive panel with keeper round inputs, before/after surplus comparison, gained/lost keeper badges, and a "+1 round sensitivity" toggle. Optional AI narrative (verdict + summary + key risk + opportunity cost) is generated via the same OpenAI Responses API pattern used elsewhere. `FinalRosterEntry` type extended with `teamId` and `playerId` to support roster-based player lookups in the frontend.
+Trade calculator shipped: `apps/api/app/services/trade_analysis.py` runs the optimizer twice — baseline and hypothetical — using a DB savepoint to apply temporary roster/pick changes without persisting them. The `POST /api/leagues/{league_id}/optimizer/trade-analysis` endpoint accepts give/receive player lists with optional per-player keeper cost round overrides. The frontend `TradeAnalyzerPage` provides team selection, checkbox pickers, a searchable receive panel with keeper round inputs, before/after surplus comparison, gained/lost keeper badges, and a "+1 round sensitivity" toggle. Optional AI narrative via the OpenAI Responses API.
 
 ---
 
 ### ~~2.2 Opponent Keeper Intelligence~~ ✅ Complete
 
-Opponent intelligence shipped: `apps/api/app/services/keeper_signals.py` derives probable keeper choices for every team directly from existing `KeeperRecommendation` rows — no new DB table required. The `GET /api/leagues/{league_id}/keeper-signals` endpoint returns per-team signal objects with player name, position, ADP round, and a confidence score (normalised 0.6–1.0 from keeper_score within the team's recommended set). Running the optimizer is treated as implicit consent to share recommendations as signals; league admins see all teams' details. Probable opponent keepers are also injected into the mock draft strategy plan context via `signals_to_strategy_context`, so AI plans account for players likely off the board before pick 1. The `OpponentIntelligencePanel` frontend component lives in Mock Draft setup — it expands to show each opponent's probable keepers as position-coloured chips (player name, position badge, ADP round) and a summary of the position breakdown across all signals.
+Opponent intelligence shipped: `apps/api/app/services/keeper_signals.py` derives probable keeper choices for every team from existing `KeeperRecommendation` rows — no new DB table required. The `GET /api/leagues/{league_id}/keeper-signals` endpoint returns per-team signal objects with player name, position, ADP round, and a confidence score (normalised 0.6–1.0). Probable opponent keepers are injected into mock draft strategy plan context via `signals_to_strategy_context`. The `OpponentIntelligencePanel` frontend component lives in Mock Draft setup.
 
 ---
 
 ### ~~2.3 Historical Keeper ROI Tracker~~ ✅ Complete
 
-Shipped. `KeeperOutcome` model and Alembic migration `20260602_0012` add a dedicated table with full keeper economics (cost, ADP at time of keep, keeper value, finish rank, fantasy points, `met_adp_projection`, `is_bust`). `keeper_history.py` service handles CSV preview/import and multi-year aggregation. Three new endpoints: `POST /api/leagues/{league_id}/keeper-outcomes/preview`, `POST /api/leagues/{league_id}/keeper-outcomes/import`, and `GET /api/leagues/{league_id}/keeper-history`. The admin panel gains a Season Outcomes CSV card. A new "Keeper History" nav entry renders three collapsible sections: League Season Summary (keepers kept, % hit ADP, bust rate, avg surplus), Team ROI (per-team breakdown with expandable outcome rows), and Player History (sorted by times kept, with per-player outcome drill-down).
+Shipped: `KeeperOutcome` model and Alembic migration `20260602_0012` add a dedicated table with full keeper economics (cost, ADP at time of keep, keeper value, finish rank, fantasy points, `met_adp_projection`, `is_bust`). `keeper_history.py` service handles CSV preview/import and multi-year aggregation. Three new endpoints: preview, import, and history GET. The admin panel gains a Season Outcomes CSV card. A "Keeper History" nav entry renders three collapsible sections: League Season Summary, Team ROI, and Player History.
+
+---
+
+### ~~2.4 End-of-Season Keeper Finalization Workflow~~ ✅ Complete *(shipped after plan creation)*
+
+Four-step guided workflow for closing out a keeper season:
+
+- **Step 1 — Final Keeper Selections** (`apps/api/app/services/final_keepers.py`): Admin finalizes which players each team is actually keeping, pre-populated from optimizer recommendations. Selections are visible to all league members once locked.
+- **Step 2 — Sleeper Season Stats** (`apps/api/app/services/sleeper_season_stats.py`): Fetches actual fantasy points and finish rank for each kept player via Sleeper API. Populates `KeeperOutcome` finish data.
+- **Step 3 — End-of-Season Analysis** (`apps/api/app/services/season_analysis.py`): Categorizes every recommended player's outcome — HIT (kept, met projection), MISS (kept, underperformed), BUST (kept, bust), LEFT_ON_TABLE (not kept, would have hit), DODGED (not kept, was a bust), BELOW_ADP (correctly passed). Produces per-team and league ROI summary.
+- **Step 4 — Final Draft Board**: Snake-draft grid showing which picks each team forfeited for their keepers, giving a visual preview of the upcoming draft's pick landscape.
 
 ---
 
 ## Tier 3 — Viral and Acquisition
-
-These features grow the user base by making outputs shareable and by targeting commissioners as the acquisition channel.
 
 ---
 
@@ -96,7 +118,7 @@ These features grow the user base by making outputs shareable and by targeting c
 - Frontend: "Share" button in Team Outlook page → downloads the PNG card
 - Design: clean dark card with league branding, position badges, round surplus indicators; readable at mobile share sizes
 
-**Dependencies:** Requires keeper recommendations and optimizer results (already exist). Optional: post-season outcome data from the ROI tracker improves the "grade" narrative.
+**Dependencies:** Requires keeper recommendations and optimizer results (already exist). Post-season outcome data from the ROI tracker and end-of-season analysis now available to improve the grade narrative.
 
 ---
 
@@ -117,13 +139,13 @@ These features grow the user base by making outputs shareable and by targeting c
 
 ## Tier 4 — Depth and Retention
 
-These features increase the value of the app for power users who return year-round.
-
 ---
 
 ### 4.1 Real-Time News → Keeper Value Alerts
 
-**Why it matters:** An injury, trade, or depth chart change can shift a player's ADP by 5–10 rounds overnight, flipping a borderline keeper from a pass to a must-keep (or vice versa). The app already has a news feed — wiring it to the optimizer so it surfaces "this news affects your keeper value" would make users open the app throughout the offseason, not just at draft time.
+**Why it matters:** An injury, trade, or depth chart change can shift a player's ADP by 5–10 rounds overnight, flipping a borderline keeper from a pass to a must-keep (or vice versa). The app already has a live news feed (`/news/fantasy-football` endpoint, powered by `news_feed.py`) — wiring it to the optimizer so it surfaces "this news affects your keeper value" would make users open the app throughout the offseason, not just at draft time.
+
+**Current state:** `news_feed.py` fetches and caches RSS headlines. The news feed is live and displayed in the UI. What's missing is the optimizer-side impact analysis and the alert surface.
 
 **Scope:**
 
@@ -142,14 +164,14 @@ These features increase the value of the app for power users who return year-rou
 
 **Scope:**
 
-- New model inputs: player age (derivable from NFL player data), position aging curves (built-in constants for QB/RB/WR/TE career arcs)
+- New model inputs: player age (derivable from Sleeper's player database — already fetched during Sleeper import), position aging curves (built-in constants for QB/RB/WR/TE career arcs)
 - New service: `apps/api/app/services/value_window.py`
   - Inputs: current ADP, current keeper cost, player age, position
   - Outputs: projected ADP in years 1, 2, 3 (applying position aging curve); projected keeper cost in each year (assuming same-team keeper escalation rule); projected value window (years where keeping is positive expected value)
 - AI enhancement: narrative explaining the value window and when to consider trading the player instead of keeping
 - Frontend: "Value Window" expandable section in Keeper Explanation modal — shows a simple bar or line chart of keep value by year; "Optimal keep through Year N" verdict
 
-**Dependencies:** Player age data (can be seeded from Sleeper's player database if Sleeper import is implemented, otherwise from a static table). Position aging curves are built-in constants.
+**Dependencies:** Player age data (available from Sleeper player DB since Sleeper import is live). Position aging curves are built-in constants.
 
 ---
 
@@ -159,19 +181,23 @@ These features increase the value of the app for power users who return year-rou
 |----------|---------|--------|--------|
 | ✅ | ~~Multi-League Dashboard (1.3)~~ | — | — |
 | ✅ | ~~Sleeper League Import (1.1)~~ | — | — |
+| ✅ | ~~Yahoo Fantasy League Import (1.1b)~~ | — | — |
 | ✅ | ~~Keeper Trade Calculator (2.1)~~ | — | — |
 | ✅ | ~~Opponent Keeper Intelligence (2.2)~~ | — | — |
-| 3 | Auction Draft Mode (1.2) | Opens a large excluded market segment | High |
-| 4 | Shareable Keeper Report Card (3.1) | Low effort, viral surface, organic acquisition | Low |
-| 5 | Commissioner Tools Pack (3.2) | Acquisition via commissioners = leverage | Medium |
 | ✅ | ~~Historical Keeper ROI Tracker (2.3)~~ | — | — |
-| 7 | News → Keeper Value Alerts (4.1) | Drives offseason re-engagement | Medium |
-| 8 | Value Window Projection (4.2) | Depth feature for power users | Medium |
+| ✅ | ~~End-of-Season Finalization Workflow (2.4)~~ | — | — |
+| 1 | Auction Draft Mode (1.2) | Opens a large excluded market segment | High |
+| 2 | Shareable Keeper Report Card (3.1) | Low effort, viral surface, organic acquisition | Low |
+| 3 | Commissioner Tools Pack (3.2) | Acquisition via commissioners = leverage | Medium |
+| 4 | News → Keeper Value Alerts (4.1) | Drives offseason re-engagement; news feed already live | Medium |
+| 5 | Value Window Projection (4.2) | Depth feature for power users; player age data now available via Sleeper | Medium |
 
 ---
 
 ## What to Build Next
 
-**Shareable Keeper Report Card (3.1)** or **Auction Draft Mode (1.2)** are the top candidates. With 2.2 and 2.3 both shipped, the entire Tier 2 intelligence features are now live.
+**Shareable Keeper Report Card (3.1)** is the lowest-effort next step with the highest viral upside — it leverages optimizer surplus data and the new end-of-season outcome categorizations (HIT/MISS/BUST) that are now live, making the grade meaningful. Effort is low (server-side PNG render via Pillow + one export endpoint + a "Share" button).
 
-The trade calculator and opponent intelligence are complete. The report card (3.1) is low effort and viral — it leverages the optimizer surplus data already computed and would get shared in league group chats. Auction mode (1.2) opens a large excluded market segment but requires a parallel optimizer path and new ADP source integration.
+**Auction Draft Mode (1.2)** is the highest-impact unbuilt feature — it opens the entire auction keeper league segment that is currently excluded. It requires a parallel optimizer path and the FFC auction ADP endpoint, making it a heavier lift but the most strategically important gap remaining.
+
+**News → Keeper Value Alerts (4.1)** is closer to done than it looks: `news_feed.py` and the news endpoint are already live. The remaining work is pattern-matching headlines to keeper candidates and adding one optimizer pass for ADP sensitivity.
