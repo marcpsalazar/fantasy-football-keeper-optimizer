@@ -173,12 +173,15 @@ import {
   previewSleeperOutcomes,
   importSleeperOutcomes,
   getSeasonAnalysis,
+  getDraftBoard,
   type SleeperOutcomesPreviewResult,
   type SleeperOutcomeRow,
   type SeasonAnalysisResult,
   type TeamSeasonAnalysis,
   type SeasonDecision,
   type SeasonDecisionCategory,
+  type DraftBoardResult,
+  type DraftBoardPick,
   type LeagueKeeperSignals,
   type TeamKeeperSignal,
   type OptimizerSettingsForm,
@@ -208,7 +211,8 @@ type ViewId =
   | "mock-draft"
   | "keeper-history"
   | "final-keepers"
-  | "season-analysis";
+  | "season-analysis"
+  | "draft-board";
 
 type NavItem = {
   id: ViewId;
@@ -227,6 +231,7 @@ const navItems: NavItem[] = [
   { id: "mock-draft", label: "Mock Draft", icon: Bot },
   { id: "keeper-history", label: "Keeper History", icon: History },
   { id: "final-keepers", label: "Final Keepers", icon: KeyRound },
+  { id: "draft-board", label: "Draft Board", icon: ClipboardList },
   { id: "season-analysis", label: "Season Analysis", icon: BarChart2 },
   { id: "outlooks", label: "Team Outlook", icon: ShieldCheck },
   { id: "teams", label: "Teams", icon: Users },
@@ -1720,6 +1725,7 @@ export function DashboardApp() {
             {activeView === "mock-draft" && <MockDraftPage />}
             {activeView === "keeper-history" && <KeeperHistoryPage />}
             {activeView === "final-keepers" && <FinalKeepersPage />}
+            {activeView === "draft-board" && <DraftBoardPage />}
             {activeView === "season-analysis" && <SeasonAnalysisPage />}
           </div>
         </section>
@@ -10821,6 +10827,190 @@ function PositionBadge({ position }: { position: string }) {
 function StatusBadge({ status }: { status: string }) {
   const variant = status === "Starter" ? "success" : status === "Bench" ? "info" : "warning";
   return <Badge variant={variant}>{status}</Badge>;
+}
+
+// ── Draft Board Page ──────────────────────────────────────────────────────────
+
+function DraftBoardPage() {
+  const { activeLeagueId } = useDashboard();
+  const [board, setBoard] = React.useState<DraftBoardResult | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    if (!activeLeagueId) return;
+    setLoading(true);
+    setError("");
+    getDraftBoard(activeLeagueId)
+      .then(setBoard)
+      .catch(() => setError("Could not load draft board."))
+      .finally(() => setLoading(false));
+  }, [activeLeagueId]);
+
+  if (loading) {
+    return (
+      <PagePanel title="Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+        <p className="text-sm text-zinc-500">Loading…</p>
+      </PagePanel>
+    );
+  }
+
+  if (error) {
+    return (
+      <PagePanel title="Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+        <p className="text-sm text-red-600">{error}</p>
+      </PagePanel>
+    );
+  }
+
+  if (!board) {
+    return (
+      <PagePanel title="Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+        <p className="text-sm text-zinc-500">No draft data available.</p>
+      </PagePanel>
+    );
+  }
+
+  // Build slot → team label map for column headers
+  const slotToTeam = new Map(board.teams.map((t) => [t.draftSlot ?? 0, t]));
+
+  return (
+    <PagePanel title="Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+      <div className="space-y-4">
+        {/* Legend */}
+        <div className="flex items-center gap-4 text-xs">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded bg-red-200" />
+            Forfeited (keeper)
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded bg-white border border-zinc-200" />
+            Available
+          </span>
+          <span className="text-zinc-400">
+            {board.draftType === "snake" ? "Snake draft" : board.draftType} · {board.teamCount} teams · {board.roundCount} rounds
+          </span>
+          {board.isFinalized && (
+            <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-700 font-medium">
+              Keepers finalized
+            </span>
+          )}
+        </div>
+
+        {/* Scrollable grid */}
+        <div className="overflow-x-auto rounded-lg border border-zinc-200">
+          <table className="min-w-full text-xs">
+            <thead>
+              <tr className="bg-zinc-50 border-b border-zinc-200">
+                <th className="sticky left-0 z-10 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600 w-14">
+                  Rd
+                </th>
+                {Array.from({ length: board.teamCount }, (_, i) => i + 1).map((slot) => {
+                  const team = slotToTeam.get(slot);
+                  return (
+                    <th key={slot} className="px-2 py-2 text-center font-medium text-zinc-600 min-w-[90px]">
+                      <div className="truncate max-w-[88px]" title={team?.teamName ?? `Slot ${slot}`}>
+                        {team?.teamName ?? `Slot ${slot}`}
+                      </div>
+                      {team?.ownerName && (
+                        <div className="font-normal text-zinc-400 truncate max-w-[88px]" title={team.ownerName}>
+                          {team.ownerName}
+                        </div>
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {board.rounds.map((round) => {
+                // Map draft_slot → pick for this round
+                const slotToPick = new Map(round.picks.map((p) => [p.draftSlot, p]));
+                return (
+                  <tr key={round.round} className="border-b border-zinc-100 hover:bg-zinc-50/50">
+                    <td className="sticky left-0 z-10 bg-white px-3 py-1.5 font-semibold text-zinc-500 text-center border-r border-zinc-100">
+                      {round.round}
+                    </td>
+                    {Array.from({ length: board.teamCount }, (_, i) => i + 1).map((slot) => {
+                      const pick = slotToPick.get(slot);
+                      if (!pick) {
+                        return <td key={slot} className="px-2 py-1.5 text-center text-zinc-300">—</td>;
+                      }
+                      return (
+                        <DraftPickCell key={slot} pick={pick} />
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Forfeited picks summary */}
+        {board.rounds.some((r) => r.picks.some((p) => p.isForfeited)) && (
+          <div className="rounded-lg border border-zinc-200 bg-white p-4">
+            <h3 className="mb-2 text-sm font-semibold text-zinc-700">Forfeited Picks Summary</h3>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-zinc-400 border-b border-zinc-100">
+                  <th className="py-1.5 text-left font-medium">Pick #</th>
+                  <th className="py-1.5 text-left font-medium">Round</th>
+                  <th className="py-1.5 text-left font-medium">Team</th>
+                  <th className="py-1.5 text-left font-medium">Kept Player</th>
+                  <th className="py-1.5 text-left font-medium">Pos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {board.rounds
+                  .flatMap((r) => r.picks)
+                  .filter((p) => p.isForfeited)
+                  .sort((a, b) => a.overallPick - b.overallPick)
+                  .map((p) => (
+                    <tr key={p.overallPick} className="border-b border-zinc-50">
+                      <td className="py-1.5 font-medium text-zinc-800">#{p.overallPick}</td>
+                      <td className="py-1.5 text-zinc-600">Rd {p.round}</td>
+                      <td className="py-1.5 text-zinc-700">{p.teamName ?? "—"}</td>
+                      <td className="py-1.5 text-zinc-700">{p.forfeitedPlayerName ?? "—"}</td>
+                      <td className="py-1.5">
+                        {p.forfeitedPlayerPosition && (
+                          <span className={cn("rounded px-1 py-0.5 font-medium", POSITION_COLORS[p.forfeitedPlayerPosition] ?? "bg-zinc-100 text-zinc-700")}>
+                            {p.forfeitedPlayerPosition}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </PagePanel>
+  );
+}
+
+function DraftPickCell({ pick }: { pick: DraftBoardPick }) {
+  if (pick.isForfeited) {
+    return (
+      <td className="px-2 py-1.5 text-center bg-red-50">
+        <div className="text-zinc-500 tabular-nums">#{pick.overallPick}</div>
+        <div className="font-medium text-red-700 truncate max-w-[84px]" title={pick.forfeitedPlayerName ?? ""}>
+          {pick.forfeitedPlayerName ?? "—"}
+        </div>
+        {pick.forfeitedPlayerPosition && (
+          <span className={cn("rounded px-1 py-0.5 text-[10px] font-medium", POSITION_COLORS[pick.forfeitedPlayerPosition] ?? "bg-zinc-100 text-zinc-700")}>
+            {pick.forfeitedPlayerPosition}
+          </span>
+        )}
+      </td>
+    );
+  }
+  return (
+    <td className="px-2 py-1.5 text-center text-zinc-400 tabular-nums">
+      #{pick.overallPick}
+    </td>
+  );
 }
 
 // ── Season Analysis Page ──────────────────────────────────────────────────────

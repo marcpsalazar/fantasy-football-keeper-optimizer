@@ -234,6 +234,103 @@ def unfinalize_league_keepers(
 
 
 # ---------------------------------------------------------------------------
+# Draft Board
+# ---------------------------------------------------------------------------
+
+def get_draft_board(session: Session, league_id: uuid.UUID) -> dict[str, Any]:
+    """Build a full snake-draft pick grid annotated with forfeited keeper picks."""
+    league = _require_league(session, league_id)
+    teams = session.exec(select(Team).where(Team.league_id == league_id)).all()
+    team_count = len(teams) or 12
+    round_count = _round_count_from_roster_settings(league.roster_settings)
+
+    sorted_teams = sorted(teams, key=lambda t: (t.draft_slot or 999, t.name))
+    slot_to_team: dict[int, Team] = {
+        t.draft_slot: t for t in sorted_teams if t.draft_slot is not None
+    }
+
+    # Load forfeited picks from FinalKeeperSelections
+    selections = session.exec(
+        select(FinalKeeperSelection).where(
+            FinalKeeperSelection.league_id == league_id,
+            FinalKeeperSelection.season_year == league.season_year,
+        )
+    ).all()
+    player_ids = {s.player_id for s in selections}
+    players = {p.id: p for p in session.exec(
+        select(Player).where(Player.id.in_(player_ids))
+    ).all()} if player_ids else {}
+
+    # Map overall_pick → {player_name, position, team_id}
+    forfeited: dict[int, dict[str, Any]] = {}
+    for sel in selections:
+        if sel.cost_pick is not None:
+            player = players.get(sel.player_id)
+            forfeited[int(sel.cost_pick)] = {
+                "player_name": player.full_name if player else None,
+                "position": player.position if player else None,
+                "nfl_team": player.nfl_team if player else None,
+                "team_id": str(sel.team_id),
+            }
+
+    # Build the rounds
+    rounds: list[dict[str, Any]] = []
+    for r in range(1, round_count + 1):
+        slots_in_order = list(range(1, team_count + 1))
+        if r % 2 == 0:
+            slots_in_order = list(reversed(slots_in_order))
+
+        picks: list[dict[str, Any]] = []
+        for pos, slot in enumerate(slots_in_order):
+            overall_pick = (r - 1) * team_count + (pos + 1)
+            team = slot_to_team.get(slot)
+            forf = forfeited.get(overall_pick)
+            picks.append({
+                "overall_pick": overall_pick,
+                "round": r,
+                "pick_in_round": pos + 1,
+                "draft_slot": slot,
+                "team_id": str(team.id) if team else None,
+                "team_name": team.name if team else None,
+                "owner_name": team.owner_name if team else None,
+                "is_forfeited": forf is not None,
+                "forfeited_player_name": forf["player_name"] if forf else None,
+                "forfeited_player_position": forf["position"] if forf else None,
+                "forfeited_player_nfl_team": forf["nfl_team"] if forf else None,
+            })
+        rounds.append({"round": r, "picks": picks})
+
+    team_summary = [
+        {
+            "team_id": str(t.id),
+            "team_name": t.name,
+            "owner_name": t.owner_name,
+            "draft_slot": t.draft_slot,
+        }
+        for t in sorted_teams
+    ]
+
+    return {
+        "season_year": league.season_year,
+        "draft_type": league.draft_type,
+        "team_count": team_count,
+        "round_count": round_count,
+        "is_finalized": league.keepers_finalized,
+        "teams": team_summary,
+        "rounds": rounds,
+    }
+
+
+def _round_count_from_roster_settings(roster_settings: dict[str, Any]) -> int:
+    slots = roster_settings.get("slots") if isinstance(roster_settings, dict) else None
+    if isinstance(slots, dict):
+        total = sum(int(v) for v in slots.values() if isinstance(v, (int, float)) and int(v) > 0)
+        if total > 0:
+            return total
+    return 16
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

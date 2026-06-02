@@ -1984,6 +1984,81 @@ export async function finalizeKeepers(
   };
 }
 
+// ── Draft Board ───────────────────────────────────────────────────────────────
+
+export type DraftBoardPick = {
+  overallPick: number;
+  round: number;
+  pickInRound: number;
+  draftSlot: number;
+  teamId: string | null;
+  teamName: string | null;
+  ownerName: string | null;
+  isForfeited: boolean;
+  forfeitedPlayerName: string | null;
+  forfeitedPlayerPosition: string | null;
+  forfeitedPlayerNflTeam: string | null;
+};
+
+export type DraftBoardRound = {
+  round: number;
+  picks: DraftBoardPick[];
+};
+
+export type DraftBoardTeam = {
+  teamId: string;
+  teamName: string;
+  ownerName: string | null;
+  draftSlot: number | null;
+};
+
+export type DraftBoardResult = {
+  seasonYear: number;
+  draftType: string;
+  teamCount: number;
+  roundCount: number;
+  isFinalized: boolean;
+  teams: DraftBoardTeam[];
+  rounds: DraftBoardRound[];
+};
+
+function mapDraftBoardPick(row: ApiRow): DraftBoardPick {
+  return {
+    overallPick: number(row.overall_pick),
+    round: number(row.round),
+    pickInRound: number(row.pick_in_round),
+    draftSlot: number(row.draft_slot),
+    teamId: row.team_id != null ? text(row.team_id) : null,
+    teamName: row.team_name != null ? text(row.team_name) : null,
+    ownerName: row.owner_name != null ? text(row.owner_name) : null,
+    isForfeited: Boolean(row.is_forfeited),
+    forfeitedPlayerName: row.forfeited_player_name != null ? text(row.forfeited_player_name) : null,
+    forfeitedPlayerPosition: row.forfeited_player_position != null ? text(row.forfeited_player_position) : null,
+    forfeitedPlayerNflTeam: row.forfeited_player_nfl_team != null ? text(row.forfeited_player_nfl_team) : null,
+  };
+}
+
+export async function getDraftBoard(leagueId: string): Promise<DraftBoardResult> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/draft-board`);
+  return {
+    seasonYear: number(payload.season_year),
+    draftType: text(payload.draft_type),
+    teamCount: number(payload.team_count),
+    roundCount: number(payload.round_count),
+    isFinalized: Boolean(payload.is_finalized),
+    teams: array(payload.teams).map((t) => ({
+      teamId: text(t.team_id),
+      teamName: text(t.team_name),
+      ownerName: t.owner_name != null ? text(t.owner_name) : null,
+      draftSlot: t.draft_slot != null ? number(t.draft_slot) : null,
+    })),
+    rounds: array(payload.rounds).map((r) => ({
+      round: number(r.round),
+      picks: array(r.picks).map(mapDraftBoardPick),
+    })),
+  };
+}
+
 // ── Season Analysis ───────────────────────────────────────────────────────────
 
 export type SeasonDecisionCategory =

@@ -2837,6 +2837,16 @@ def unfinalize_keepers(
     return {"is_finalized": False}
 
 
+@router.get("/leagues/{league_id}/draft-board")
+def get_draft_board(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    _require_league(session, league_id)
+    return final_keepers_svc.get_draft_board(session, league_id)
+
+
 @router.get("/leagues/{league_id}/season-analysis")
 def get_season_analysis(
     league_id: uuid.UUID,
