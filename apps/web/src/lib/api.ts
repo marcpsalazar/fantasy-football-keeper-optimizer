@@ -1718,6 +1718,157 @@ export async function getKeeperHistory(leagueId: string): Promise<KeeperHistory>
   };
 }
 
+// ── Final Keeper Selections ───────────────────────────────────────────────────
+
+export type FinalKeeperSelectionRow = {
+  selectionId: string;
+  playerId: string;
+  playerName: string | null;
+  position: string | null;
+  nflTeam: string | null;
+  costPick: number | null;
+  costRound: number | null;
+};
+
+export type ForfeitedPick = {
+  pick: number;
+  round: number | null;
+  playerId: string;
+};
+
+export type FinalKeeperTeam = {
+  teamId: string;
+  teamName: string;
+  ownerName: string | null;
+  draftSlot: number | null;
+  keepers: FinalKeeperSelectionRow[];
+  forfeitedPicks: ForfeitedPick[];
+};
+
+export type FinalKeepersResult = {
+  seasonYear: number;
+  isFinalized: boolean;
+  finalizedAt: string | null;
+  teams: FinalKeeperTeam[];
+  allForfeitedPicks: ForfeitedPick[];
+};
+
+export type FinalKeepersSuggestedTeam = {
+  teamId: string;
+  teamName: string;
+  ownerName: string | null;
+  draftSlot: number | null;
+  suggestedKeepers: FinalKeeperSelectionRow[];
+};
+
+export type FinalKeepersPrefillResult = {
+  seasonYear: number;
+  teams: FinalKeepersSuggestedTeam[];
+};
+
+function mapFinalKeeperSelectionRow(row: ApiRow): FinalKeeperSelectionRow {
+  return {
+    selectionId: text(row.selection_id),
+    playerId: text(row.player_id),
+    playerName: (row.player_name as string) ?? null,
+    position: (row.position as string) ?? null,
+    nflTeam: (row.nfl_team as string) ?? null,
+    costPick: (row.cost_pick as number) ?? null,
+    costRound: (row.cost_round as number) ?? null,
+  };
+}
+
+function mapFinalKeeperTeam(row: ApiRow): FinalKeeperTeam {
+  return {
+    teamId: text(row.team_id),
+    teamName: text(row.team_name),
+    ownerName: (row.owner_name as string) ?? null,
+    draftSlot: (row.draft_slot as number) ?? null,
+    keepers: ((row.keepers as ApiRow[]) ?? []).map(mapFinalKeeperSelectionRow),
+    forfeitedPicks: ((row.forfeited_picks as ApiRow[]) ?? []).map((p) => ({
+      pick: number(p.pick),
+      round: (p.round as number) ?? null,
+      playerId: text(p.player_id),
+    })),
+  };
+}
+
+function mapSuggestedKeeperRow(row: ApiRow): FinalKeeperSelectionRow {
+  return {
+    selectionId: "",
+    playerId: text(row.player_id),
+    playerName: (row.player_name as string) ?? null,
+    position: (row.position as string) ?? null,
+    nflTeam: (row.nfl_team as string) ?? null,
+    costPick: (row.cost_pick as number) ?? null,
+    costRound: (row.cost_round as number) ?? null,
+  };
+}
+
+export async function getFinalKeepers(leagueId: string): Promise<FinalKeepersResult> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/final-keepers`);
+  return {
+    seasonYear: number(payload.season_year),
+    isFinalized: Boolean(payload.is_finalized),
+    finalizedAt: (payload.finalized_at as string) ?? null,
+    teams: ((payload.teams as ApiRow[]) ?? []).map(mapFinalKeeperTeam),
+    allForfeitedPicks: ((payload.all_forfeited_picks as ApiRow[]) ?? []).map((p) => ({
+      pick: number(p.pick),
+      round: (p.round as number) ?? null,
+      playerId: text(p.player_id),
+    })),
+  };
+}
+
+export async function getFinalKeepersPrefill(leagueId: string): Promise<FinalKeepersPrefillResult> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/final-keepers/prefill`);
+  return {
+    seasonYear: number(payload.season_year),
+    teams: ((payload.teams as ApiRow[]) ?? []).map((t) => ({
+      teamId: text(t.team_id),
+      teamName: text(t.team_name),
+      ownerName: (t.owner_name as string) ?? null,
+      draftSlot: (t.draft_slot as number) ?? null,
+      suggestedKeepers: ((t.suggested_keepers as ApiRow[]) ?? []).map(mapSuggestedKeeperRow),
+    })),
+  };
+}
+
+export type FinalKeeperInput = {
+  player_id: string;
+  cost_pick: number | null;
+  cost_round: number | null;
+};
+
+export async function setTeamFinalKeepers(
+  leagueId: string,
+  teamId: string,
+  keepers: FinalKeeperInput[],
+): Promise<FinalKeeperSelectionRow[]> {
+  const payload = await fetchJson<ApiRow>(
+    `/api/leagues/${leagueId}/final-keepers/${teamId}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(keepers),
+    },
+  );
+  return ((payload.keepers as ApiRow[]) ?? []).map(mapFinalKeeperSelectionRow);
+}
+
+export async function finalizeKeepers(
+  leagueId: string,
+): Promise<{ isFinalized: boolean; finalizedAt: string }> {
+  const payload = await fetchJson<ApiRow>(
+    `/api/leagues/${leagueId}/final-keepers/finalize`,
+    { method: "POST" },
+  );
+  return {
+    isFinalized: Boolean(payload.is_finalized),
+    finalizedAt: text(payload.finalized_at),
+  };
+}
+
 export function exportUrl(
   leagueId: string,
   format: "xlsx" | "csv" | "pdf" | "adp-template" = "xlsx",

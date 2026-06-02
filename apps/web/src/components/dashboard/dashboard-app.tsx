@@ -155,11 +155,20 @@ import {
   getKeeperHistory,
   previewKeeperOutcomesCsv,
   importKeeperOutcomesCsv,
+  getFinalKeepers,
+  getFinalKeepersPrefill,
+  setTeamFinalKeepers,
+  finalizeKeepers,
   type KeeperHistory,
   type KeeperOutcomesPreviewResult,
   type TeamKeeperHistory,
   type PlayerKeeperHistory,
   type LeagueKeeperSeasonSummary,
+  type FinalKeepersResult,
+  type FinalKeeperTeam,
+  type FinalKeeperSelectionRow,
+  type FinalKeepersPrefillResult,
+  type FinalKeeperInput,
   type LeagueKeeperSignals,
   type TeamKeeperSignal,
   type OptimizerSettingsForm,
@@ -187,7 +196,8 @@ type ViewId =
   | "outlooks"
   | "draft-impact"
   | "mock-draft"
-  | "keeper-history";
+  | "keeper-history"
+  | "final-keepers";
 
 type NavItem = {
   id: ViewId;
@@ -205,6 +215,7 @@ const navItems: NavItem[] = [
   { id: "draft-impact", label: "Draft Impact", icon: ClipboardList },
   { id: "mock-draft", label: "Mock Draft", icon: Bot },
   { id: "keeper-history", label: "Keeper History", icon: History },
+  { id: "final-keepers", label: "Final Keepers", icon: KeyRound },
   { id: "outlooks", label: "Team Outlook", icon: ShieldCheck },
   { id: "teams", label: "Teams", icon: Users },
   { id: "draft", label: "Draft Results", icon: ClipboardList },
@@ -1696,6 +1707,7 @@ export function DashboardApp() {
             {activeView === "draft-impact" && <DraftImpactPage />}
             {activeView === "mock-draft" && <MockDraftPage />}
             {activeView === "keeper-history" && <KeeperHistoryPage />}
+            {activeView === "final-keepers" && <FinalKeepersPage />}
           </div>
         </section>
       </div>
@@ -6339,6 +6351,275 @@ const POSITION_COLORS: Record<string, string> = {
   WR: "bg-sky-100 text-sky-800",
   TE: "bg-amber-100 text-amber-800",
 };
+
+// ── Final Keepers Page ────────────────────────────────────────────────────────
+
+function FinalKeepersPage() {
+  const { activeLeagueId, isLeagueAdmin } = useDashboard();
+  const [result, setResult] = React.useState<FinalKeepersResult | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [saving, setSaving] = React.useState<string | null>(null); // team_id being saved
+  const [finalizing, setFinalizing] = React.useState(false);
+  // Per-team draft state: teamId -> current keeper list being edited
+  const [edits, setEdits] = React.useState<Record<string, FinalKeeperSelectionRow[]>>({});
+
+  const load = React.useCallback(async () => {
+    if (!activeLeagueId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getFinalKeepers(activeLeagueId);
+      setResult(data);
+      // Seed edits from loaded data
+      const initial: Record<string, FinalKeeperSelectionRow[]> = {};
+      for (const t of data.teams) initial[t.teamId] = t.keepers;
+      setEdits(initial);
+    } catch {
+      setError("Could not load final keeper selections.");
+    } finally {
+      setLoading(false);
+    }
+  }, [activeLeagueId]);
+
+  React.useEffect(() => { void load(); }, [load]);
+
+  const handlePrefill = async () => {
+    if (!activeLeagueId) return;
+    setSaving("prefill");
+    try {
+      const prefill = await getFinalKeepersPrefill(activeLeagueId);
+      setEdits((prev) => {
+        const next = { ...prev };
+        for (const t of prefill.teams) {
+          next[t.teamId] = t.suggestedKeepers;
+        }
+        return next;
+      });
+    } catch {
+      setError("Could not load recommendations.");
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const handleSaveTeam = async (teamId: string) => {
+    if (!activeLeagueId) return;
+    setSaving(teamId);
+    try {
+      const keepers = edits[teamId] ?? [];
+      const payload: FinalKeeperInput[] = keepers.map((k) => ({
+        player_id: k.playerId,
+        cost_pick: k.costPick,
+        cost_round: k.costRound,
+      }));
+      const saved = await setTeamFinalKeepers(activeLeagueId, teamId, payload);
+      setEdits((prev) => ({ ...prev, [teamId]: saved }));
+      await load();
+    } catch {
+      setError("Save failed — check selections and try again.");
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const handleFinalize = async () => {
+    if (!activeLeagueId) return;
+    setFinalizing(true);
+    try {
+      await finalizeKeepers(activeLeagueId);
+      await load();
+    } catch {
+      setError("Finalize failed.");
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+  const handleRemoveKeeper = (teamId: string, playerId: string) => {
+    setEdits((prev) => ({
+      ...prev,
+      [teamId]: (prev[teamId] ?? []).filter((k) => k.playerId !== playerId),
+    }));
+  };
+
+  if (loading) {
+    return (
+      <PagePanel title="Final Keepers" description="Confirmed keeper selections for the upcoming draft.">
+        <p className="text-sm text-zinc-500">Loading…</p>
+      </PagePanel>
+    );
+  }
+
+  if (error && !result) {
+    return (
+      <PagePanel title="Final Keepers" description="Confirmed keeper selections for the upcoming draft.">
+        <p className="text-sm text-red-600">{error}</p>
+      </PagePanel>
+    );
+  }
+
+  const isFinalized = result?.isFinalized ?? false;
+  const canEdit = isLeagueAdmin && !isFinalized;
+
+  return (
+    <PagePanel
+      title="Final Keepers"
+      description={
+        isFinalized
+          ? `Finalized${result?.finalizedAt ? ` on ${new Date(result.finalizedAt).toLocaleDateString()}` : ""} — keeper selections are locked.`
+          : "Set and confirm each team's keeper selections before the draft."
+      }
+      action={
+        canEdit ? (
+          <div className="flex gap-2">
+            <Button
+              disabled={saving === "prefill"}
+              onClick={handlePrefill}
+              size="sm"
+              variant="outline"
+            >
+              {saving === "prefill" ? "Loading…" : "Pre-fill from Recommendations"}
+            </Button>
+            <Button
+              disabled={finalizing}
+              onClick={handleFinalize}
+              size="sm"
+            >
+              {finalizing ? "Finalizing…" : "Finalize & Lock"}
+            </Button>
+          </div>
+        ) : undefined
+      }
+    >
+      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+
+      {isFinalized && (
+        <div className="mb-4 flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          Keeper selections are finalized and visible to all league members.
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {(result?.teams ?? []).map((team: FinalKeeperTeam) => {
+          const teamEdits = edits[team.teamId] ?? team.keepers;
+          const isDirty =
+            JSON.stringify(teamEdits.map((k) => k.playerId).sort()) !==
+            JSON.stringify(team.keepers.map((k) => k.playerId).sort());
+
+          return (
+            <div key={team.teamId} className="rounded-md border border-zinc-200 bg-white">
+              <div className="flex items-center justify-between px-4 py-3">
+                <div className="flex items-center gap-3">
+                  {team.draftSlot && (
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 text-xs font-medium text-zinc-600">
+                      {team.draftSlot}
+                    </span>
+                  )}
+                  <span className="font-medium text-zinc-900">{team.teamName}</span>
+                  {team.ownerName && (
+                    <span className="text-sm text-zinc-500">{team.ownerName}</span>
+                  )}
+                </div>
+                {canEdit && isDirty && (
+                  <Button
+                    disabled={saving === team.teamId}
+                    onClick={() => handleSaveTeam(team.teamId)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {saving === team.teamId ? "Saving…" : "Save"}
+                  </Button>
+                )}
+              </div>
+
+              {teamEdits.length === 0 ? (
+                <p className="px-4 pb-3 text-sm text-zinc-400">No keepers set.</p>
+              ) : (
+                <div className="border-t border-zinc-100 px-4 pb-3 pt-2">
+                  <div className="flex flex-wrap gap-2">
+                    {teamEdits.map((keeper: FinalKeeperSelectionRow) => (
+                      <div
+                        key={keeper.playerId}
+                        className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 py-1 pl-2 pr-1 text-sm"
+                      >
+                        <span
+                          className={cn(
+                            "rounded px-1 py-0.5 text-xs font-medium",
+                            POSITION_COLORS[keeper.position ?? ""] ?? "bg-zinc-100 text-zinc-700",
+                          )}
+                        >
+                          {keeper.position}
+                        </span>
+                        <span className="font-medium">{keeper.playerName}</span>
+                        {keeper.costRound != null && (
+                          <span className="text-zinc-400">Rd {keeper.costRound}</span>
+                        )}
+                        {canEdit && (
+                          <button
+                            className="ml-1 rounded-full p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600"
+                            onClick={() => handleRemoveKeeper(team.teamId, keeper.playerId)}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {team.forfeitedPicks.length > 0 && (
+                    <p className="mt-2 text-xs text-zinc-400">
+                      Forfeits:{" "}
+                      {team.forfeitedPicks
+                        .map((p) => (p.round != null ? `Rd ${p.round}` : `Pick ${p.pick}`))
+                        .join(", ")}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* All forfeited picks summary */}
+      {(result?.allForfeitedPicks ?? []).length > 0 && (
+        <div className="mt-6">
+          <h3 className="mb-2 text-sm font-semibold text-zinc-700">Forfeited Picks Summary</h3>
+          <div className="overflow-x-auto rounded-md border border-zinc-200">
+            <table className="w-full text-sm">
+              <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">Round</th>
+                  <th className="px-3 py-2 text-left">Overall Pick</th>
+                  <th className="px-3 py-2 text-left">Team</th>
+                  <th className="px-3 py-2 text-left">Player Kept</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {(result?.allForfeitedPicks ?? []).map((fp, i) => {
+                  const team = result?.teams.find((t) =>
+                    t.keepers.some((k) => k.playerId === fp.playerId),
+                  );
+                  const keeper = team?.keepers.find((k) => k.playerId === fp.playerId);
+                  return (
+                    <tr key={i} className="hover:bg-zinc-50">
+                      <td className="px-3 py-2">{fp.round ?? "—"}</td>
+                      <td className="px-3 py-2">{fp.pick}</td>
+                      <td className="px-3 py-2">{team?.teamName ?? "—"}</td>
+                      <td className="px-3 py-2 font-medium">{keeper?.playerName ?? "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </PagePanel>
+  );
+}
+
 
 function positionColor(position: string | null): string {
   return POSITION_COLORS[position ?? ""] ?? "bg-zinc-100 text-zinc-700";

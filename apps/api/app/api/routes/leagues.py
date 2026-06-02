@@ -106,6 +106,8 @@ from app.schemas.draft_history import TeamDraftHistoryRead
 from app.services import keeper_signals as keeper_signals_svc
 from app.services import keeper_history as keeper_history_svc
 from app.services.keeper_history import KeeperHistoryImportError
+from app.services import final_keepers as final_keepers_svc
+from app.services.final_keepers import FinalKeeperError, KeeperSelectionInput
 
 router = APIRouter(
     prefix="/api",
@@ -2699,6 +2701,90 @@ def get_keeper_history(
 ) -> dict:
     _require_league(session, league_id)
     return keeper_history_svc.get_keeper_history(session, league_id)
+
+
+# ── Final Keeper Selections ───────────────────────────────────────────────────
+
+@router.get("/leagues/{league_id}/final-keepers")
+def get_final_keepers(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    _require_league(session, league_id)
+    return final_keepers_svc.get_league_final_keepers(session, league_id)
+
+
+@router.get("/leagues/{league_id}/final-keepers/prefill")
+def get_final_keepers_prefill(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    return final_keepers_svc.get_prefill_from_recommendations(session, league_id)
+
+
+class FinalKeeperSelectionItem(BaseModel):
+    player_id: uuid.UUID
+    cost_pick: float | None = None
+    cost_round: float | None = None
+
+
+@router.put("/leagues/{league_id}/final-keepers/{team_id}")
+def set_team_final_keepers(
+    league_id: uuid.UUID,
+    team_id: uuid.UUID,
+    payload: list[FinalKeeperSelectionItem],
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    try:
+        selections = [
+            KeeperSelectionInput(
+                player_id=item.player_id,
+                cost_pick=item.cost_pick,
+                cost_round=item.cost_round,
+            )
+            for item in payload
+        ]
+        keepers = final_keepers_svc.set_team_keepers(session, league_id, team_id, selections)
+        session.commit()
+    except FinalKeeperError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return {"keepers": keepers}
+
+
+@router.post("/leagues/{league_id}/final-keepers/finalize")
+def finalize_keepers(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    try:
+        return final_keepers_svc.finalize_league_keepers(session, league_id, user.id)
+    except FinalKeeperError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+
+@router.post("/leagues/{league_id}/final-keepers/unfinalize")
+def unfinalize_keepers(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if getattr(user, "role", None) != "platform_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Platform admin required")
+    try:
+        final_keepers_svc.unfinalize_league_keepers(session, league_id)
+    except FinalKeeperError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return {"is_finalized": False}
 
 
 def _is_league_admin(session: Session, user: User | None, league_id: uuid.UUID) -> bool:
