@@ -231,7 +231,7 @@ const navItems: NavItem[] = [
   { id: "mock-draft", label: "Mock Draft", icon: Bot },
   { id: "keeper-history", label: "Keeper History", icon: History },
   { id: "final-keepers", label: "Final Keepers", icon: KeyRound },
-  { id: "draft-board", label: "Draft Board", icon: ClipboardList },
+  { id: "draft-board", label: "Final Draft Board", icon: ClipboardList },
   { id: "season-analysis", label: "Season Analysis", icon: BarChart2 },
   { id: "outlooks", label: "Team Outlook", icon: ShieldCheck },
   { id: "teams", label: "Teams", icon: Users },
@@ -389,6 +389,39 @@ const screenGuides: ScreenGuide[] = [
     watchFor: "Run the optimizer and confirm your keeper recommendations before starting a Mock Draft. Any keeper changes made in Recommendations or via Settings after a session was created will only appear in new sessions — already-created sessions retain the keeper context they were built with. If you want to test how a different keeper strategy affects your draft, update settings, save them, then create a new Mock Draft session.",
     view: "mock-draft",
   },
+  {
+    title: "Final Keepers",
+    icon: KeyRound,
+    bestFor: "Recording the official keeper list for each team and publishing it to all league members before the draft.",
+    howToRead: "Admins can pre-fill from optimizer recommendations as a starting point, then adjust per team before locking. Members see a read-only view once keepers are finalized. The forfeited picks summary at the bottom shows which draft rounds each team is giving up.",
+    watchFor: "Once finalized, keeper selections are locked and visible to all members. Finalization is irreversible except by a platform admin. Confirm all teams are correct before clicking Finalize & Lock.",
+    view: "final-keepers",
+    adminOnly: false,
+  },
+  {
+    title: "Final Draft Board",
+    icon: ClipboardList,
+    bestFor: "Seeing the full draft pick grid after keepers are finalized — which picks are forfeited and which remain available in each round.",
+    howToRead: "Each cell shows the overall pick number. Red cells are forfeited by a keeper — the kept player's name and position are shown inline. Available picks are shown by pick number only. Columns are fixed by draft slot so each team's picks stay in the same column across rounds.",
+    watchFor: "The board is computed from Final Keeper Selections. If pick numbers look wrong, check that keeper cost rounds and pick numbers were entered correctly in Final Keepers. The round count comes from Roster Settings under Admin.",
+    view: "draft-board",
+  },
+  {
+    title: "Season Analysis",
+    icon: BarChart2,
+    bestFor: "Post-season review of keeper decision quality — who hit, who busted, what value was left on the table, and how well the optimizer's recommendations performed.",
+    howToRead: "League summary cards show hit rate, bust rate, left-on-table count, and recommendation accuracy. Expand a team card to see every keeper decision categorized as Hit, Miss, Bust, Left on Table, Dodged, or Below ADP, with finish rank and fantasy points alongside the original ADP projection.",
+    watchFor: "Requires season outcomes to be imported first. Ask a league admin to run Sleeper auto-fetch or upload a CSV from the Admin section. Analysis is only meaningful once FinalKeeperSelections are recorded — without them, the Hit/Miss/Left on Table distinction cannot be made.",
+    view: "season-analysis",
+  },
+  {
+    title: "Keeper History",
+    icon: History,
+    bestFor: "Multi-year keeper ROI tracking across the league, broken down by season, team, and individual player.",
+    howToRead: "The League Season Summary table shows league-wide hit rate, bust rate, and opportunity cost per season. Team ROI cards break down each manager's historical keeper decisions. Player History cards show each recurring keeper candidate's track record — how often they were kept, and whether they paid off.",
+    watchFor: "Data only appears after season outcomes have been imported for at least one year. The richer the outcome history, the more meaningful the trend data becomes.",
+    view: "keeper-history",
+  },
 ];
 
 const workflowSteps: WorkflowStep[] = [
@@ -413,6 +446,11 @@ const workflowSteps: WorkflowStep[] = [
     view: "scenarios",
   },
   {
+    title: "Finalize keeper selections",
+    text: "Once the keeper deadline is set, open Final Keepers. Admins pre-fill from optimizer recommendations, adjust per team, then click Finalize & Lock to publish the official list to all members. The Final Draft Board auto-generates from those selections, showing every forfeited pick on the snake grid.",
+    view: "final-keepers",
+  },
+  {
     title: "Practice with Mock Draft",
     text: "Open Mock Draft after your keeper recommendations are set. Your recommended keepers are already removed from the available player pool and their picks are forfeited on the draft board. Choose bot personalities and difficulty, then use the AI Strategy Coach's plan to guide your picks. If you change keeper settings before the draft, save and rerun the optimizer first so the new session reflects the updated keeper list.",
     view: "mock-draft",
@@ -421,6 +459,16 @@ const workflowSteps: WorkflowStep[] = [
     title: "Share the result",
     text: "Use Draft Impact and Team Outlook after recommendations are finalized, then export Excel, CSV, or PDF reports from the recommendation and outlook screens.",
     view: "outlooks",
+  },
+  {
+    title: "Import season outcomes",
+    text: "After the season, open Admin and use the Sleeper Season Stats auto-fetch to pull end-of-season stats for all keeper candidates — no Sleeper league account required. Choose the season year and scoring format, preview the match results, then import. Use Upload CSV as a fallback if auto-fetch doesn't cover your league.",
+    view: "admin",
+  },
+  {
+    title: "Review Season Analysis and Keeper History",
+    text: "Open Season Analysis for a full post-season breakdown: which kept players hit or busted, what value was left on the table by not keeping certain players, and how well the optimizer's recommendations performed. Open Keeper History for multi-year ROI trends by season, team, and individual player.",
+    view: "season-analysis",
   },
 ];
 
@@ -541,6 +589,42 @@ const glossaryTerms: GlossaryTerm[] = [
   {
     term: "Pick Timer",
     meaning: "An optional countdown per pick in Mock Draft, set to 30, 60, 90, or 120 seconds. When the timer expires on your turn, the pick slot stays open but a warning is shown. Disable it by selecting No limit for a relaxed practice session.",
+  },
+  {
+    term: "Final Keepers",
+    meaning: "The admin-confirmed list of players each team is officially keeping, locked before the draft deadline and published to all league members. Serves as the source of truth for forfeited picks on the Final Draft Board and for the Season Analysis kept/not-kept distinction.",
+  },
+  {
+    term: "Final Draft Board",
+    meaning: "The full snake-draft pick grid generated from Final Keeper Selections. Each forfeited pick shows the kept player's name and position. Available picks are shown by overall pick number. Columns are fixed by draft slot.",
+  },
+  {
+    term: "Season Outcome",
+    meaning: "End-of-season stats for a keeper candidate: finish rank at their position, fantasy points scored, and whether they met or busted the ADP projection made at the time of the keep. Imported via Sleeper auto-fetch or CSV.",
+  },
+  {
+    term: "Hit",
+    meaning: "A kept player who met or exceeded their ADP projection — their finish rank was within the expected tier based on their keeper cost. Counts toward a team's hit rate.",
+  },
+  {
+    term: "Miss",
+    meaning: "A kept player who underperformed their ADP projection but was not a full bust — they finished worse than expected without crossing the bust threshold.",
+  },
+  {
+    term: "Bust",
+    meaning: "A kept player who significantly underperformed — their finish rank was more than 3× the implied ADP tier. A kept player who was a bust hurt the team both in lost draft capital and in actual production.",
+  },
+  {
+    term: "Left on Table",
+    meaning: "A player who was not kept but would have been a Hit if kept. Represents opportunity cost — the team passed on pick savings and production it could have had.",
+  },
+  {
+    term: "Dodged",
+    meaning: "A player who was not kept and turned out to be a Bust. Represents a correct non-keep decision — the team avoided wasting a draft pick on a player who underperformed.",
+  },
+  {
+    term: "Keeper ROI",
+    meaning: "The return on investment across keeper decisions over one or more seasons, measured by hit rate, bust rate, and opportunity cost. Visible in Keeper History and Season Analysis.",
   },
 ];
 
@@ -10849,7 +10933,7 @@ function DraftBoardPage() {
 
   if (loading) {
     return (
-      <PagePanel title="Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+      <PagePanel title="Final Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
         <p className="text-sm text-zinc-500">Loading…</p>
       </PagePanel>
     );
@@ -10857,7 +10941,7 @@ function DraftBoardPage() {
 
   if (error) {
     return (
-      <PagePanel title="Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+      <PagePanel title="Final Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
         <p className="text-sm text-red-600">{error}</p>
       </PagePanel>
     );
@@ -10865,7 +10949,7 @@ function DraftBoardPage() {
 
   if (!board) {
     return (
-      <PagePanel title="Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+      <PagePanel title="Final Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
         <p className="text-sm text-zinc-500">No draft data available.</p>
       </PagePanel>
     );
@@ -10875,7 +10959,7 @@ function DraftBoardPage() {
   const slotToTeam = new Map(board.teams.map((t) => [t.draftSlot ?? 0, t]));
 
   return (
-    <PagePanel title="Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+    <PagePanel title="Final Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
       <div className="space-y-4">
         {/* Legend */}
         <div className="flex items-center gap-4 text-xs">

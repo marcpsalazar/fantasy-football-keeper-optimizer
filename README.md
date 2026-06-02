@@ -30,7 +30,11 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
 - **Multi-league platform**: create or join multiple leagues, switch between them with the league selector. Platform admins can access all leagues without a per-league membership.
 - **Trade Analyzer**: model the keeper value impact of a proposed trade before agreeing to it. Supports player-for-player trades and draft pick swaps. Shows baseline vs. hypothetical keeper lineups, surplus delta, gained and lost players, and an optional AI narrative verdict.
 - **Opponent Keeper Intelligence**: surfaces probable keeper choices for every team in the league, derived from each team's optimizer recommendations. Visible in Mock Draft setup as an expandable panel showing opponent teams, their likely-kept players (name, position, ADP round, confidence), and a position breakdown. Probable keepers are also injected into the AI strategy plan context so the plan accounts for players likely off the board before pick 1.
-- **Historical Keeper ROI Tracker**: tracks whether past keeper decisions paid off. Admins import end-of-season outcome CSVs (player, finish rank, fantasy points); the app cross-references keeper cost and ADP at the time of the keep, auto-computes `met_adp_projection` and `is_bust` flags, and presents three views — League Season Summary (% hit ADP, bust rate, avg surplus by year), Team ROI (per-manager track record with expandable outcome rows), and Player History (recurring keeper candidates sorted by times kept).
+- **End-of-Season Analysis Suite**: a four-screen system for closing the loop on keeper decisions each year.
+  - **Final Keepers**: admin records the official keeper list for each team after the deadline. Admins can pre-fill from optimizer recommendations, adjust per team, then click Finalize & Lock to publish to all members. Non-admin members see a read-only view.
+  - **Final Draft Board**: auto-generated snake draft grid derived from Final Keeper Selections. Forfeited picks are highlighted in red with the kept player's name and position. Available picks show by overall pick number, with columns fixed by draft slot.
+  - **Season Analysis**: post-season decision quality report. Cross-references Final Keeper Selections, KeeperOutcomes, and Recommendations to categorize each player as Hit, Miss, Bust, Left on Table, Dodged, Below ADP, or Unknown. Shows league-level hit rate, bust rate, recommendation accuracy, and opportunity cost, with per-team expandable tables.
+  - **Keeper History** (formerly Historical Keeper ROI Tracker): multi-year ROI tracking by season, team, and player. Admins import end-of-season outcomes via Sleeper auto-fetch (available to all leagues regardless of platform — no Sleeper account required) or CSV fallback. The Sleeper stats API cross-references keeper candidates by Sleeper player ID first, then by full name + NFL team composite.
 - **Sleeper league import**: paste a Sleeper League ID to automatically pull teams, draft results, and final rosters — preview first, then commit.
 - **Mock Draft**: run a simulated draft against AI-powered bots, get a personalized pre-draft strategy plan, and receive a graded post-draft analysis.
   - Full snake draft board with keeper forfeit pre-placement.
@@ -749,6 +753,70 @@ Use `Trade Analyzer` to model the keeper value impact of a proposed trade before
 
 The trade analyzer does not commit any changes. It is a modeling tool only.
 
+### Final Keepers
+
+Use `Final Keepers` after the keeper deadline to record each team's official selections and publish them to all league members.
+
+**Admin workflow:**
+
+1. Open `Final Keepers` from the sidebar.
+2. Click `Pre-fill from Recommendations` to load the optimizer's current recommendations as a starting point.
+3. For each team, add or remove players as needed. Each chip shows the player's name, position, and keeper cost round.
+4. Click `Save` per team to persist changes.
+5. When all teams are confirmed, click `Finalize & Lock` to publish the selections and lock them from further changes.
+
+Once finalized:
+- All league members see the confirmed selections in a read-only view with a green confirmation banner.
+- The Final Draft Board is automatically populated with the forfeited picks.
+- Finalization is irreversible except by a platform admin via `unfinalize`.
+
+Non-admin members see a read-only display; no save or finalize buttons are shown.
+
+### Final Draft Board
+
+Use `Final Draft Board` to see the full snake draft pick grid after keepers are finalized.
+
+- Columns are fixed by draft slot (one column per team, ordered by slot number).
+- Rows are draft rounds.
+- **Red cells** are forfeited picks, showing the kept player's name and position badge.
+- **Gray pick numbers** are available picks.
+- A **Forfeited Picks Summary** table below the grid lists every forfeited pick with overall pick number, round, team, kept player, and position.
+
+The round count is derived from Roster Settings under Admin (`slots` total). If rounds look wrong, check the roster slot configuration. The board reflects whatever `cost_round` and `cost_pick` were recorded on each keeper selection in Final Keepers.
+
+### Season Analysis
+
+Use `Season Analysis` after the season and after outcomes have been imported to review decision quality.
+
+League summary cards show:
+- **Hit Rate**: percentage of kept players who met ADP projection.
+- **Bust Rate**: percentage of kept players who significantly underperformed.
+- **Left on Table**: players not kept who would have been Hits.
+- **Dodged**: players not kept who turned out to be Busts.
+- **Rec Hit Rate**: how often the optimizer's recommended keepers actually hit.
+- **Avg Opportunity Cost**: average rounds of value left on the table per missed keeper.
+
+Expand a team card to see a decision table for every keeper candidate, with category badges color-coded: Hit (green), Miss (amber), Bust (red), Left on Table (blue), Dodged (gray).
+
+Requires season outcomes to be imported. See the Admin section for Sleeper auto-fetch and CSV import.
+
+### Keeper History
+
+Use `Keeper History` for multi-year ROI tracking after one or more seasons of outcome data have been imported.
+
+Three sections:
+- **League Season Summary**: year-by-year league-wide stats — hit rate, bust rate, opportunity cost.
+- **Team ROI**: expandable cards per manager showing their keeper track record across seasons.
+- **Player History**: expandable cards per recurring keeper candidate — how often they were kept and whether they paid off.
+
+**Importing season outcomes (Admin only):**
+
+1. Open `Admin` → `Season Outcomes`.
+2. Select **Auto-fetch from Sleeper** (recommended): choose the season year and scoring format, click `Fetch & Preview` to match keeper candidates against Sleeper's global stats database, then click `Import` to commit.
+3. Alternatively, select **Upload CSV** and paste a CSV with columns `team`, `player`, `position`, `finish_rank`, `fantasy_points`.
+
+Sleeper auto-fetch works for all leagues regardless of whether the league uses Sleeper — it pulls stats from Sleeper's public API and cross-references your keeper candidates by name and NFL team. No Sleeper account or league ID is required.
+
 ### Mock Draft
 
 Use `Mock Draft` to simulate a draft against AI-powered bots using real league keeper context and
@@ -925,7 +993,18 @@ GET    /api/leagues/{league_id}/keeper-signals
 
 POST   /api/leagues/{league_id}/keeper-outcomes/preview
 POST   /api/leagues/{league_id}/keeper-outcomes/import
+POST   /api/leagues/{league_id}/keeper-outcomes/sleeper-preview
+POST   /api/leagues/{league_id}/keeper-outcomes/sleeper-import
 GET    /api/leagues/{league_id}/keeper-history
+
+GET    /api/leagues/{league_id}/final-keepers
+GET    /api/leagues/{league_id}/final-keepers/prefill
+PUT    /api/leagues/{league_id}/final-keepers/{team_id}
+POST   /api/leagues/{league_id}/final-keepers/finalize
+POST   /api/leagues/{league_id}/final-keepers/unfinalize
+
+GET    /api/leagues/{league_id}/draft-board
+GET    /api/leagues/{league_id}/season-analysis
 
 GET    /api/leagues/{league_id}/manual-overrides
 PUT    /api/leagues/{league_id}/manual-overrides
