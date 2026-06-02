@@ -27,6 +27,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Share2,
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
@@ -76,6 +77,7 @@ import {
   deleteTeam,
   downloadAdpTemplate,
   downloadCurrentAdp,
+  downloadKeeperCard,
   endMockDraft,
   exportUrl,
   generateKeeperExplanation,
@@ -6507,6 +6509,11 @@ function TeamOutlooksPage() {
             disabled={isBusy}
             key={outlook.team}
             onExport={() => exportRecommendations("pdf", outlook.teamId)}
+            onShare={
+              leagueId && outlook.teamId
+                ? () => downloadKeeperCard(leagueId, outlook.teamId!)
+                : undefined
+            }
             outlook={outlook}
           />
         ))}
@@ -10790,18 +10797,32 @@ function OutlookCard({
   currentUser,
   disabled,
   onExport,
+  onShare,
   outlook,
 }: {
   currentUser: AuthUser | null;
   disabled?: boolean;
   onExport?: () => void;
+  onShare?: () => void;
   outlook: Outlook;
 }) {
+  const [sharing, setSharing] = React.useState(false);
+
   const isCurrentTeam = isCurrentUserTeam({
     name: outlook.team,
     teamId: outlook.teamId,
     user: currentUser,
   });
+
+  async function handleShare() {
+    if (!onShare) return;
+    setSharing(true);
+    try {
+      await onShare();
+    } finally {
+      setSharing(false);
+    }
+  }
 
   return (
     <Card className={cn(isCurrentTeam && "border-emerald-300 bg-emerald-50/40 ring-1 ring-emerald-100")}>
@@ -10813,6 +10834,16 @@ function OutlookCard({
           <div className="flex items-center gap-2">
             {outlook.scenario ? <Badge>{outlook.scenario}</Badge> : null}
             <Badge variant="info">{outlook.stance}</Badge>
+            <Button
+              aria-label={`Download ${outlook.team} keeper report card`}
+              disabled={disabled || !outlook.teamId || sharing}
+              onClick={handleShare}
+              size="icon"
+              title="Download keeper report card (PNG)"
+              variant="outline"
+            >
+              <Share2 className="size-4" aria-hidden="true" />
+            </Button>
             <Button
               aria-label={`Export ${outlook.team} outlook PDF`}
               disabled={disabled || !outlook.teamId}

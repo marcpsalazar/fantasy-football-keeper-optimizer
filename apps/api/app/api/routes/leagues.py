@@ -112,6 +112,7 @@ from app.services import sleeper_season_stats as sleeper_stats_svc
 from app.services.sleeper_season_stats import SleeperStatsError
 from app.services import season_analysis as season_analysis_svc
 from app.services.season_analysis import SeasonAnalysisError
+from app.services.keeper_card import KeeperCardError, build_keeper_card
 
 router = APIRouter(
     prefix="/api",
@@ -1908,6 +1909,33 @@ def export_team_outlooks_pdf(
     return Response(
         content=content,
         media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/leagues/{league_id}/teams/{team_id}/exports/keeper-card.png")
+def export_keeper_card_png(
+    league_id: uuid.UUID,
+    team_id: uuid.UUID,
+    scenario_name: str | None = Query(default=None),
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> Response:
+    try:
+        content = build_keeper_card(
+            session,
+            league_id,
+            team_id,
+            scenario_name=scenario_name,
+            user_id=_user_id(user),
+        )
+    except KeeperCardError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    filename = f"keeper-card-{team_id}.png"
+    return Response(
+        content=content,
+        media_type="image/png",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

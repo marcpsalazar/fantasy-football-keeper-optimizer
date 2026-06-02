@@ -2277,6 +2277,49 @@ function exportPath(
   return `/api/leagues/${leagueId}/exports/keeper-recommendations.xlsx`;
 }
 
+export async function downloadKeeperCard(leagueId: string, teamId: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/leagues/${leagueId}/teams/${teamId}/exports/keeper-card.png`,
+    {
+      cache: "no-store",
+      credentials: "include",
+      headers: { Accept: "image/png,application/json" },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  const blob = await response.blob();
+  const filename = `keeper-card-${teamId}.png`;
+  const file = new File([blob], filename, { type: "image/png" });
+
+  // Use the native share sheet on platforms that support file sharing (mobile).
+  // Falls back to a standard file download on desktop or unsupported browsers.
+  if (
+    typeof navigator.share === "function" &&
+    typeof navigator.canShare === "function" &&
+    navigator.canShare({ files: [file] })
+  ) {
+    await navigator.share({
+      files: [file],
+      title: "Keeper Report Card",
+      text: "Check out my keeper strategy — built with Keeper Optimizer",
+    });
+    return;
+  }
+
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(downloadUrl);
+}
+
 async function loadScenarios(
   leagueId: string,
 ): Promise<{ comparisons: ScenarioComparison[]; narrative: ScenarioNarrative | null }> {
