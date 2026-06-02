@@ -10803,7 +10803,7 @@ function OutlookCard({
   currentUser: AuthUser | null;
   disabled?: boolean;
   onExport?: () => void;
-  onShare?: () => void;
+  onShare?: () => Promise<void>;
   outlook: Outlook;
 }) {
   const [sharing, setSharing] = React.useState(false);
