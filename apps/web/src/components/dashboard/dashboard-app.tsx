@@ -4851,7 +4851,7 @@ function KeeperOutcomesImportPanel() {
         {mode === "sleeper" && (
           <div className="space-y-3">
             <p className="text-xs text-zinc-500">
-              Fetches stats for all keeper candidates from Sleeper's public API. Works for any
+              Fetches stats for all keeper candidates from Sleeper&apos;s public API. Works for any
               league — no Sleeper league ID required. Players are matched by Sleeper ID (if
               league was imported from Sleeper) or by name + NFL team.
             </p>
