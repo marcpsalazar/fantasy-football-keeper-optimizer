@@ -172,6 +172,34 @@ class SleeperImportRequest(BaseModel):
     season_year: int | None = None
 
 
+class TradeGiveItemRequest(BaseModel):
+    player_id: uuid.UUID
+
+
+class TradeGivePickItemRequest(BaseModel):
+    round: int
+
+
+class TradeReceiveItemRequest(BaseModel):
+    player_id: uuid.UUID
+    keeper_cost_round: int | None = None
+
+
+class TradeReceivePickItemRequest(BaseModel):
+    round: int
+
+
+class TradeAnalysisRunRequest(BaseModel):
+    receiving_team_id: uuid.UUID
+    giving_team_id: uuid.UUID | None = None
+    give: list[TradeGiveItemRequest] = []
+    give_picks: list[TradeGivePickItemRequest] = []
+    receive: list[TradeReceiveItemRequest] = []
+    receive_picks: list[TradeReceivePickItemRequest] = []
+    adp_snapshot_id: uuid.UUID | None = None
+    include_ai: bool = False
+
+
 def _count_league_admins(session: Session, league_id: uuid.UUID) -> int:
     return len(
         session.exec(
@@ -1079,6 +1107,98 @@ def run_league_optimizer(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return _optimizer_table(session, recommendations)
+
+
+@router.post("/leagues/{league_id}/optimizer/trade-analysis")
+def run_trade_analysis(
+    league_id: uuid.UUID,
+    payload: TradeAnalysisRunRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+    app_settings=Depends(get_settings),
+) -> dict[str, Any]:
+    from app.services.trade_analysis import (
+        TradeAnalysisResult,
+        TradeGiveItem,
+        TradeGivePickItem,
+        TradeReceiveItem,
+        TradeReceivePickItem,
+        analyze_trade,
+    )
+
+    _require_league(session, league_id)
+    try:
+        result = analyze_trade(
+            session,
+            league_id,
+            payload.receiving_team_id,
+            [TradeGiveItem(player_id=g.player_id) for g in payload.give],
+            [TradeReceiveItem(player_id=r.player_id, keeper_cost_round=r.keeper_cost_round)
+             for r in payload.receive],
+            giving_team_id=payload.giving_team_id,
+            give_picks=[TradeGivePickItem(round=p.round) for p in payload.give_picks],
+            receive_picks=[TradeReceivePickItem(round=p.round) for p in payload.receive_picks],
+            adp_snapshot_id=payload.adp_snapshot_id,
+            user_id=_user_id(user),
+            app_settings=app_settings if payload.include_ai else None,
+            include_ai=payload.include_ai,
+        )
+    except OptimizerInputError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    def _row(r: "TradeAnalysisResult") -> dict[str, Any]:  # noqa: F821 — used locally
+        return {
+            "player_id": r.player_id,
+            "player_name": r.player_name,
+            "position": r.position,
+            "nfl_team": r.nfl_team,
+            "keeper_cost_pick": r.keeper_cost_pick,
+            "keeper_cost_round": r.keeper_cost_round,
+            "adp_pick": r.adp_pick,
+            "adp_round": r.adp_round,
+            "keeper_value": r.keeper_value,
+            "keeper_score": r.keeper_score,
+            "is_recommended": r.is_recommended,
+            "is_incoming": r.is_incoming,
+        }
+
+    ai = None
+    if result.ai_narrative is not None:
+        ai = {
+            "verdict": result.ai_narrative.verdict,
+            "recommendation": result.ai_narrative.recommendation,
+            "summary": result.ai_narrative.summary,
+            "team_a_analysis": result.ai_narrative.team_a_analysis,
+            "team_b_analysis": result.ai_narrative.team_b_analysis,
+            "modifications": result.ai_narrative.modifications,
+            "key_risk": result.ai_narrative.key_risk,
+            "opportunity_cost": result.ai_narrative.opportunity_cost,
+        }
+
+    return {
+        "receiving_team_id": result.receiving_team_id,
+        "receiving_team_name": result.receiving_team_name,
+        "baseline_keepers": [_row(r) for r in result.baseline_keepers],
+        "hypothetical_keepers": [_row(r) for r in result.hypothetical_keepers],
+        "baseline_surplus": result.baseline_surplus,
+        "hypothetical_surplus": result.hypothetical_surplus,
+        "surplus_delta": result.surplus_delta,
+        "give_picks_value": result.give_picks_value,
+        "receive_picks_value": result.receive_picks_value,
+        "pick_value_delta": result.pick_value_delta,
+        "total_value_delta": result.total_value_delta,
+        "gained": [_row(r) for r in result.gained],
+        "lost": [_row(r) for r in result.lost],
+        "giving_team_id": result.giving_team_id,
+        "giving_team_name": result.giving_team_name,
+        "giving_baseline_keepers": [_row(r) for r in result.giving_baseline_keepers],
+        "giving_hypothetical_keepers": [_row(r) for r in result.giving_hypothetical_keepers],
+        "giving_baseline_surplus": result.giving_baseline_surplus,
+        "giving_hypothetical_surplus": result.giving_hypothetical_surplus,
+        "giving_surplus_delta": result.giving_surplus_delta,
+        "giving_total_value_delta": result.giving_total_value_delta,
+        "ai_narrative": ai,
+    }
 
 
 @router.post("/leagues/{league_id}/optimizer/scenarios")

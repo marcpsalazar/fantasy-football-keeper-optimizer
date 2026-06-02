@@ -19,6 +19,8 @@ export type DraftPick = {
 };
 
 export type FinalRosterEntry = {
+  teamId?: string;
+  playerId?: string;
   team: string;
   player: string;
   position: string;
