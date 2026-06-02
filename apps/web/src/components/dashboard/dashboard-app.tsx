@@ -3,6 +3,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   ArrowLeftRight,
+  BarChart2,
   Ban,
   Bot,
   BookOpen,
@@ -152,6 +153,35 @@ import {
   type TeamDraftHistory,
   getLeagueDraftHistory,
   getLeagueKeeperSignals,
+  getKeeperHistory,
+  previewKeeperOutcomesCsv,
+  importKeeperOutcomesCsv,
+  getFinalKeepers,
+  getFinalKeepersPrefill,
+  setTeamFinalKeepers,
+  finalizeKeepers,
+  type KeeperHistory,
+  type KeeperOutcomesPreviewResult,
+  type TeamKeeperHistory,
+  type PlayerKeeperHistory,
+  type LeagueKeeperSeasonSummary,
+  type FinalKeepersResult,
+  type FinalKeeperTeam,
+  type FinalKeeperSelectionRow,
+  type FinalKeepersPrefillResult,
+  type FinalKeeperInput,
+  previewSleeperOutcomes,
+  importSleeperOutcomes,
+  getSeasonAnalysis,
+  getDraftBoard,
+  type SleeperOutcomesPreviewResult,
+  type SleeperOutcomeRow,
+  type SeasonAnalysisResult,
+  type TeamSeasonAnalysis,
+  type SeasonDecision,
+  type SeasonDecisionCategory,
+  type DraftBoardResult,
+  type DraftBoardPick,
   type LeagueKeeperSignals,
   type TeamKeeperSignal,
   type OptimizerSettingsForm,
@@ -178,7 +208,11 @@ type ViewId =
   | "scenarios"
   | "outlooks"
   | "draft-impact"
-  | "mock-draft";
+  | "mock-draft"
+  | "keeper-history"
+  | "final-keepers"
+  | "season-analysis"
+  | "draft-board";
 
 type NavItem = {
   id: ViewId;
@@ -195,6 +229,10 @@ const navItems: NavItem[] = [
   { id: "scenarios", label: "Scenario Comparison", icon: GitCompare },
   { id: "draft-impact", label: "Draft Impact", icon: ClipboardList },
   { id: "mock-draft", label: "Mock Draft", icon: Bot },
+  { id: "keeper-history", label: "Keeper History", icon: History },
+  { id: "final-keepers", label: "Final Keepers", icon: KeyRound },
+  { id: "draft-board", label: "Final Draft Board", icon: ClipboardList },
+  { id: "season-analysis", label: "Season Analysis", icon: BarChart2 },
   { id: "outlooks", label: "Team Outlook", icon: ShieldCheck },
   { id: "teams", label: "Teams", icon: Users },
   { id: "draft", label: "Draft Results", icon: ClipboardList },
@@ -351,6 +389,39 @@ const screenGuides: ScreenGuide[] = [
     watchFor: "Run the optimizer and confirm your keeper recommendations before starting a Mock Draft. Any keeper changes made in Recommendations or via Settings after a session was created will only appear in new sessions — already-created sessions retain the keeper context they were built with. If you want to test how a different keeper strategy affects your draft, update settings, save them, then create a new Mock Draft session.",
     view: "mock-draft",
   },
+  {
+    title: "Final Keepers",
+    icon: KeyRound,
+    bestFor: "Recording the official keeper list for each team and publishing it to all league members before the draft.",
+    howToRead: "Admins can pre-fill from optimizer recommendations as a starting point, then adjust per team before locking. Members see a read-only view once keepers are finalized. The forfeited picks summary at the bottom shows which draft rounds each team is giving up.",
+    watchFor: "Once finalized, keeper selections are locked and visible to all members. Finalization is irreversible except by a platform admin. Confirm all teams are correct before clicking Finalize & Lock.",
+    view: "final-keepers",
+    adminOnly: false,
+  },
+  {
+    title: "Final Draft Board",
+    icon: ClipboardList,
+    bestFor: "Seeing the full draft pick grid after keepers are finalized — which picks are forfeited and which remain available in each round.",
+    howToRead: "Each cell shows the overall pick number. Red cells are forfeited by a keeper — the kept player's name and position are shown inline. Available picks are shown by pick number only. Columns are fixed by draft slot so each team's picks stay in the same column across rounds.",
+    watchFor: "The board is computed from Final Keeper Selections. If pick numbers look wrong, check that keeper cost rounds and pick numbers were entered correctly in Final Keepers. The round count comes from Roster Settings under Admin.",
+    view: "draft-board",
+  },
+  {
+    title: "Season Analysis",
+    icon: BarChart2,
+    bestFor: "Post-season review of keeper decision quality — who hit, who busted, what value was left on the table, and how well the optimizer's recommendations performed.",
+    howToRead: "League summary cards show hit rate, bust rate, left-on-table count, and recommendation accuracy. Expand a team card to see every keeper decision categorized as Hit, Miss, Bust, Left on Table, Dodged, or Below ADP, with finish rank and fantasy points alongside the original ADP projection.",
+    watchFor: "Requires season outcomes to be imported first. Ask a league admin to run Sleeper auto-fetch or upload a CSV from the Admin section. Analysis is only meaningful once FinalKeeperSelections are recorded — without them, the Hit/Miss/Left on Table distinction cannot be made.",
+    view: "season-analysis",
+  },
+  {
+    title: "Keeper History",
+    icon: History,
+    bestFor: "Multi-year keeper ROI tracking across the league, broken down by season, team, and individual player.",
+    howToRead: "The League Season Summary table shows league-wide hit rate, bust rate, and opportunity cost per season. Team ROI cards break down each manager's historical keeper decisions. Player History cards show each recurring keeper candidate's track record — how often they were kept, and whether they paid off.",
+    watchFor: "Data only appears after season outcomes have been imported for at least one year. The richer the outcome history, the more meaningful the trend data becomes.",
+    view: "keeper-history",
+  },
 ];
 
 const workflowSteps: WorkflowStep[] = [
@@ -375,6 +446,11 @@ const workflowSteps: WorkflowStep[] = [
     view: "scenarios",
   },
   {
+    title: "Finalize keeper selections",
+    text: "Once the keeper deadline is set, open Final Keepers. Admins pre-fill from optimizer recommendations, adjust per team, then click Finalize & Lock to publish the official list to all members. The Final Draft Board auto-generates from those selections, showing every forfeited pick on the snake grid.",
+    view: "final-keepers",
+  },
+  {
     title: "Practice with Mock Draft",
     text: "Open Mock Draft after your keeper recommendations are set. Your recommended keepers are already removed from the available player pool and their picks are forfeited on the draft board. Choose bot personalities and difficulty, then use the AI Strategy Coach's plan to guide your picks. If you change keeper settings before the draft, save and rerun the optimizer first so the new session reflects the updated keeper list.",
     view: "mock-draft",
@@ -383,6 +459,16 @@ const workflowSteps: WorkflowStep[] = [
     title: "Share the result",
     text: "Use Draft Impact and Team Outlook after recommendations are finalized, then export Excel, CSV, or PDF reports from the recommendation and outlook screens.",
     view: "outlooks",
+  },
+  {
+    title: "Import season outcomes",
+    text: "After the season, open Admin and use the Sleeper Season Stats auto-fetch to pull end-of-season stats for all keeper candidates — no Sleeper league account required. Choose the season year and scoring format, preview the match results, then import. Use Upload CSV as a fallback if auto-fetch doesn't cover your league.",
+    view: "admin",
+  },
+  {
+    title: "Review Season Analysis and Keeper History",
+    text: "Open Season Analysis for a full post-season breakdown: which kept players hit or busted, what value was left on the table by not keeping certain players, and how well the optimizer's recommendations performed. Open Keeper History for multi-year ROI trends by season, team, and individual player.",
+    view: "season-analysis",
   },
 ];
 
@@ -503,6 +589,42 @@ const glossaryTerms: GlossaryTerm[] = [
   {
     term: "Pick Timer",
     meaning: "An optional countdown per pick in Mock Draft, set to 30, 60, 90, or 120 seconds. When the timer expires on your turn, the pick slot stays open but a warning is shown. Disable it by selecting No limit for a relaxed practice session.",
+  },
+  {
+    term: "Final Keepers",
+    meaning: "The admin-confirmed list of players each team is officially keeping, locked before the draft deadline and published to all league members. Serves as the source of truth for forfeited picks on the Final Draft Board and for the Season Analysis kept/not-kept distinction.",
+  },
+  {
+    term: "Final Draft Board",
+    meaning: "The full snake-draft pick grid generated from Final Keeper Selections. Each forfeited pick shows the kept player's name and position. Available picks are shown by overall pick number. Columns are fixed by draft slot.",
+  },
+  {
+    term: "Season Outcome",
+    meaning: "End-of-season stats for a keeper candidate: finish rank at their position, fantasy points scored, and whether they met or busted the ADP projection made at the time of the keep. Imported via Sleeper auto-fetch or CSV.",
+  },
+  {
+    term: "Hit",
+    meaning: "A kept player who met or exceeded their ADP projection — their finish rank was within the expected tier based on their keeper cost. Counts toward a team's hit rate.",
+  },
+  {
+    term: "Miss",
+    meaning: "A kept player who underperformed their ADP projection but was not a full bust — they finished worse than expected without crossing the bust threshold.",
+  },
+  {
+    term: "Bust",
+    meaning: "A kept player who significantly underperformed — their finish rank was more than 3× the implied ADP tier. A kept player who was a bust hurt the team both in lost draft capital and in actual production.",
+  },
+  {
+    term: "Left on Table",
+    meaning: "A player who was not kept but would have been a Hit if kept. Represents opportunity cost — the team passed on pick savings and production it could have had.",
+  },
+  {
+    term: "Dodged",
+    meaning: "A player who was not kept and turned out to be a Bust. Represents a correct non-keep decision — the team avoided wasting a draft pick on a player who underperformed.",
+  },
+  {
+    term: "Keeper ROI",
+    meaning: "The return on investment across keeper decisions over one or more seasons, measured by hit rate, bust rate, and opportunity cost. Visible in Keeper History and Season Analysis.",
   },
 ];
 
@@ -1685,6 +1807,10 @@ export function DashboardApp() {
             {activeView === "outlooks" && <TeamOutlooksPage />}
             {activeView === "draft-impact" && <DraftImpactPage />}
             {activeView === "mock-draft" && <MockDraftPage />}
+            {activeView === "keeper-history" && <KeeperHistoryPage />}
+            {activeView === "final-keepers" && <FinalKeepersPage />}
+            {activeView === "draft-board" && <DraftBoardPage />}
+            {activeView === "season-analysis" && <SeasonAnalysisPage />}
           </div>
         </section>
       </div>
@@ -4159,6 +4285,7 @@ function AdminDataImports({
     <div className="space-y-5">
       <SleeperImportPanel />
       <YahooImportPanel />
+      <KeeperOutcomesImportPanel />
       <div className="grid gap-5 xl:grid-cols-2">
         <CsvImportPanel
           buttonLabel="Import Draft Results"
@@ -4590,6 +4717,313 @@ function YahooImportPanel() {
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+function KeeperOutcomesImportPanel() {
+  const { activeLeagueId, data } = useDashboard();
+  const [mode, setMode] = React.useState<"sleeper" | "csv">("sleeper");
+
+  // ── Sleeper auto-fetch state ──
+  const defaultYear = data?.league?.seasonYear ? data.league.seasonYear - 1 : undefined;
+  const [seasonYear, setSeasonYear] = React.useState<string>(defaultYear ? String(defaultYear) : "");
+  const [scoringFormat, setScoringFormat] = React.useState("ppr");
+  const [sleeperPreview, setSleeperPreview] = React.useState<SleeperOutcomesPreviewResult | null>(null);
+  const [sleeperLoading, setSleeperLoading] = React.useState(false);
+  const [sleeperError, setSleeperError] = React.useState("");
+  const [sleeperSuccess, setSleeperSuccess] = React.useState("");
+
+  // ── CSV fallback state ──
+  const [csvText, setCsvText] = React.useState("");
+  const [csvPreview, setCsvPreview] = React.useState<KeeperOutcomesPreviewResult | null>(null);
+  const [csvLoading, setCsvLoading] = React.useState(false);
+  const [csvError, setCsvError] = React.useState("");
+  const [csvSuccess, setCsvSuccess] = React.useState("");
+
+  const handleSleeperPreview = async () => {
+    if (!activeLeagueId) return;
+    setSleeperLoading(true);
+    setSleeperError("");
+    setSleeperSuccess("");
+    setSleeperPreview(null);
+    try {
+      const yr = seasonYear ? parseInt(seasonYear, 10) : undefined;
+      const result = await previewSleeperOutcomes(activeLeagueId, yr, scoringFormat);
+      setSleeperPreview(result);
+    } catch {
+      setSleeperError("Could not fetch stats from Sleeper — check your connection and try again.");
+    } finally {
+      setSleeperLoading(false);
+    }
+  };
+
+  const handleSleeperImport = async () => {
+    if (!activeLeagueId) return;
+    setSleeperLoading(true);
+    setSleeperError("");
+    setSleeperSuccess("");
+    try {
+      const yr = seasonYear ? parseInt(seasonYear, 10) : undefined;
+      const result = await importSleeperOutcomes(activeLeagueId, yr, scoringFormat);
+      setSleeperSuccess(
+        `Imported ${result.importedCount} new, updated ${result.updatedCount}, skipped ${result.skippedCount}.`,
+      );
+      setSleeperPreview(null);
+    } catch {
+      setSleeperError("Import failed — try again.");
+    } finally {
+      setSleeperLoading(false);
+    }
+  };
+
+  const handleCsvPreview = async () => {
+    if (!activeLeagueId || !csvText.trim()) return;
+    setCsvLoading(true);
+    setCsvError("");
+    setCsvSuccess("");
+    setCsvPreview(null);
+    try {
+      const result = await previewKeeperOutcomesCsv(activeLeagueId, csvText);
+      setCsvPreview(result);
+    } catch {
+      setCsvError("Preview failed — check the CSV format and try again.");
+    } finally {
+      setCsvLoading(false);
+    }
+  };
+
+  const handleCsvImport = async () => {
+    if (!activeLeagueId || !csvText.trim()) return;
+    setCsvLoading(true);
+    setCsvError("");
+    setCsvSuccess("");
+    try {
+      const result = await importKeeperOutcomesCsv(activeLeagueId, csvText);
+      setCsvSuccess(
+        `Imported ${result.importedCount} new, updated ${result.updatedCount}, skipped ${result.skippedCount} rows.`,
+      );
+      setCsvPreview(null);
+      setCsvText("");
+    } catch {
+      setCsvError("Import failed — check the CSV and try again.");
+    } finally {
+      setCsvLoading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Season Outcomes</CardTitle>
+        <CardDescription>
+          Import end-of-season results to populate the Keeper History ROI tracker.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Mode toggle */}
+        <div className="flex rounded-md border border-zinc-200 p-0.5 text-sm">
+          <button
+            className={cn(
+              "flex-1 rounded py-1.5 text-center transition-colors",
+              mode === "sleeper"
+                ? "bg-zinc-900 text-white"
+                : "text-zinc-500 hover:text-zinc-700",
+            )}
+            onClick={() => setMode("sleeper")}
+          >
+            Auto-fetch from Sleeper
+          </button>
+          <button
+            className={cn(
+              "flex-1 rounded py-1.5 text-center transition-colors",
+              mode === "csv"
+                ? "bg-zinc-900 text-white"
+                : "text-zinc-500 hover:text-zinc-700",
+            )}
+            onClick={() => setMode("csv")}
+          >
+            Upload CSV
+          </button>
+        </div>
+
+        {mode === "sleeper" && (
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-500">
+              Fetches stats for all keeper candidates from Sleeper's public API. Works for any
+              league — no Sleeper league ID required. Players are matched by Sleeper ID (if
+              league was imported from Sleeper) or by name + NFL team.
+            </p>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <Label className="mb-1 block text-xs">Season Year</Label>
+                <Input
+                  className="h-8 text-sm"
+                  onChange={(e) => { setSeasonYear(e.target.value); setSleeperPreview(null); }}
+                  placeholder={defaultYear ? String(defaultYear) : "e.g. 2025"}
+                  value={seasonYear}
+                />
+              </div>
+              <div className="flex-1">
+                <Label className="mb-1 block text-xs">Scoring Format</Label>
+                <select
+                  className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm"
+                  onChange={(e) => { setScoringFormat(e.target.value); setSleeperPreview(null); }}
+                  value={scoringFormat}
+                >
+                  <option value="ppr">PPR</option>
+                  <option value="half_ppr">Half PPR</option>
+                  <option value="standard">Standard</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                disabled={sleeperLoading}
+                onClick={handleSleeperPreview}
+                size="sm"
+                variant="outline"
+              >
+                {sleeperLoading && !sleeperPreview ? "Fetching…" : "Fetch & Preview"}
+              </Button>
+              <Button
+                disabled={sleeperLoading || !sleeperPreview}
+                onClick={handleSleeperImport}
+                size="sm"
+              >
+                {sleeperLoading && sleeperPreview ? "Importing…" : "Import"}
+              </Button>
+            </div>
+            {sleeperError && <p className="text-sm text-red-600">{sleeperError}</p>}
+            {sleeperSuccess && <p className="text-sm text-emerald-600">{sleeperSuccess}</p>}
+            {sleeperPreview && <SleeperOutcomesPreview preview={sleeperPreview} />}
+          </div>
+        )}
+
+        {mode === "csv" && (
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-500">
+              Required columns:{" "}
+              <code className="font-mono">player, position, team, finish_rank, fantasy_points</code>
+              . Optional:{" "}
+              <code className="font-mono">season_year, met_projection, is_bust, notes</code>.
+            </p>
+            <Textarea
+              className="min-h-[120px] font-mono text-xs"
+              disabled={csvLoading}
+              onChange={(e) => { setCsvText(e.target.value); setCsvPreview(null); setCsvSuccess(""); setCsvError(""); }}
+              placeholder={"player,position,team,finish_rank,fantasy_points\nPatrick Mahomes,QB,Chiefs,1,420.5"}
+              value={csvText}
+            />
+            <div className="flex gap-2">
+              <Button disabled={csvLoading || !csvText.trim()} onClick={handleCsvPreview} size="sm" variant="outline">
+                {csvLoading ? "Loading…" : "Preview"}
+              </Button>
+              <Button disabled={csvLoading || !csvPreview?.valid} onClick={handleCsvImport} size="sm">
+                Import
+              </Button>
+            </div>
+            {csvError && <p className="text-sm text-red-600">{csvError}</p>}
+            {csvSuccess && <p className="text-sm text-emerald-600">{csvSuccess}</p>}
+            {csvPreview && (
+              <div className="space-y-2 rounded-md border border-zinc-200 bg-white p-3 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={csvPreview.valid ? "success" : "danger"}>
+                    {csvPreview.valid ? "Ready to Import" : "Has Errors"}
+                  </Badge>
+                  <span className="text-zinc-500">{csvPreview.validRows}/{csvPreview.totalRows} valid rows</span>
+                  {csvPreview.warningCount > 0 && <span className="text-amber-600">{csvPreview.warningCount} warning(s)</span>}
+                </div>
+                {csvPreview.errors.length > 0 && (
+                  <ul className="space-y-1 text-red-600">
+                    {csvPreview.errors.slice(0, 5).map((e, i) => (
+                      <li key={i} className="text-xs">Row {String(e.row_number)}: {String(e.message)}</li>
+                    ))}
+                    {csvPreview.errors.length > 5 && <li className="text-xs text-zinc-500">…and {csvPreview.errors.length - 5} more</li>}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SleeperOutcomesPreview({ preview }: { preview: SleeperOutcomesPreviewResult }) {
+  const [showUnmatched, setShowUnmatched] = React.useState(false);
+  return (
+    <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <Badge variant="success">{preview.matchCount} matched</Badge>
+        {preview.unmatchCount > 0 && (
+          <Badge variant="warning">{preview.unmatchCount} unmatched</Badge>
+        )}
+        <span className="text-zinc-500">
+          {preview.keptCount} kept · {preview.candidateCount - preview.keptCount} candidates not kept
+        </span>
+        <span className="text-zinc-400 text-xs">{preview.scoringField}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-zinc-500">
+            <tr>
+              <th className="pb-1 text-left">Player</th>
+              <th className="pb-1 text-left">Pos</th>
+              <th className="pb-1 text-left">Team</th>
+              <th className="pb-1 text-right">Pts</th>
+              <th className="pb-1 text-right">Rank</th>
+              <th className="pb-1 text-center">Kept</th>
+              <th className="pb-1 text-center">Hit ADP</th>
+              <th className="pb-1 text-center">Bust</th>
+              <th className="pb-1 text-left">Match</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-50">
+            {preview.matched.map((r: SleeperOutcomeRow) => (
+              <tr key={`${r.teamId}-${r.playerId}`} className={cn(!r.wasKept && "opacity-50")}>
+                <td className="py-1 pr-2 font-medium">{r.playerName}</td>
+                <td className="py-1 pr-2">
+                  <span className={cn("rounded px-1 py-0.5 font-medium", POSITION_COLORS[r.position] ?? "bg-zinc-100 text-zinc-700")}>
+                    {r.position}
+                  </span>
+                </td>
+                <td className="py-1 pr-2 text-zinc-500">{r.teamName}</td>
+                <td className="py-1 pr-2 text-right">{r.fantasyPoints != null ? r.fantasyPoints.toFixed(1) : "—"}</td>
+                <td className="py-1 pr-2 text-right">{r.finishRank ?? "—"}</td>
+                <td className="py-1 pr-2 text-center">
+                  {r.wasKept == null ? "?" : r.wasKept ? "✓" : "—"}
+                </td>
+                <td className="py-1 pr-2 text-center">
+                  {r.metAdpProjection == null ? "—" : r.metAdpProjection ? "✓" : "✗"}
+                </td>
+                <td className="py-1 pr-2 text-center">
+                  {r.isBust ? <span className="text-red-500">✗</span> : "—"}
+                </td>
+                <td className="py-1 text-zinc-400">{r.matchMethod === "external_id" ? "ID" : "Name"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {preview.unmatched.length > 0 && (
+        <div>
+          <button
+            className="text-xs text-zinc-500 underline"
+            onClick={() => setShowUnmatched((v) => !v)}
+          >
+            {showUnmatched ? "Hide" : "Show"} {preview.unmatched.length} unmatched player(s)
+          </button>
+          {showUnmatched && (
+            <ul className="mt-1 space-y-0.5 text-xs text-zinc-500">
+              {preview.unmatched.map((u, i) => (
+                <li key={i}>{u.playerName} ({u.position}, {u.nflTeam ?? "no team"}) — {u.teamName}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -6199,6 +6633,608 @@ function DraftImpactPage() {
           tableId="draft-impact"
           teamFilter={{ columnId: "team" }}
         />
+      </div>
+    </PagePanel>
+  );
+}
+
+const POSITION_COLORS: Record<string, string> = {
+  QB: "bg-violet-100 text-violet-800",
+  RB: "bg-emerald-100 text-emerald-800",
+  WR: "bg-sky-100 text-sky-800",
+  TE: "bg-amber-100 text-amber-800",
+};
+
+// ── Final Keepers Page ────────────────────────────────────────────────────────
+
+function FinalKeepersPage() {
+  const { activeLeagueId, isLeagueAdmin } = useDashboard();
+  const [result, setResult] = React.useState<FinalKeepersResult | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [saving, setSaving] = React.useState<string | null>(null); // team_id being saved
+  const [finalizing, setFinalizing] = React.useState(false);
+  // Per-team draft state: teamId -> current keeper list being edited
+  const [edits, setEdits] = React.useState<Record<string, FinalKeeperSelectionRow[]>>({});
+
+  const load = React.useCallback(async () => {
+    if (!activeLeagueId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getFinalKeepers(activeLeagueId);
+      setResult(data);
+      // Seed edits from loaded data
+      const initial: Record<string, FinalKeeperSelectionRow[]> = {};
+      for (const t of data.teams) initial[t.teamId] = t.keepers;
+      setEdits(initial);
+    } catch {
+      setError("Could not load final keeper selections.");
+    } finally {
+      setLoading(false);
+    }
+  }, [activeLeagueId]);
+
+  React.useEffect(() => { void load(); }, [load]);
+
+  const handlePrefill = async () => {
+    if (!activeLeagueId) return;
+    setSaving("prefill");
+    try {
+      const prefill = await getFinalKeepersPrefill(activeLeagueId);
+      setEdits((prev) => {
+        const next = { ...prev };
+        for (const t of prefill.teams) {
+          next[t.teamId] = t.suggestedKeepers;
+        }
+        return next;
+      });
+    } catch {
+      setError("Could not load recommendations.");
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const handleSaveTeam = async (teamId: string) => {
+    if (!activeLeagueId) return;
+    setSaving(teamId);
+    try {
+      const keepers = edits[teamId] ?? [];
+      const payload: FinalKeeperInput[] = keepers.map((k) => ({
+        player_id: k.playerId,
+        cost_pick: k.costPick,
+        cost_round: k.costRound,
+      }));
+      const saved = await setTeamFinalKeepers(activeLeagueId, teamId, payload);
+      setEdits((prev) => ({ ...prev, [teamId]: saved }));
+      await load();
+    } catch {
+      setError("Save failed — check selections and try again.");
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const handleFinalize = async () => {
+    if (!activeLeagueId) return;
+    setFinalizing(true);
+    try {
+      await finalizeKeepers(activeLeagueId);
+      await load();
+    } catch {
+      setError("Finalize failed.");
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
+  const handleRemoveKeeper = (teamId: string, playerId: string) => {
+    setEdits((prev) => ({
+      ...prev,
+      [teamId]: (prev[teamId] ?? []).filter((k) => k.playerId !== playerId),
+    }));
+  };
+
+  if (loading) {
+    return (
+      <PagePanel title="Final Keepers" description="Confirmed keeper selections for the upcoming draft.">
+        <p className="text-sm text-zinc-500">Loading…</p>
+      </PagePanel>
+    );
+  }
+
+  if (error && !result) {
+    return (
+      <PagePanel title="Final Keepers" description="Confirmed keeper selections for the upcoming draft.">
+        <p className="text-sm text-red-600">{error}</p>
+      </PagePanel>
+    );
+  }
+
+  const isFinalized = result?.isFinalized ?? false;
+  const canEdit = isLeagueAdmin && !isFinalized;
+
+  return (
+    <PagePanel
+      title="Final Keepers"
+      description={
+        isFinalized
+          ? `Finalized${result?.finalizedAt ? ` on ${new Date(result.finalizedAt).toLocaleDateString()}` : ""} — keeper selections are locked.`
+          : "Set and confirm each team's keeper selections before the draft."
+      }
+      action={
+        canEdit ? (
+          <div className="flex gap-2">
+            <Button
+              disabled={saving === "prefill"}
+              onClick={handlePrefill}
+              size="sm"
+              variant="outline"
+            >
+              {saving === "prefill" ? "Loading…" : "Pre-fill from Recommendations"}
+            </Button>
+            <Button
+              disabled={finalizing}
+              onClick={handleFinalize}
+              size="sm"
+            >
+              {finalizing ? "Finalizing…" : "Finalize & Lock"}
+            </Button>
+          </div>
+        ) : undefined
+      }
+    >
+      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+
+      {isFinalized && (
+        <div className="mb-4 flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          Keeper selections are finalized and visible to all league members.
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {(result?.teams ?? []).map((team: FinalKeeperTeam) => {
+          const teamEdits = edits[team.teamId] ?? team.keepers;
+          const isDirty =
+            JSON.stringify(teamEdits.map((k) => k.playerId).sort()) !==
+            JSON.stringify(team.keepers.map((k) => k.playerId).sort());
+
+          return (
+            <div key={team.teamId} className="rounded-md border border-zinc-200 bg-white">
+              <div className="flex items-center justify-between px-4 py-3">
+                <div className="flex items-center gap-3">
+                  {team.draftSlot && (
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 text-xs font-medium text-zinc-600">
+                      {team.draftSlot}
+                    </span>
+                  )}
+                  <span className="font-medium text-zinc-900">{team.teamName}</span>
+                  {team.ownerName && (
+                    <span className="text-sm text-zinc-500">{team.ownerName}</span>
+                  )}
+                </div>
+                {canEdit && isDirty && (
+                  <Button
+                    disabled={saving === team.teamId}
+                    onClick={() => handleSaveTeam(team.teamId)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {saving === team.teamId ? "Saving…" : "Save"}
+                  </Button>
+                )}
+              </div>
+
+              {teamEdits.length === 0 ? (
+                <p className="px-4 pb-3 text-sm text-zinc-400">No keepers set.</p>
+              ) : (
+                <div className="border-t border-zinc-100 px-4 pb-3 pt-2">
+                  <div className="flex flex-wrap gap-2">
+                    {teamEdits.map((keeper: FinalKeeperSelectionRow) => (
+                      <div
+                        key={keeper.playerId}
+                        className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 py-1 pl-2 pr-1 text-sm"
+                      >
+                        <span
+                          className={cn(
+                            "rounded px-1 py-0.5 text-xs font-medium",
+                            POSITION_COLORS[keeper.position ?? ""] ?? "bg-zinc-100 text-zinc-700",
+                          )}
+                        >
+                          {keeper.position}
+                        </span>
+                        <span className="font-medium">{keeper.playerName}</span>
+                        {keeper.costRound != null && (
+                          <span className="text-zinc-400">Rd {keeper.costRound}</span>
+                        )}
+                        {canEdit && (
+                          <button
+                            className="ml-1 rounded-full p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600"
+                            onClick={() => handleRemoveKeeper(team.teamId, keeper.playerId)}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {team.forfeitedPicks.length > 0 && (
+                    <p className="mt-2 text-xs text-zinc-400">
+                      Forfeits:{" "}
+                      {team.forfeitedPicks
+                        .map((p) => (p.round != null ? `Rd ${p.round}` : `Pick ${p.pick}`))
+                        .join(", ")}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* All forfeited picks summary */}
+      {(result?.allForfeitedPicks ?? []).length > 0 && (
+        <div className="mt-6">
+          <h3 className="mb-2 text-sm font-semibold text-zinc-700">Forfeited Picks Summary</h3>
+          <div className="overflow-x-auto rounded-md border border-zinc-200">
+            <table className="w-full text-sm">
+              <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">Round</th>
+                  <th className="px-3 py-2 text-left">Overall Pick</th>
+                  <th className="px-3 py-2 text-left">Team</th>
+                  <th className="px-3 py-2 text-left">Player Kept</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {(result?.allForfeitedPicks ?? []).map((fp, i) => {
+                  const team = result?.teams.find((t) =>
+                    t.keepers.some((k) => k.playerId === fp.playerId),
+                  );
+                  const keeper = team?.keepers.find((k) => k.playerId === fp.playerId);
+                  return (
+                    <tr key={i} className="hover:bg-zinc-50">
+                      <td className="px-3 py-2">{fp.round ?? "—"}</td>
+                      <td className="px-3 py-2">{fp.pick}</td>
+                      <td className="px-3 py-2">{team?.teamName ?? "—"}</td>
+                      <td className="px-3 py-2 font-medium">{keeper?.playerName ?? "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </PagePanel>
+  );
+}
+
+
+function positionColor(position: string | null): string {
+  return POSITION_COLORS[position ?? ""] ?? "bg-zinc-100 text-zinc-700";
+}
+
+function KeeperHistoryPage() {
+  const { activeLeagueId } = useDashboard();
+  const [history, setHistory] = React.useState<KeeperHistory | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [expandedTeamId, setExpandedTeamId] = React.useState<string | null>(null);
+  const [expandedPlayerId, setExpandedPlayerId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!activeLeagueId) return;
+    setLoading(true);
+    setError("");
+    getKeeperHistory(activeLeagueId)
+      .then(setHistory)
+      .catch(() => setError("Could not load keeper history."))
+      .finally(() => setLoading(false));
+  }, [activeLeagueId]);
+
+  if (loading) {
+    return (
+      <PagePanel title="Keeper History" description="Multi-year keeper ROI tracking by season, team, and player.">
+        <p className="text-sm text-zinc-500">Loading…</p>
+      </PagePanel>
+    );
+  }
+
+  if (error) {
+    return (
+      <PagePanel title="Keeper History" description="Multi-year keeper ROI tracking by season, team, and player.">
+        <p className="text-sm text-red-600">{error}</p>
+      </PagePanel>
+    );
+  }
+
+  if (!history || (history.leagueSummary.length === 0 && history.teamHistory.length === 0)) {
+    return (
+      <PagePanel title="Keeper History" description="Multi-year keeper ROI tracking by season, team, and player.">
+        <p className="text-sm text-zinc-500">
+          No keeper outcome data yet. Ask your league admin to import Season Outcomes CSV in the
+          Admin section.
+        </p>
+      </PagePanel>
+    );
+  }
+
+  return (
+    <PagePanel title="Keeper History" description="Multi-year keeper ROI tracking by season, team, and player.">
+      <div className="space-y-6">
+        {/* League Season Summary */}
+        {history.leagueSummary.length > 0 && (
+          <section>
+            <h3 className="mb-3 text-sm font-semibold text-zinc-700">League Season Summary</h3>
+            <div className="overflow-x-auto rounded-md border border-zinc-200">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Season</th>
+                    <th className="px-3 py-2 text-right">Keepers</th>
+                    <th className="px-3 py-2 text-right">Met ADP</th>
+                    <th className="px-3 py-2 text-right">Busts</th>
+                    <th className="px-3 py-2 text-right">Avg Surplus (rds)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {history.leagueSummary.map((s: LeagueKeeperSeasonSummary) => (
+                    <tr key={s.seasonYear} className="hover:bg-zinc-50">
+                      <td className="px-3 py-2 font-medium">{s.seasonYear}</td>
+                      <td className="px-3 py-2 text-right">{s.totalKeepers}</td>
+                      <td className="px-3 py-2 text-right">
+                        {s.metProjectionPct != null
+                          ? `${Math.round(s.metProjectionPct * 100)}%`
+                          : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {s.bustPct != null ? `${Math.round(s.bustPct * 100)}%` : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {s.avgSurplusRounds != null ? s.avgSurplusRounds.toFixed(1) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {/* Team ROI */}
+        {history.teamHistory.length > 0 && (
+          <section>
+            <h3 className="mb-3 text-sm font-semibold text-zinc-700">Team ROI</h3>
+            <div className="space-y-2">
+              {history.teamHistory.map((team: TeamKeeperHistory) => {
+                const isExpanded = expandedTeamId === team.teamId;
+                return (
+                  <div key={team.teamId} className="rounded-md border border-zinc-200">
+                    <button
+                      className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-zinc-50"
+                      onClick={() => setExpandedTeamId(isExpanded ? null : team.teamId)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium text-zinc-900">{team.teamName}</span>
+                        {team.ownerName && (
+                          <span className="text-sm text-zinc-500">{team.ownerName}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 text-sm text-zinc-600">
+                        <span>{team.totalKeepers} keepers</span>
+                        {team.metProjectionPct != null && (
+                          <span className="text-emerald-600">
+                            {Math.round(team.metProjectionPct * 100)}% hit
+                          </span>
+                        )}
+                        {team.avgSurplusRounds != null && (
+                          <span>
+                            {team.avgSurplusRounds > 0 ? "+" : ""}
+                            {team.avgSurplusRounds.toFixed(1)} rds surplus
+                          </span>
+                        )}
+                        <ChevronRight
+                          className={cn(
+                            "h-4 w-4 text-zinc-400 transition-transform",
+                            isExpanded && "rotate-90",
+                          )}
+                        />
+                      </div>
+                    </button>
+                    {isExpanded && (
+                      <div className="border-t border-zinc-100 px-4 py-3">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead className="text-zinc-500">
+                              <tr>
+                                <th className="pb-1 text-left">Season</th>
+                                <th className="pb-1 text-left">Player</th>
+                                <th className="pb-1 text-left">Pos</th>
+                                <th className="pb-1 text-right">Cost (rd)</th>
+                                <th className="pb-1 text-right">ADP (rd)</th>
+                                <th className="pb-1 text-right">Surplus</th>
+                                <th className="pb-1 text-right">Finish</th>
+                                <th className="pb-1 text-right">Pts</th>
+                                <th className="pb-1 text-center">Met ADP</th>
+                                <th className="pb-1 text-center">Bust</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-50">
+                              {team.outcomes.map((o) => (
+                                <tr key={o.outcomeId}>
+                                  <td className="py-1 pr-2">{o.seasonYear}</td>
+                                  <td className="py-1 pr-2 font-medium">{o.playerName}</td>
+                                  <td className="py-1 pr-2">
+                                    <span
+                                      className={cn(
+                                        "rounded px-1 py-0.5 text-xs font-medium",
+                                        positionColor(o.position),
+                                      )}
+                                    >
+                                      {o.position}
+                                    </span>
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.keeperCostRound ?? "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.adpRoundAtKeep ?? "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.keeperValueAtKeep != null
+                                      ? (o.keeperValueAtKeep > 0 ? "+" : "") +
+                                        o.keeperValueAtKeep.toFixed(1)
+                                      : "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">{o.finishRank ?? "—"}</td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.fantasyPoints != null ? o.fantasyPoints.toFixed(1) : "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-center">
+                                    {o.metAdpProjection == null
+                                      ? "—"
+                                      : o.metAdpProjection
+                                        ? "✓"
+                                        : "✗"}
+                                  </td>
+                                  <td className="py-1 text-center">
+                                    {o.isBust ? (
+                                      <span className="text-red-500">✗</span>
+                                    ) : (
+                                      <span className="text-zinc-300">—</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* Player History */}
+        {history.playerHistory.length > 0 && (
+          <section>
+            <h3 className="mb-3 text-sm font-semibold text-zinc-700">Player History</h3>
+            <div className="space-y-2">
+              {history.playerHistory.map((player: PlayerKeeperHistory) => {
+                const isExpanded = expandedPlayerId === player.playerId;
+                return (
+                  <div key={player.playerId} className="rounded-md border border-zinc-200">
+                    <button
+                      className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-zinc-50"
+                      onClick={() => setExpandedPlayerId(isExpanded ? null : player.playerId)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={cn(
+                            "rounded px-1.5 py-0.5 text-xs font-medium",
+                            positionColor(player.position),
+                          )}
+                        >
+                          {player.position}
+                        </span>
+                        <span className="font-medium text-zinc-900">{player.playerName}</span>
+                        {player.nflTeam && (
+                          <span className="text-xs text-zinc-500">{player.nflTeam}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 text-sm text-zinc-600">
+                        <span>×{player.timesKept}</span>
+                        {player.metProjectionPct != null && (
+                          <span className="text-emerald-600">
+                            {Math.round(player.metProjectionPct * 100)}% hit
+                          </span>
+                        )}
+                        {player.avgSurplusRounds != null && (
+                          <span>
+                            {player.avgSurplusRounds > 0 ? "+" : ""}
+                            {player.avgSurplusRounds.toFixed(1)} rds avg
+                          </span>
+                        )}
+                        <ChevronRight
+                          className={cn(
+                            "h-4 w-4 text-zinc-400 transition-transform",
+                            isExpanded && "rotate-90",
+                          )}
+                        />
+                      </div>
+                    </button>
+                    {isExpanded && (
+                      <div className="border-t border-zinc-100 px-4 py-3">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead className="text-zinc-500">
+                              <tr>
+                                <th className="pb-1 text-left">Season</th>
+                                <th className="pb-1 text-left">Team</th>
+                                <th className="pb-1 text-right">Cost (rd)</th>
+                                <th className="pb-1 text-right">ADP (rd)</th>
+                                <th className="pb-1 text-right">Surplus</th>
+                                <th className="pb-1 text-right">Finish</th>
+                                <th className="pb-1 text-right">Pts</th>
+                                <th className="pb-1 text-center">Hit</th>
+                                <th className="pb-1 text-center">Bust</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-50">
+                              {player.outcomes.map((o) => (
+                                <tr key={o.outcomeId}>
+                                  <td className="py-1 pr-2">{o.seasonYear}</td>
+                                  <td className="py-1 pr-2">{o.teamName}</td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.keeperCostRound ?? "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.adpRoundAtKeep ?? "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.keeperValueAtKeep != null
+                                      ? (o.keeperValueAtKeep > 0 ? "+" : "") +
+                                        o.keeperValueAtKeep.toFixed(1)
+                                      : "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">{o.finishRank ?? "—"}</td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.fantasyPoints != null ? o.fantasyPoints.toFixed(1) : "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-center">
+                                    {o.metAdpProjection == null
+                                      ? "—"
+                                      : o.metAdpProjection
+                                        ? "✓"
+                                        : "✗"}
+                                  </td>
+                                  <td className="py-1 text-center">
+                                    {o.isBust ? (
+                                      <span className="text-red-500">✗</span>
+                                    ) : (
+                                      <span className="text-zinc-300">—</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </div>
     </PagePanel>
   );
@@ -9875,6 +10911,458 @@ function PositionBadge({ position }: { position: string }) {
 function StatusBadge({ status }: { status: string }) {
   const variant = status === "Starter" ? "success" : status === "Bench" ? "info" : "warning";
   return <Badge variant={variant}>{status}</Badge>;
+}
+
+// ── Draft Board Page ──────────────────────────────────────────────────────────
+
+function DraftBoardPage() {
+  const { activeLeagueId } = useDashboard();
+  const [board, setBoard] = React.useState<DraftBoardResult | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    if (!activeLeagueId) return;
+    setLoading(true);
+    setError("");
+    getDraftBoard(activeLeagueId)
+      .then(setBoard)
+      .catch(() => setError("Could not load draft board."))
+      .finally(() => setLoading(false));
+  }, [activeLeagueId]);
+
+  if (loading) {
+    return (
+      <PagePanel title="Final Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+        <p className="text-sm text-zinc-500">Loading…</p>
+      </PagePanel>
+    );
+  }
+
+  if (error) {
+    return (
+      <PagePanel title="Final Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+        <p className="text-sm text-red-600">{error}</p>
+      </PagePanel>
+    );
+  }
+
+  if (!board) {
+    return (
+      <PagePanel title="Final Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+        <p className="text-sm text-zinc-500">No draft data available.</p>
+      </PagePanel>
+    );
+  }
+
+  // Build slot → team label map for column headers
+  const slotToTeam = new Map(board.teams.map((t) => [t.draftSlot ?? 0, t]));
+
+  return (
+    <PagePanel title="Final Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
+      <div className="space-y-4">
+        {/* Legend */}
+        <div className="flex items-center gap-4 text-xs">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded bg-red-200" />
+            Forfeited (keeper)
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded bg-white border border-zinc-200" />
+            Available
+          </span>
+          <span className="text-zinc-400">
+            {board.draftType === "snake" ? "Snake draft" : board.draftType} · {board.teamCount} teams · {board.roundCount} rounds
+          </span>
+          {board.isFinalized && (
+            <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-700 font-medium">
+              Keepers finalized
+            </span>
+          )}
+        </div>
+
+        {/* Scrollable grid */}
+        <div className="overflow-x-auto rounded-lg border border-zinc-200">
+          <table className="min-w-full text-xs">
+            <thead>
+              <tr className="bg-zinc-50 border-b border-zinc-200">
+                <th className="sticky left-0 z-10 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600 w-14">
+                  Rd
+                </th>
+                {Array.from({ length: board.teamCount }, (_, i) => i + 1).map((slot) => {
+                  const team = slotToTeam.get(slot);
+                  return (
+                    <th key={slot} className="px-2 py-2 text-center font-medium text-zinc-600 min-w-[90px]">
+                      <div className="truncate max-w-[88px]" title={team?.teamName ?? `Slot ${slot}`}>
+                        {team?.teamName ?? `Slot ${slot}`}
+                      </div>
+                      {team?.ownerName && (
+                        <div className="font-normal text-zinc-400 truncate max-w-[88px]" title={team.ownerName}>
+                          {team.ownerName}
+                        </div>
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {board.rounds.map((round) => {
+                // Map draft_slot → pick for this round
+                const slotToPick = new Map(round.picks.map((p) => [p.draftSlot, p]));
+                return (
+                  <tr key={round.round} className="border-b border-zinc-100 hover:bg-zinc-50/50">
+                    <td className="sticky left-0 z-10 bg-white px-3 py-1.5 font-semibold text-zinc-500 text-center border-r border-zinc-100">
+                      {round.round}
+                    </td>
+                    {Array.from({ length: board.teamCount }, (_, i) => i + 1).map((slot) => {
+                      const pick = slotToPick.get(slot);
+                      if (!pick) {
+                        return <td key={slot} className="px-2 py-1.5 text-center text-zinc-300">—</td>;
+                      }
+                      return (
+                        <DraftPickCell key={slot} pick={pick} />
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Forfeited picks summary */}
+        {board.rounds.some((r) => r.picks.some((p) => p.isForfeited)) && (
+          <div className="rounded-lg border border-zinc-200 bg-white p-4">
+            <h3 className="mb-2 text-sm font-semibold text-zinc-700">Forfeited Picks Summary</h3>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-zinc-400 border-b border-zinc-100">
+                  <th className="py-1.5 text-left font-medium">Pick #</th>
+                  <th className="py-1.5 text-left font-medium">Round</th>
+                  <th className="py-1.5 text-left font-medium">Team</th>
+                  <th className="py-1.5 text-left font-medium">Kept Player</th>
+                  <th className="py-1.5 text-left font-medium">Pos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {board.rounds
+                  .flatMap((r) => r.picks)
+                  .filter((p) => p.isForfeited)
+                  .sort((a, b) => a.overallPick - b.overallPick)
+                  .map((p) => (
+                    <tr key={p.overallPick} className="border-b border-zinc-50">
+                      <td className="py-1.5 font-medium text-zinc-800">#{p.overallPick}</td>
+                      <td className="py-1.5 text-zinc-600">Rd {p.round}</td>
+                      <td className="py-1.5 text-zinc-700">{p.teamName ?? "—"}</td>
+                      <td className="py-1.5 text-zinc-700">{p.forfeitedPlayerName ?? "—"}</td>
+                      <td className="py-1.5">
+                        {p.forfeitedPlayerPosition && (
+                          <span className={cn("rounded px-1 py-0.5 font-medium", POSITION_COLORS[p.forfeitedPlayerPosition] ?? "bg-zinc-100 text-zinc-700")}>
+                            {p.forfeitedPlayerPosition}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </PagePanel>
+  );
+}
+
+function DraftPickCell({ pick }: { pick: DraftBoardPick }) {
+  if (pick.isForfeited) {
+    return (
+      <td className="px-2 py-1.5 text-center bg-red-50">
+        <div className="text-zinc-500 tabular-nums">#{pick.overallPick}</div>
+        <div className="font-medium text-red-700 truncate max-w-[84px]" title={pick.forfeitedPlayerName ?? ""}>
+          {pick.forfeitedPlayerName ?? "—"}
+        </div>
+        {pick.forfeitedPlayerPosition && (
+          <span className={cn("rounded px-1 py-0.5 text-[10px] font-medium", POSITION_COLORS[pick.forfeitedPlayerPosition] ?? "bg-zinc-100 text-zinc-700")}>
+            {pick.forfeitedPlayerPosition}
+          </span>
+        )}
+      </td>
+    );
+  }
+  return (
+    <td className="px-2 py-1.5 text-center text-zinc-400 tabular-nums">
+      #{pick.overallPick}
+    </td>
+  );
+}
+
+// ── Season Analysis Page ──────────────────────────────────────────────────────
+
+const CATEGORY_LABEL: Record<SeasonDecisionCategory, string> = {
+  hit: "Hit",
+  miss: "Miss",
+  bust: "Bust",
+  left_on_table: "Left on Table",
+  dodged: "Dodged",
+  below_adp: "Below ADP",
+  unknown: "Unknown",
+};
+
+const CATEGORY_COLORS: Record<SeasonDecisionCategory, string> = {
+  hit: "bg-emerald-100 text-emerald-800",
+  miss: "bg-amber-100 text-amber-800",
+  bust: "bg-red-100 text-red-800",
+  left_on_table: "bg-sky-100 text-sky-800",
+  dodged: "bg-zinc-100 text-zinc-700",
+  below_adp: "bg-zinc-100 text-zinc-600",
+  unknown: "bg-zinc-50 text-zinc-400",
+};
+
+function CategoryBadge({ category }: { category: SeasonDecisionCategory }) {
+  return (
+    <span className={cn("rounded px-1.5 py-0.5 text-xs font-medium", CATEGORY_COLORS[category])}>
+      {CATEGORY_LABEL[category]}
+    </span>
+  );
+}
+
+function SeasonAnalysisPage() {
+  const { activeLeagueId } = useDashboard();
+  const [result, setResult] = React.useState<SeasonAnalysisResult | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [expandedTeamId, setExpandedTeamId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!activeLeagueId) return;
+    setLoading(true);
+    setError("");
+    getSeasonAnalysis(activeLeagueId)
+      .then(setResult)
+      .catch(() => setError("Could not load season analysis."))
+      .finally(() => setLoading(false));
+  }, [activeLeagueId]);
+
+  if (loading) {
+    return (
+      <PagePanel title="Season Analysis" description="End-of-season review comparing keeper recommendations vs. actual selections vs. performance.">
+        <p className="text-sm text-zinc-500">Loading…</p>
+      </PagePanel>
+    );
+  }
+
+  if (error) {
+    return (
+      <PagePanel title="Season Analysis" description="End-of-season review comparing keeper recommendations vs. actual selections vs. performance.">
+        <p className="text-sm text-red-600">{error}</p>
+      </PagePanel>
+    );
+  }
+
+  if (!result || (!result.leagueSummary.hasOutcomes && !result.leagueSummary.hasFinalSelections)) {
+    return (
+      <PagePanel title="Season Analysis" description="End-of-season review comparing keeper recommendations vs. actual selections vs. performance.">
+        <p className="text-sm text-zinc-500">
+          No season outcome data yet. Import season outcomes via the Admin section to unlock this analysis.
+        </p>
+      </PagePanel>
+    );
+  }
+
+  const s = result.leagueSummary;
+
+  return (
+    <PagePanel title="Season Analysis" description="End-of-season review comparing keeper recommendations vs. actual selections vs. performance.">
+      <div className="space-y-6">
+        {/* League Summary Cards */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <SummaryStatCard label="Total Kept" value={s.totalKept} />
+          <SummaryStatCard
+            label="Hit Rate"
+            value={s.hitRate != null ? `${Math.round(s.hitRate * 100)}%` : "—"}
+            sub={`${s.hits} hits`}
+            color="text-emerald-700"
+          />
+          <SummaryStatCard
+            label="Bust Rate"
+            value={s.bustRate != null ? `${Math.round(s.bustRate * 100)}%` : "—"}
+            sub={`${s.busts} busts`}
+            color="text-red-700"
+          />
+          <SummaryStatCard
+            label="Left on Table"
+            value={s.leftOnTableCount}
+            sub={`${s.dodgedCount} dodged`}
+            color="text-sky-700"
+          />
+          <SummaryStatCard label="Rec Followed" value={s.recFollowedCount} />
+          <SummaryStatCard
+            label="Rec Hit Rate"
+            value={s.recHitRate != null ? `${Math.round(s.recHitRate * 100)}%` : "—"}
+          />
+          <SummaryStatCard
+            label="Avg Opp Cost"
+            value={s.avgOpportunityCostRounds != null ? `${s.avgOpportunityCostRounds} rds` : "—"}
+            sub="rounds of value left"
+          />
+          <SummaryStatCard label="Season" value={result.seasonYear} />
+        </div>
+
+        {/* Per-Team Cards */}
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold text-zinc-700">Team Breakdown</h3>
+          {result.teams.map((team) => (
+            <TeamAnalysisCard
+              key={team.teamId}
+              team={team}
+              expanded={expandedTeamId === team.teamId}
+              onToggle={() =>
+                setExpandedTeamId((prev) => (prev === team.teamId ? null : team.teamId))
+              }
+            />
+          ))}
+        </div>
+      </div>
+    </PagePanel>
+  );
+}
+
+function SummaryStatCard({
+  label,
+  value,
+  sub,
+  color,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  color?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
+      <p className="text-xs text-zinc-500">{label}</p>
+      <p className={cn("text-xl font-bold", color ?? "text-zinc-800")}>{value}</p>
+      {sub && <p className="text-xs text-zinc-400">{sub}</p>}
+    </div>
+  );
+}
+
+function TeamAnalysisCard({
+  team,
+  expanded,
+  onToggle,
+}: {
+  team: TeamSeasonAnalysis;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const hitPct = team.keepersKept > 0 ? Math.round((team.hits / team.keepersKept) * 100) : null;
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white">
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <div className="flex items-center gap-3">
+          <ChevronRight
+            className={cn("h-4 w-4 text-zinc-400 transition-transform", expanded && "rotate-90")}
+          />
+          <div>
+            <span className="font-medium text-zinc-800">{team.teamName}</span>
+            {team.ownerName && (
+              <span className="ml-2 text-xs text-zinc-500">{team.ownerName}</span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-4 text-sm">
+          <span className="text-zinc-500">
+            <span className="font-medium text-emerald-700">{team.hits}</span> hits /{" "}
+            <span className="font-medium text-red-600">{team.busts}</span> busts /{" "}
+            <span className="font-medium text-sky-600">{team.leftOnTableCount}</span> LOT
+          </span>
+          {hitPct != null && (
+            <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+              {hitPct}% hit rate
+            </span>
+          )}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-zinc-100 px-4 pb-4 pt-2">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-zinc-400 border-b border-zinc-100">
+                <th className="py-1.5 text-left font-medium">Player</th>
+                <th className="py-1.5 text-left font-medium">Pos</th>
+                <th className="py-1.5 text-right font-medium">Kept?</th>
+                <th className="py-1.5 text-right font-medium">Rec?</th>
+                <th className="py-1.5 text-right font-medium">Cost Rd</th>
+                <th className="py-1.5 text-right font-medium">ADP Rd</th>
+                <th className="py-1.5 text-right font-medium">Rank</th>
+                <th className="py-1.5 text-right font-medium">Pts</th>
+                <th className="py-1.5 text-right font-medium">Category</th>
+              </tr>
+            </thead>
+            <tbody>
+              {team.decisions.map((d: SeasonDecision) => (
+                <tr key={d.playerId} className="border-b border-zinc-50 hover:bg-zinc-50">
+                  <td className="py-1.5 font-medium text-zinc-800">{d.playerName}</td>
+                  <td className="py-1.5">
+                    <span
+                      className={cn(
+                        "rounded px-1 py-0.5 font-medium",
+                        POSITION_COLORS[d.position] ?? "bg-zinc-100 text-zinc-700",
+                      )}
+                    >
+                      {d.position}
+                    </span>
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {d.wasKept ? (
+                      <span className="text-emerald-600">Yes</span>
+                    ) : (
+                      <span className="text-zinc-400">No</span>
+                    )}
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {d.isRecommended ? (
+                      <span className="text-emerald-600">Yes</span>
+                    ) : (
+                      <span className="text-zinc-400">No</span>
+                    )}
+                  </td>
+                  <td className="py-1.5 text-right text-zinc-600">
+                    {d.keeperCostRound != null ? `Rd ${d.keeperCostRound}` : "—"}
+                  </td>
+                  <td className="py-1.5 text-right text-zinc-600">
+                    {d.adpRoundAtKeep != null ? `Rd ${d.adpRoundAtKeep}` : "—"}
+                  </td>
+                  <td className="py-1.5 text-right text-zinc-600">
+                    {d.finishRank != null ? `#${d.finishRank}` : "—"}
+                  </td>
+                  <td className="py-1.5 text-right text-zinc-600">
+                    {d.fantasyPoints != null ? d.fantasyPoints.toFixed(1) : "—"}
+                  </td>
+                  <td className="py-1.5 text-right">
+                    <CategoryBadge category={d.category} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {team.avgOpportunityCostRounds != null && (
+            <p className="mt-2 text-xs text-zinc-500">
+              Avg opportunity cost: <strong>{team.avgOpportunityCostRounds} rounds</strong> of value
+              left on table
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function TrendBadge({ trend }: { trend: string }) {

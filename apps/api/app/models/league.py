@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 from typing import TYPE_CHECKING
 
@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from app.models.auth import User
     from app.models.draft import DraftPick
     from app.models.keeper import KeeperCandidate
+    from app.models.final_keeper import FinalKeeperSelection
+    from app.models.keeper_outcome import KeeperOutcome
     from app.models.membership import LeagueMembership
     from app.models.mock_draft import MockDraftPick, MockDraftSession
     from app.models.optimizer import (
@@ -39,6 +41,9 @@ class League(TimestampMixin, table=True):
     max_qb_keepers: int = Field(default=1)
     keeper_pick_deadline: date | None = Field(default=None)
     regular_season_start_date: date | None = Field(default=None)
+    keepers_finalized: bool = Field(default=False)
+    keepers_finalized_at: datetime | None = Field(default=None)
+    keepers_finalized_by_user_id: uuid.UUID | None = Field(default=None, foreign_key="users.id")
     roster_settings: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column(JSON, nullable=False),
@@ -58,6 +63,8 @@ class League(TimestampMixin, table=True):
     keeper_recommendations: list["KeeperRecommendation"] = Relationship(back_populates="league")
     scenario_selections: list["TeamScenarioSelection"] = Relationship(back_populates="league")
     mock_draft_sessions: list["MockDraftSession"] = Relationship(back_populates="league")
+    keeper_outcomes: list["KeeperOutcome"] = Relationship(back_populates="league")
+    final_keeper_selections: list["FinalKeeperSelection"] = Relationship(back_populates="league")
 
 
 class Team(TimestampMixin, table=True):
@@ -80,3 +87,5 @@ class Team(TimestampMixin, table=True):
     keeper_recommendations: list["KeeperRecommendation"] = Relationship(back_populates="team")
     mock_draft_sessions: list["MockDraftSession"] = Relationship(back_populates="user_team")
     mock_draft_picks: list["MockDraftPick"] = Relationship(back_populates="team")
+    keeper_outcomes: list["KeeperOutcome"] = Relationship(back_populates="team")
+    final_keeper_selections: list["FinalKeeperSelection"] = Relationship(back_populates="team")

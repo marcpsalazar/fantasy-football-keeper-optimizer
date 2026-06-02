@@ -9,7 +9,9 @@ from app.models.base import TimestampMixin
 if TYPE_CHECKING:
     from app.models.adp import ADPEntry
     from app.models.draft import DraftPick
+    from app.models.final_keeper import FinalKeeperSelection
     from app.models.keeper import KeeperCandidate
+    from app.models.keeper_outcome import KeeperOutcome
     from app.models.mock_draft import MockDraftPick
     from app.models.optimizer import KeeperRecommendation, ManualOverride
     from app.models.roster import FinalRosterEntry
@@ -34,3 +36,5 @@ class Player(TimestampMixin, table=True):
     manual_overrides: list["ManualOverride"] = Relationship(back_populates="player")
     keeper_recommendations: list["KeeperRecommendation"] = Relationship(back_populates="player")
     mock_draft_picks: list["MockDraftPick"] = Relationship(back_populates="player")
+    keeper_outcomes: list["KeeperOutcome"] = Relationship(back_populates="player")
+    final_keeper_selections: list["FinalKeeperSelection"] = Relationship(back_populates="player")

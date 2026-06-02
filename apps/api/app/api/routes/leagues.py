@@ -104,6 +104,14 @@ from app.services.ai_log import is_over_monthly_budget, monthly_usage_summary, r
 from app.services import draft_history as draft_history_svc
 from app.schemas.draft_history import TeamDraftHistoryRead
 from app.services import keeper_signals as keeper_signals_svc
+from app.services import keeper_history as keeper_history_svc
+from app.services.keeper_history import KeeperHistoryImportError
+from app.services import final_keepers as final_keepers_svc
+from app.services.final_keepers import FinalKeeperError, KeeperSelectionInput
+from app.services import sleeper_season_stats as sleeper_stats_svc
+from app.services.sleeper_season_stats import SleeperStatsError
+from app.services import season_analysis as season_analysis_svc
+from app.services.season_analysis import SeasonAnalysisError
 
 router = APIRouter(
     prefix="/api",
@@ -2648,6 +2656,209 @@ def get_keeper_signals(
             for sig in signals.signals
         ],
     }
+
+
+@router.post("/leagues/{league_id}/keeper-outcomes/preview")
+def preview_keeper_outcomes(
+    league_id: uuid.UUID,
+    payload: dict,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    csv_text = payload.get("csv_text", "")
+    try:
+        result = keeper_history_svc.preview_outcomes_csv(session, league_id, csv_text)
+    except KeeperHistoryImportError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return result.to_payload()
+
+
+@router.post("/leagues/{league_id}/keeper-outcomes/import")
+def import_keeper_outcomes(
+    league_id: uuid.UUID,
+    payload: dict,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    csv_text = payload.get("csv_text", "")
+    try:
+        result = keeper_history_svc.import_outcomes_csv(session, league_id, csv_text)
+    except KeeperHistoryImportError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return {
+        "imported_count": result.imported,
+        "updated_count": result.updated,
+        "skipped_count": result.skipped,
+        "rows": result.rows,
+    }
+
+
+class SleeperStatsRequest(BaseModel):
+    season_year: int | None = None
+    scoring_format: str | None = None
+
+
+@router.post("/leagues/{league_id}/keeper-outcomes/sleeper-preview")
+def preview_sleeper_outcomes(
+    league_id: uuid.UUID,
+    payload: SleeperStatsRequest,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    try:
+        result = sleeper_stats_svc.preview_sleeper_season_outcomes(
+            session, league_id, payload.season_year, payload.scoring_format
+        )
+    except SleeperStatsError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return result.to_payload()
+
+
+@router.post("/leagues/{league_id}/keeper-outcomes/sleeper-import")
+def import_sleeper_outcomes(
+    league_id: uuid.UUID,
+    payload: SleeperStatsRequest,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    try:
+        result = sleeper_stats_svc.import_sleeper_season_outcomes(
+            session, league_id, payload.season_year, payload.scoring_format
+        )
+    except SleeperStatsError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return {
+        "imported_count": result.imported,
+        "updated_count": result.updated,
+        "skipped_count": result.skipped,
+        "rows": result.rows,
+    }
+
+
+@router.get("/leagues/{league_id}/keeper-history")
+def get_keeper_history(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    _require_league(session, league_id)
+    return keeper_history_svc.get_keeper_history(session, league_id)
+
+
+# ── Final Keeper Selections ───────────────────────────────────────────────────
+
+@router.get("/leagues/{league_id}/final-keepers")
+def get_final_keepers(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    _require_league(session, league_id)
+    return final_keepers_svc.get_league_final_keepers(session, league_id)
+
+
+@router.get("/leagues/{league_id}/final-keepers/prefill")
+def get_final_keepers_prefill(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    return final_keepers_svc.get_prefill_from_recommendations(session, league_id)
+
+
+class FinalKeeperSelectionItem(BaseModel):
+    player_id: uuid.UUID
+    cost_pick: float | None = None
+    cost_round: float | None = None
+
+
+@router.put("/leagues/{league_id}/final-keepers/{team_id}")
+def set_team_final_keepers(
+    league_id: uuid.UUID,
+    team_id: uuid.UUID,
+    payload: list[FinalKeeperSelectionItem],
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    try:
+        selections = [
+            KeeperSelectionInput(
+                player_id=item.player_id,
+                cost_pick=item.cost_pick,
+                cost_round=item.cost_round,
+            )
+            for item in payload
+        ]
+        keepers = final_keepers_svc.set_team_keepers(session, league_id, team_id, selections)
+        session.commit()
+    except FinalKeeperError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return {"keepers": keepers}
+
+
+@router.post("/leagues/{league_id}/final-keepers/finalize")
+def finalize_keepers(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    try:
+        return final_keepers_svc.finalize_league_keepers(session, league_id, user.id)
+    except FinalKeeperError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+
+@router.post("/leagues/{league_id}/final-keepers/unfinalize")
+def unfinalize_keepers(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if getattr(user, "role", None) != "platform_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Platform admin required")
+    try:
+        final_keepers_svc.unfinalize_league_keepers(session, league_id)
+    except FinalKeeperError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return {"is_finalized": False}
+
+
+@router.get("/leagues/{league_id}/draft-board")
+def get_draft_board(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    _require_league(session, league_id)
+    return final_keepers_svc.get_draft_board(session, league_id)
+
+
+@router.get("/leagues/{league_id}/season-analysis")
+def get_season_analysis(
+    league_id: uuid.UUID,
+    season_year: int | None = None,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    _require_league(session, league_id)
+    try:
+        return season_analysis_svc.get_season_analysis(session, league_id, season_year)
+    except SeasonAnalysisError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
 
 def _is_league_admin(session: Session, user: User | None, league_id: uuid.UUID) -> bool:

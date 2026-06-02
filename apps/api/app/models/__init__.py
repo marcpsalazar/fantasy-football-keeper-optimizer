@@ -3,7 +3,9 @@ from app.models.ai_explanation import AIExplanation
 from app.models.ai_request_log import AIRequestLog
 from app.models.auth import AppDefaultOptimizerSettings, User
 from app.models.draft import DraftPick
+from app.models.final_keeper import FinalKeeperSelection
 from app.models.keeper import KeeperCandidate
+from app.models.keeper_outcome import KeeperOutcome
 from app.models.league import League, Team
 from app.models.membership import LeagueMembership
 from app.models.mock_draft import MockDraftAnalysis, MockDraftPick, MockDraftSession
@@ -25,8 +27,10 @@ __all__ = [
     "AIRequestLog",
     "AppDefaultOptimizerSettings",
     "DraftPick",
+    "FinalKeeperSelection",
     "FinalRosterEntry",
     "KeeperCandidate",
+    "KeeperOutcome",
     "KeeperRecommendation",
     "League",
     "LeagueMembership",
