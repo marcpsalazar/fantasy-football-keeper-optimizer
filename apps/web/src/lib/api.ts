@@ -1718,6 +1718,121 @@ export async function getKeeperHistory(leagueId: string): Promise<KeeperHistory>
   };
 }
 
+// ── Sleeper Season Stats ──────────────────────────────────────────────────────
+
+export type SleeperOutcomeRow = {
+  playerId: string;
+  playerName: string;
+  position: string;
+  nflTeam: string | null;
+  teamId: string;
+  teamName: string;
+  seasonYear: number;
+  fantasyPoints: number | null;
+  finishRank: number | null;
+  wasKept: boolean | null;
+  keeperCostPick: number | null;
+  keeperCostRound: number | null;
+  adpPickAtKeep: number | null;
+  adpRoundAtKeep: number | null;
+  keeperValueAtKeep: number | null;
+  metAdpProjection: boolean | null;
+  isBust: boolean;
+  matchMethod: "external_id" | "name_team" | "unmatched";
+};
+
+export type SleeperOutcomesPreviewResult = {
+  seasonYear: number;
+  scoringField: string;
+  matchCount: number;
+  unmatchCount: number;
+  keptCount: number;
+  candidateCount: number;
+  matched: SleeperOutcomeRow[];
+  unmatched: { playerName: string; position: string; nflTeam: string | null; teamName: string }[];
+};
+
+export type SleeperOutcomesImportResult = {
+  importedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  rows: SleeperOutcomeRow[];
+};
+
+function mapSleeperOutcomeRow(row: ApiRow): SleeperOutcomeRow {
+  return {
+    playerId: text(row.player_id),
+    playerName: text(row.player_name),
+    position: text(row.position),
+    nflTeam: (row.nfl_team as string) ?? null,
+    teamId: text(row.team_id),
+    teamName: text(row.team_name),
+    seasonYear: number(row.season_year),
+    fantasyPoints: (row.fantasy_points as number) ?? null,
+    finishRank: (row.finish_rank as number) ?? null,
+    wasKept: row.was_kept == null ? null : Boolean(row.was_kept),
+    keeperCostPick: (row.keeper_cost_pick as number) ?? null,
+    keeperCostRound: (row.keeper_cost_round as number) ?? null,
+    adpPickAtKeep: (row.adp_pick_at_keep as number) ?? null,
+    adpRoundAtKeep: (row.adp_round_at_keep as number) ?? null,
+    keeperValueAtKeep: (row.keeper_value_at_keep as number) ?? null,
+    metAdpProjection: row.met_adp_projection == null ? null : Boolean(row.met_adp_projection),
+    isBust: Boolean(row.is_bust),
+    matchMethod: (row.match_method as SleeperOutcomeRow["matchMethod"]) ?? "unmatched",
+  };
+}
+
+export async function previewSleeperOutcomes(
+  leagueId: string,
+  seasonYear?: number,
+  scoringFormat?: string,
+): Promise<SleeperOutcomesPreviewResult> {
+  const payload = await fetchJson<ApiRow>(
+    `/api/leagues/${leagueId}/keeper-outcomes/sleeper-preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ season_year: seasonYear ?? null, scoring_format: scoringFormat ?? null }),
+    },
+  );
+  return {
+    seasonYear: number(payload.season_year),
+    scoringField: text(payload.scoring_field),
+    matchCount: number(payload.match_count),
+    unmatchCount: number(payload.unmatch_count),
+    keptCount: number(payload.kept_count),
+    candidateCount: number(payload.candidate_count),
+    matched: ((payload.matched as ApiRow[]) ?? []).map(mapSleeperOutcomeRow),
+    unmatched: ((payload.unmatched as ApiRow[]) ?? []).map((r) => ({
+      playerName: text(r.player_name),
+      position: text(r.position),
+      nflTeam: (r.nfl_team as string) ?? null,
+      teamName: text(r.team_name),
+    })),
+  };
+}
+
+export async function importSleeperOutcomes(
+  leagueId: string,
+  seasonYear?: number,
+  scoringFormat?: string,
+): Promise<SleeperOutcomesImportResult> {
+  const payload = await fetchJson<ApiRow>(
+    `/api/leagues/${leagueId}/keeper-outcomes/sleeper-import`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ season_year: seasonYear ?? null, scoring_format: scoringFormat ?? null }),
+    },
+  );
+  return {
+    importedCount: number(payload.imported_count),
+    updatedCount: number(payload.updated_count),
+    skippedCount: number(payload.skipped_count),
+    rows: ((payload.rows as ApiRow[]) ?? []).map(mapSleeperOutcomeRow),
+  };
+}
+
 // ── Final Keeper Selections ───────────────────────────────────────────────────
 
 export type FinalKeeperSelectionRow = {

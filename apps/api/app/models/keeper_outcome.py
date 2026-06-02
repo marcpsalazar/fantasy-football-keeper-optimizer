@@ -45,6 +45,9 @@ class KeeperOutcome(TimestampMixin, table=True):
     finish_rank: int | None = Field(default=None)       # positional rank (1 = best at position)
     fantasy_points: float | None = Field(default=None)
 
+    # Whether this player was actually kept (vs. a candidate who was passed on)
+    was_kept: bool = Field(default=True)
+
     # Derived signals (computed at import time; can be overridden via CSV)
     met_adp_projection: bool | None = Field(default=None)
     is_bust: bool = Field(default=False)

@@ -169,6 +169,10 @@ import {
   type FinalKeeperSelectionRow,
   type FinalKeepersPrefillResult,
   type FinalKeeperInput,
+  previewSleeperOutcomes,
+  importSleeperOutcomes,
+  type SleeperOutcomesPreviewResult,
+  type SleeperOutcomeRow,
   type LeagueKeeperSignals,
   type TeamKeeperSignal,
   type OptimizerSettingsForm,
@@ -4618,119 +4622,309 @@ function YahooImportPanel() {
 }
 
 function KeeperOutcomesImportPanel() {
-  const { activeLeagueId } = useDashboard();
-  const [csvText, setCsvText] = React.useState("");
-  const [preview, setPreview] = React.useState<KeeperOutcomesPreviewResult | null>(null);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState("");
-  const [successMessage, setSuccessMessage] = React.useState("");
+  const { activeLeagueId, data } = useDashboard();
+  const [mode, setMode] = React.useState<"sleeper" | "csv">("sleeper");
 
-  const handlePreview = async () => {
-    if (!activeLeagueId || !csvText.trim()) return;
-    setLoading(true);
-    setError("");
-    setSuccessMessage("");
-    setPreview(null);
+  // ── Sleeper auto-fetch state ──
+  const defaultYear = data?.league?.seasonYear ? data.league.seasonYear - 1 : undefined;
+  const [seasonYear, setSeasonYear] = React.useState<string>(defaultYear ? String(defaultYear) : "");
+  const [scoringFormat, setScoringFormat] = React.useState("ppr");
+  const [sleeperPreview, setSleeperPreview] = React.useState<SleeperOutcomesPreviewResult | null>(null);
+  const [sleeperLoading, setSleeperLoading] = React.useState(false);
+  const [sleeperError, setSleeperError] = React.useState("");
+  const [sleeperSuccess, setSleeperSuccess] = React.useState("");
+
+  // ── CSV fallback state ──
+  const [csvText, setCsvText] = React.useState("");
+  const [csvPreview, setCsvPreview] = React.useState<KeeperOutcomesPreviewResult | null>(null);
+  const [csvLoading, setCsvLoading] = React.useState(false);
+  const [csvError, setCsvError] = React.useState("");
+  const [csvSuccess, setCsvSuccess] = React.useState("");
+
+  const handleSleeperPreview = async () => {
+    if (!activeLeagueId) return;
+    setSleeperLoading(true);
+    setSleeperError("");
+    setSleeperSuccess("");
+    setSleeperPreview(null);
     try {
-      const result = await previewKeeperOutcomesCsv(activeLeagueId, csvText);
-      setPreview(result);
+      const yr = seasonYear ? parseInt(seasonYear, 10) : undefined;
+      const result = await previewSleeperOutcomes(activeLeagueId, yr, scoringFormat);
+      setSleeperPreview(result);
     } catch {
-      setError("Preview failed — check the CSV format and try again.");
+      setSleeperError("Could not fetch stats from Sleeper — check your connection and try again.");
     } finally {
-      setLoading(false);
+      setSleeperLoading(false);
     }
   };
 
-  const handleImport = async () => {
+  const handleSleeperImport = async () => {
+    if (!activeLeagueId) return;
+    setSleeperLoading(true);
+    setSleeperError("");
+    setSleeperSuccess("");
+    try {
+      const yr = seasonYear ? parseInt(seasonYear, 10) : undefined;
+      const result = await importSleeperOutcomes(activeLeagueId, yr, scoringFormat);
+      setSleeperSuccess(
+        `Imported ${result.importedCount} new, updated ${result.updatedCount}, skipped ${result.skippedCount}.`,
+      );
+      setSleeperPreview(null);
+    } catch {
+      setSleeperError("Import failed — try again.");
+    } finally {
+      setSleeperLoading(false);
+    }
+  };
+
+  const handleCsvPreview = async () => {
     if (!activeLeagueId || !csvText.trim()) return;
-    setLoading(true);
-    setError("");
-    setSuccessMessage("");
+    setCsvLoading(true);
+    setCsvError("");
+    setCsvSuccess("");
+    setCsvPreview(null);
+    try {
+      const result = await previewKeeperOutcomesCsv(activeLeagueId, csvText);
+      setCsvPreview(result);
+    } catch {
+      setCsvError("Preview failed — check the CSV format and try again.");
+    } finally {
+      setCsvLoading(false);
+    }
+  };
+
+  const handleCsvImport = async () => {
+    if (!activeLeagueId || !csvText.trim()) return;
+    setCsvLoading(true);
+    setCsvError("");
+    setCsvSuccess("");
     try {
       const result = await importKeeperOutcomesCsv(activeLeagueId, csvText);
-      setSuccessMessage(
+      setCsvSuccess(
         `Imported ${result.importedCount} new, updated ${result.updatedCount}, skipped ${result.skippedCount} rows.`,
       );
-      setPreview(null);
+      setCsvPreview(null);
       setCsvText("");
     } catch {
-      setError("Import failed — check the CSV and try again.");
+      setCsvError("Import failed — check the CSV and try again.");
     } finally {
-      setLoading(false);
+      setCsvLoading(false);
     }
   };
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Season Outcomes CSV</CardTitle>
+        <CardTitle className="text-base">Season Outcomes</CardTitle>
         <CardDescription>
-          Import end-of-season keeper results to track ROI over time. Required columns:{" "}
-          <code className="text-xs">player, position, team, finish_rank, fantasy_points</code>.
-          Optional: <code className="text-xs">season_year, met_projection, is_bust, notes</code>.
+          Import end-of-season results to populate the Keeper History ROI tracker.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
-        <Textarea
-          className="min-h-[120px] font-mono text-xs"
-          disabled={loading}
-          onChange={(e) => {
-            setCsvText(e.target.value);
-            setPreview(null);
-            setSuccessMessage("");
-            setError("");
-          }}
-          placeholder="player,position,team,finish_rank,fantasy_points&#10;Patrick Mahomes,QB,Chiefs,1,420.5"
-          value={csvText}
-        />
-        <div className="flex gap-2">
-          <Button
-            disabled={loading || !csvText.trim()}
-            onClick={handlePreview}
-            size="sm"
-            variant="outline"
+      <CardContent className="space-y-4">
+        {/* Mode toggle */}
+        <div className="flex rounded-md border border-zinc-200 p-0.5 text-sm">
+          <button
+            className={cn(
+              "flex-1 rounded py-1.5 text-center transition-colors",
+              mode === "sleeper"
+                ? "bg-zinc-900 text-white"
+                : "text-zinc-500 hover:text-zinc-700",
+            )}
+            onClick={() => setMode("sleeper")}
           >
-            {loading ? "Loading…" : "Preview"}
-          </Button>
-          <Button
-            disabled={loading || !preview?.valid}
-            onClick={handleImport}
-            size="sm"
+            Auto-fetch from Sleeper
+          </button>
+          <button
+            className={cn(
+              "flex-1 rounded py-1.5 text-center transition-colors",
+              mode === "csv"
+                ? "bg-zinc-900 text-white"
+                : "text-zinc-500 hover:text-zinc-700",
+            )}
+            onClick={() => setMode("csv")}
           >
-            Import
-          </Button>
+            Upload CSV
+          </button>
         </div>
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        {successMessage && <p className="text-sm text-emerald-600">{successMessage}</p>}
-        {preview && (
-          <div className="space-y-2 rounded-md border border-zinc-200 bg-white p-3 text-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={preview.valid ? "success" : "danger"}>
-                {preview.valid ? "Ready to Import" : "Has Errors"}
-              </Badge>
-              <span className="text-zinc-500">
-                {preview.validRows}/{preview.totalRows} valid rows
-              </span>
-              {preview.warningCount > 0 && (
-                <span className="text-amber-600">{preview.warningCount} warning(s)</span>
-              )}
+
+        {mode === "sleeper" && (
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-500">
+              Fetches stats for all keeper candidates from Sleeper's public API. Works for any
+              league — no Sleeper league ID required. Players are matched by Sleeper ID (if
+              league was imported from Sleeper) or by name + NFL team.
+            </p>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <Label className="mb-1 block text-xs">Season Year</Label>
+                <Input
+                  className="h-8 text-sm"
+                  onChange={(e) => { setSeasonYear(e.target.value); setSleeperPreview(null); }}
+                  placeholder={defaultYear ? String(defaultYear) : "e.g. 2025"}
+                  value={seasonYear}
+                />
+              </div>
+              <div className="flex-1">
+                <Label className="mb-1 block text-xs">Scoring Format</Label>
+                <select
+                  className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm"
+                  onChange={(e) => { setScoringFormat(e.target.value); setSleeperPreview(null); }}
+                  value={scoringFormat}
+                >
+                  <option value="ppr">PPR</option>
+                  <option value="half_ppr">Half PPR</option>
+                  <option value="standard">Standard</option>
+                </select>
+              </div>
             </div>
-            {preview.errors.length > 0 && (
-              <ul className="space-y-1 text-red-600">
-                {preview.errors.slice(0, 5).map((e, i) => (
-                  <li key={i} className="text-xs">
-                    Row {String(e.row_number)}: {String(e.message)}
-                  </li>
-                ))}
-                {preview.errors.length > 5 && (
-                  <li className="text-xs text-zinc-500">…and {preview.errors.length - 5} more</li>
+            <div className="flex gap-2">
+              <Button
+                disabled={sleeperLoading}
+                onClick={handleSleeperPreview}
+                size="sm"
+                variant="outline"
+              >
+                {sleeperLoading && !sleeperPreview ? "Fetching…" : "Fetch & Preview"}
+              </Button>
+              <Button
+                disabled={sleeperLoading || !sleeperPreview}
+                onClick={handleSleeperImport}
+                size="sm"
+              >
+                {sleeperLoading && sleeperPreview ? "Importing…" : "Import"}
+              </Button>
+            </div>
+            {sleeperError && <p className="text-sm text-red-600">{sleeperError}</p>}
+            {sleeperSuccess && <p className="text-sm text-emerald-600">{sleeperSuccess}</p>}
+            {sleeperPreview && <SleeperOutcomesPreview preview={sleeperPreview} />}
+          </div>
+        )}
+
+        {mode === "csv" && (
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-500">
+              Required columns:{" "}
+              <code className="font-mono">player, position, team, finish_rank, fantasy_points</code>
+              . Optional:{" "}
+              <code className="font-mono">season_year, met_projection, is_bust, notes</code>.
+            </p>
+            <Textarea
+              className="min-h-[120px] font-mono text-xs"
+              disabled={csvLoading}
+              onChange={(e) => { setCsvText(e.target.value); setCsvPreview(null); setCsvSuccess(""); setCsvError(""); }}
+              placeholder={"player,position,team,finish_rank,fantasy_points\nPatrick Mahomes,QB,Chiefs,1,420.5"}
+              value={csvText}
+            />
+            <div className="flex gap-2">
+              <Button disabled={csvLoading || !csvText.trim()} onClick={handleCsvPreview} size="sm" variant="outline">
+                {csvLoading ? "Loading…" : "Preview"}
+              </Button>
+              <Button disabled={csvLoading || !csvPreview?.valid} onClick={handleCsvImport} size="sm">
+                Import
+              </Button>
+            </div>
+            {csvError && <p className="text-sm text-red-600">{csvError}</p>}
+            {csvSuccess && <p className="text-sm text-emerald-600">{csvSuccess}</p>}
+            {csvPreview && (
+              <div className="space-y-2 rounded-md border border-zinc-200 bg-white p-3 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={csvPreview.valid ? "success" : "danger"}>
+                    {csvPreview.valid ? "Ready to Import" : "Has Errors"}
+                  </Badge>
+                  <span className="text-zinc-500">{csvPreview.validRows}/{csvPreview.totalRows} valid rows</span>
+                  {csvPreview.warningCount > 0 && <span className="text-amber-600">{csvPreview.warningCount} warning(s)</span>}
+                </div>
+                {csvPreview.errors.length > 0 && (
+                  <ul className="space-y-1 text-red-600">
+                    {csvPreview.errors.slice(0, 5).map((e, i) => (
+                      <li key={i} className="text-xs">Row {String(e.row_number)}: {String(e.message)}</li>
+                    ))}
+                    {csvPreview.errors.length > 5 && <li className="text-xs text-zinc-500">…and {csvPreview.errors.length - 5} more</li>}
+                  </ul>
                 )}
-              </ul>
+              </div>
             )}
           </div>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function SleeperOutcomesPreview({ preview }: { preview: SleeperOutcomesPreviewResult }) {
+  const [showUnmatched, setShowUnmatched] = React.useState(false);
+  return (
+    <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <Badge variant="success">{preview.matchCount} matched</Badge>
+        {preview.unmatchCount > 0 && (
+          <Badge variant="warning">{preview.unmatchCount} unmatched</Badge>
+        )}
+        <span className="text-zinc-500">
+          {preview.keptCount} kept · {preview.candidateCount - preview.keptCount} candidates not kept
+        </span>
+        <span className="text-zinc-400 text-xs">{preview.scoringField}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-zinc-500">
+            <tr>
+              <th className="pb-1 text-left">Player</th>
+              <th className="pb-1 text-left">Pos</th>
+              <th className="pb-1 text-left">Team</th>
+              <th className="pb-1 text-right">Pts</th>
+              <th className="pb-1 text-right">Rank</th>
+              <th className="pb-1 text-center">Kept</th>
+              <th className="pb-1 text-center">Hit ADP</th>
+              <th className="pb-1 text-center">Bust</th>
+              <th className="pb-1 text-left">Match</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-50">
+            {preview.matched.map((r: SleeperOutcomeRow) => (
+              <tr key={`${r.teamId}-${r.playerId}`} className={cn(!r.wasKept && "opacity-50")}>
+                <td className="py-1 pr-2 font-medium">{r.playerName}</td>
+                <td className="py-1 pr-2">
+                  <span className={cn("rounded px-1 py-0.5 font-medium", POSITION_COLORS[r.position] ?? "bg-zinc-100 text-zinc-700")}>
+                    {r.position}
+                  </span>
+                </td>
+                <td className="py-1 pr-2 text-zinc-500">{r.teamName}</td>
+                <td className="py-1 pr-2 text-right">{r.fantasyPoints != null ? r.fantasyPoints.toFixed(1) : "—"}</td>
+                <td className="py-1 pr-2 text-right">{r.finishRank ?? "—"}</td>
+                <td className="py-1 pr-2 text-center">
+                  {r.wasKept == null ? "?" : r.wasKept ? "✓" : "—"}
+                </td>
+                <td className="py-1 pr-2 text-center">
+                  {r.metAdpProjection == null ? "—" : r.metAdpProjection ? "✓" : "✗"}
+                </td>
+                <td className="py-1 pr-2 text-center">
+                  {r.isBust ? <span className="text-red-500">✗</span> : "—"}
+                </td>
+                <td className="py-1 text-zinc-400">{r.matchMethod === "external_id" ? "ID" : "Name"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {preview.unmatched.length > 0 && (
+        <div>
+          <button
+            className="text-xs text-zinc-500 underline"
+            onClick={() => setShowUnmatched((v) => !v)}
+          >
+            {showUnmatched ? "Hide" : "Show"} {preview.unmatched.length} unmatched player(s)
+          </button>
+          {showUnmatched && (
+            <ul className="mt-1 space-y-0.5 text-xs text-zinc-500">
+              {preview.unmatched.map((u, i) => (
+                <li key={i}>{u.playerName} ({u.position}, {u.nflTeam ?? "no team"}) — {u.teamName}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

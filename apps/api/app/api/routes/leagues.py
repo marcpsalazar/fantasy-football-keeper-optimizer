@@ -108,6 +108,8 @@ from app.services import keeper_history as keeper_history_svc
 from app.services.keeper_history import KeeperHistoryImportError
 from app.services import final_keepers as final_keepers_svc
 from app.services.final_keepers import FinalKeeperError, KeeperSelectionInput
+from app.services import sleeper_season_stats as sleeper_stats_svc
+from app.services.sleeper_season_stats import SleeperStatsError
 
 router = APIRouter(
     prefix="/api",
@@ -2684,6 +2686,52 @@ def import_keeper_outcomes(
     try:
         result = keeper_history_svc.import_outcomes_csv(session, league_id, csv_text)
     except KeeperHistoryImportError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return {
+        "imported_count": result.imported,
+        "updated_count": result.updated,
+        "skipped_count": result.skipped,
+        "rows": result.rows,
+    }
+
+
+class SleeperStatsRequest(BaseModel):
+    season_year: int | None = None
+    scoring_format: str | None = None
+
+
+@router.post("/leagues/{league_id}/keeper-outcomes/sleeper-preview")
+def preview_sleeper_outcomes(
+    league_id: uuid.UUID,
+    payload: SleeperStatsRequest,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    try:
+        result = sleeper_stats_svc.preview_sleeper_season_outcomes(
+            session, league_id, payload.season_year, payload.scoring_format
+        )
+    except SleeperStatsError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return result.to_payload()
+
+
+@router.post("/leagues/{league_id}/keeper-outcomes/sleeper-import")
+def import_sleeper_outcomes(
+    league_id: uuid.UUID,
+    payload: SleeperStatsRequest,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    try:
+        result = sleeper_stats_svc.import_sleeper_season_outcomes(
+            session, league_id, payload.season_year, payload.scoring_format
+        )
+    except SleeperStatsError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     return {
         "imported_count": result.imported,
