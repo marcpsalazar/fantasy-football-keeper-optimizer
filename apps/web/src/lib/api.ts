@@ -1984,6 +1984,141 @@ export async function finalizeKeepers(
   };
 }
 
+// ── Season Analysis ───────────────────────────────────────────────────────────
+
+export type SeasonDecisionCategory =
+  | "hit"
+  | "miss"
+  | "bust"
+  | "left_on_table"
+  | "dodged"
+  | "below_adp"
+  | "unknown";
+
+export type SeasonDecision = {
+  playerId: string;
+  playerName: string;
+  position: string;
+  nflTeam: string | null;
+  wasKept: boolean;
+  isRecommended: boolean;
+  keeperCostRound: number | null;
+  adpRoundAtKeep: number | null;
+  keeperValueAtKeep: number | null;
+  finishRank: number | null;
+  fantasyPoints: number | null;
+  metAdpProjection: boolean | null;
+  isBust: boolean;
+  category: SeasonDecisionCategory;
+};
+
+export type TeamSeasonAnalysis = {
+  teamId: string;
+  teamName: string;
+  ownerName: string | null;
+  draftSlot: number | null;
+  keepersKept: number;
+  hits: number;
+  misses: number;
+  busts: number;
+  leftOnTableCount: number;
+  dodgedCount: number;
+  recFollowedCount: number;
+  recHitRate: number | null;
+  avgOpportunityCostRounds: number | null;
+  decisions: SeasonDecision[];
+};
+
+export type SeasonAnalysisSummary = {
+  seasonYear: number;
+  totalKept: number;
+  hits: number;
+  misses: number;
+  busts: number;
+  hitRate: number | null;
+  bustRate: number | null;
+  leftOnTableCount: number;
+  dodgedCount: number;
+  recFollowedCount: number;
+  recHitRate: number | null;
+  avgOpportunityCostRounds: number | null;
+  hasFinalSelections: boolean;
+  hasOutcomes: boolean;
+};
+
+export type SeasonAnalysisResult = {
+  seasonYear: number;
+  leagueSummary: SeasonAnalysisSummary;
+  teams: TeamSeasonAnalysis[];
+};
+
+function mapSeasonDecision(row: ApiRow): SeasonDecision {
+  return {
+    playerId: text(row.player_id),
+    playerName: text(row.player_name),
+    position: text(row.position),
+    nflTeam: row.nfl_team != null ? text(row.nfl_team) : null,
+    wasKept: Boolean(row.was_kept),
+    isRecommended: Boolean(row.is_recommended),
+    keeperCostRound: row.keeper_cost_round != null ? number(row.keeper_cost_round) : null,
+    adpRoundAtKeep: row.adp_round_at_keep != null ? number(row.adp_round_at_keep) : null,
+    keeperValueAtKeep: row.keeper_value_at_keep != null ? number(row.keeper_value_at_keep) : null,
+    finishRank: row.finish_rank != null ? number(row.finish_rank) : null,
+    fantasyPoints: row.fantasy_points != null ? number(row.fantasy_points) : null,
+    metAdpProjection: row.met_adp_projection != null ? Boolean(row.met_adp_projection) : null,
+    isBust: Boolean(row.is_bust),
+    category: (row.category as SeasonDecisionCategory) ?? "unknown",
+  };
+}
+
+function mapTeamSeasonAnalysis(row: ApiRow): TeamSeasonAnalysis {
+  return {
+    teamId: text(row.team_id),
+    teamName: text(row.team_name),
+    ownerName: row.owner_name != null ? text(row.owner_name) : null,
+    draftSlot: row.draft_slot != null ? number(row.draft_slot) : null,
+    keepersKept: number(row.keepers_kept),
+    hits: number(row.hits),
+    misses: number(row.misses),
+    busts: number(row.busts),
+    leftOnTableCount: number(row.left_on_table_count),
+    dodgedCount: number(row.dodged_count),
+    recFollowedCount: number(row.rec_followed_count),
+    recHitRate: row.rec_hit_rate != null ? number(row.rec_hit_rate) : null,
+    avgOpportunityCostRounds: row.avg_opportunity_cost_rounds != null ? number(row.avg_opportunity_cost_rounds) : null,
+    decisions: array(row.decisions).map(mapSeasonDecision),
+  };
+}
+
+export async function getSeasonAnalysis(
+  leagueId: string,
+  seasonYear?: number,
+): Promise<SeasonAnalysisResult> {
+  const params = seasonYear ? `?season_year=${seasonYear}` : "";
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/season-analysis${params}`);
+  const summary = objectRecord(payload.league_summary);
+  return {
+    seasonYear: number(payload.season_year),
+    leagueSummary: {
+      seasonYear: number(summary.season_year),
+      totalKept: number(summary.total_kept),
+      hits: number(summary.hits),
+      misses: number(summary.misses),
+      busts: number(summary.busts),
+      hitRate: summary.hit_rate != null ? number(summary.hit_rate) : null,
+      bustRate: summary.bust_rate != null ? number(summary.bust_rate) : null,
+      leftOnTableCount: number(summary.left_on_table_count),
+      dodgedCount: number(summary.dodged_count),
+      recFollowedCount: number(summary.rec_followed_count),
+      recHitRate: summary.rec_hit_rate != null ? number(summary.rec_hit_rate) : null,
+      avgOpportunityCostRounds: summary.avg_opportunity_cost_rounds != null ? number(summary.avg_opportunity_cost_rounds) : null,
+      hasFinalSelections: Boolean(summary.has_final_selections),
+      hasOutcomes: Boolean(summary.has_outcomes),
+    },
+    teams: array(payload.teams).map(mapTeamSeasonAnalysis),
+  };
+}
+
 export function exportUrl(
   leagueId: string,
   format: "xlsx" | "csv" | "pdf" | "adp-template" = "xlsx",

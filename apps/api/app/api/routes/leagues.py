@@ -110,6 +110,8 @@ from app.services import final_keepers as final_keepers_svc
 from app.services.final_keepers import FinalKeeperError, KeeperSelectionInput
 from app.services import sleeper_season_stats as sleeper_stats_svc
 from app.services.sleeper_season_stats import SleeperStatsError
+from app.services import season_analysis as season_analysis_svc
+from app.services.season_analysis import SeasonAnalysisError
 
 router = APIRouter(
     prefix="/api",
@@ -2833,6 +2835,20 @@ def unfinalize_keepers(
     except FinalKeeperError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     return {"is_finalized": False}
+
+
+@router.get("/leagues/{league_id}/season-analysis")
+def get_season_analysis(
+    league_id: uuid.UUID,
+    season_year: int | None = None,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    _require_league(session, league_id)
+    try:
+        return season_analysis_svc.get_season_analysis(session, league_id, season_year)
+    except SeasonAnalysisError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
 
 def _is_league_admin(session: Session, user: User | None, league_id: uuid.UUID) -> bool:

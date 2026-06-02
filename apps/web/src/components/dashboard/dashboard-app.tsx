@@ -3,6 +3,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   ArrowLeftRight,
+  BarChart2,
   Ban,
   Bot,
   BookOpen,
@@ -171,8 +172,13 @@ import {
   type FinalKeeperInput,
   previewSleeperOutcomes,
   importSleeperOutcomes,
+  getSeasonAnalysis,
   type SleeperOutcomesPreviewResult,
   type SleeperOutcomeRow,
+  type SeasonAnalysisResult,
+  type TeamSeasonAnalysis,
+  type SeasonDecision,
+  type SeasonDecisionCategory,
   type LeagueKeeperSignals,
   type TeamKeeperSignal,
   type OptimizerSettingsForm,
@@ -201,7 +207,8 @@ type ViewId =
   | "draft-impact"
   | "mock-draft"
   | "keeper-history"
-  | "final-keepers";
+  | "final-keepers"
+  | "season-analysis";
 
 type NavItem = {
   id: ViewId;
@@ -220,6 +227,7 @@ const navItems: NavItem[] = [
   { id: "mock-draft", label: "Mock Draft", icon: Bot },
   { id: "keeper-history", label: "Keeper History", icon: History },
   { id: "final-keepers", label: "Final Keepers", icon: KeyRound },
+  { id: "season-analysis", label: "Season Analysis", icon: BarChart2 },
   { id: "outlooks", label: "Team Outlook", icon: ShieldCheck },
   { id: "teams", label: "Teams", icon: Users },
   { id: "draft", label: "Draft Results", icon: ClipboardList },
@@ -1712,6 +1720,7 @@ export function DashboardApp() {
             {activeView === "mock-draft" && <MockDraftPage />}
             {activeView === "keeper-history" && <KeeperHistoryPage />}
             {activeView === "final-keepers" && <FinalKeepersPage />}
+            {activeView === "season-analysis" && <SeasonAnalysisPage />}
           </div>
         </section>
       </div>
@@ -10812,6 +10821,274 @@ function PositionBadge({ position }: { position: string }) {
 function StatusBadge({ status }: { status: string }) {
   const variant = status === "Starter" ? "success" : status === "Bench" ? "info" : "warning";
   return <Badge variant={variant}>{status}</Badge>;
+}
+
+// ── Season Analysis Page ──────────────────────────────────────────────────────
+
+const CATEGORY_LABEL: Record<SeasonDecisionCategory, string> = {
+  hit: "Hit",
+  miss: "Miss",
+  bust: "Bust",
+  left_on_table: "Left on Table",
+  dodged: "Dodged",
+  below_adp: "Below ADP",
+  unknown: "Unknown",
+};
+
+const CATEGORY_COLORS: Record<SeasonDecisionCategory, string> = {
+  hit: "bg-emerald-100 text-emerald-800",
+  miss: "bg-amber-100 text-amber-800",
+  bust: "bg-red-100 text-red-800",
+  left_on_table: "bg-sky-100 text-sky-800",
+  dodged: "bg-zinc-100 text-zinc-700",
+  below_adp: "bg-zinc-100 text-zinc-600",
+  unknown: "bg-zinc-50 text-zinc-400",
+};
+
+function CategoryBadge({ category }: { category: SeasonDecisionCategory }) {
+  return (
+    <span className={cn("rounded px-1.5 py-0.5 text-xs font-medium", CATEGORY_COLORS[category])}>
+      {CATEGORY_LABEL[category]}
+    </span>
+  );
+}
+
+function SeasonAnalysisPage() {
+  const { activeLeagueId } = useDashboard();
+  const [result, setResult] = React.useState<SeasonAnalysisResult | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [expandedTeamId, setExpandedTeamId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!activeLeagueId) return;
+    setLoading(true);
+    setError("");
+    getSeasonAnalysis(activeLeagueId)
+      .then(setResult)
+      .catch(() => setError("Could not load season analysis."))
+      .finally(() => setLoading(false));
+  }, [activeLeagueId]);
+
+  if (loading) {
+    return (
+      <PagePanel title="Season Analysis" description="End-of-season review comparing keeper recommendations vs. actual selections vs. performance.">
+        <p className="text-sm text-zinc-500">Loading…</p>
+      </PagePanel>
+    );
+  }
+
+  if (error) {
+    return (
+      <PagePanel title="Season Analysis" description="End-of-season review comparing keeper recommendations vs. actual selections vs. performance.">
+        <p className="text-sm text-red-600">{error}</p>
+      </PagePanel>
+    );
+  }
+
+  if (!result || (!result.leagueSummary.hasOutcomes && !result.leagueSummary.hasFinalSelections)) {
+    return (
+      <PagePanel title="Season Analysis" description="End-of-season review comparing keeper recommendations vs. actual selections vs. performance.">
+        <p className="text-sm text-zinc-500">
+          No season outcome data yet. Import season outcomes via the Admin section to unlock this analysis.
+        </p>
+      </PagePanel>
+    );
+  }
+
+  const s = result.leagueSummary;
+
+  return (
+    <PagePanel title="Season Analysis" description="End-of-season review comparing keeper recommendations vs. actual selections vs. performance.">
+      <div className="space-y-6">
+        {/* League Summary Cards */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <SummaryStatCard label="Total Kept" value={s.totalKept} />
+          <SummaryStatCard
+            label="Hit Rate"
+            value={s.hitRate != null ? `${Math.round(s.hitRate * 100)}%` : "—"}
+            sub={`${s.hits} hits`}
+            color="text-emerald-700"
+          />
+          <SummaryStatCard
+            label="Bust Rate"
+            value={s.bustRate != null ? `${Math.round(s.bustRate * 100)}%` : "—"}
+            sub={`${s.busts} busts`}
+            color="text-red-700"
+          />
+          <SummaryStatCard
+            label="Left on Table"
+            value={s.leftOnTableCount}
+            sub={`${s.dodgedCount} dodged`}
+            color="text-sky-700"
+          />
+          <SummaryStatCard label="Rec Followed" value={s.recFollowedCount} />
+          <SummaryStatCard
+            label="Rec Hit Rate"
+            value={s.recHitRate != null ? `${Math.round(s.recHitRate * 100)}%` : "—"}
+          />
+          <SummaryStatCard
+            label="Avg Opp Cost"
+            value={s.avgOpportunityCostRounds != null ? `${s.avgOpportunityCostRounds} rds` : "—"}
+            sub="rounds of value left"
+          />
+          <SummaryStatCard label="Season" value={result.seasonYear} />
+        </div>
+
+        {/* Per-Team Cards */}
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold text-zinc-700">Team Breakdown</h3>
+          {result.teams.map((team) => (
+            <TeamAnalysisCard
+              key={team.teamId}
+              team={team}
+              expanded={expandedTeamId === team.teamId}
+              onToggle={() =>
+                setExpandedTeamId((prev) => (prev === team.teamId ? null : team.teamId))
+              }
+            />
+          ))}
+        </div>
+      </div>
+    </PagePanel>
+  );
+}
+
+function SummaryStatCard({
+  label,
+  value,
+  sub,
+  color,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  color?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
+      <p className="text-xs text-zinc-500">{label}</p>
+      <p className={cn("text-xl font-bold", color ?? "text-zinc-800")}>{value}</p>
+      {sub && <p className="text-xs text-zinc-400">{sub}</p>}
+    </div>
+  );
+}
+
+function TeamAnalysisCard({
+  team,
+  expanded,
+  onToggle,
+}: {
+  team: TeamSeasonAnalysis;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const hitPct = team.keepersKept > 0 ? Math.round((team.hits / team.keepersKept) * 100) : null;
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white">
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <div className="flex items-center gap-3">
+          <ChevronRight
+            className={cn("h-4 w-4 text-zinc-400 transition-transform", expanded && "rotate-90")}
+          />
+          <div>
+            <span className="font-medium text-zinc-800">{team.teamName}</span>
+            {team.ownerName && (
+              <span className="ml-2 text-xs text-zinc-500">{team.ownerName}</span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-4 text-sm">
+          <span className="text-zinc-500">
+            <span className="font-medium text-emerald-700">{team.hits}</span> hits /{" "}
+            <span className="font-medium text-red-600">{team.busts}</span> busts /{" "}
+            <span className="font-medium text-sky-600">{team.leftOnTableCount}</span> LOT
+          </span>
+          {hitPct != null && (
+            <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+              {hitPct}% hit rate
+            </span>
+          )}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-zinc-100 px-4 pb-4 pt-2">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-zinc-400 border-b border-zinc-100">
+                <th className="py-1.5 text-left font-medium">Player</th>
+                <th className="py-1.5 text-left font-medium">Pos</th>
+                <th className="py-1.5 text-right font-medium">Kept?</th>
+                <th className="py-1.5 text-right font-medium">Rec?</th>
+                <th className="py-1.5 text-right font-medium">Cost Rd</th>
+                <th className="py-1.5 text-right font-medium">ADP Rd</th>
+                <th className="py-1.5 text-right font-medium">Rank</th>
+                <th className="py-1.5 text-right font-medium">Pts</th>
+                <th className="py-1.5 text-right font-medium">Category</th>
+              </tr>
+            </thead>
+            <tbody>
+              {team.decisions.map((d: SeasonDecision) => (
+                <tr key={d.playerId} className="border-b border-zinc-50 hover:bg-zinc-50">
+                  <td className="py-1.5 font-medium text-zinc-800">{d.playerName}</td>
+                  <td className="py-1.5">
+                    <span
+                      className={cn(
+                        "rounded px-1 py-0.5 font-medium",
+                        POSITION_COLORS[d.position] ?? "bg-zinc-100 text-zinc-700",
+                      )}
+                    >
+                      {d.position}
+                    </span>
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {d.wasKept ? (
+                      <span className="text-emerald-600">Yes</span>
+                    ) : (
+                      <span className="text-zinc-400">No</span>
+                    )}
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {d.isRecommended ? (
+                      <span className="text-emerald-600">Yes</span>
+                    ) : (
+                      <span className="text-zinc-400">No</span>
+                    )}
+                  </td>
+                  <td className="py-1.5 text-right text-zinc-600">
+                    {d.keeperCostRound != null ? `Rd ${d.keeperCostRound}` : "—"}
+                  </td>
+                  <td className="py-1.5 text-right text-zinc-600">
+                    {d.adpRoundAtKeep != null ? `Rd ${d.adpRoundAtKeep}` : "—"}
+                  </td>
+                  <td className="py-1.5 text-right text-zinc-600">
+                    {d.finishRank != null ? `#${d.finishRank}` : "—"}
+                  </td>
+                  <td className="py-1.5 text-right text-zinc-600">
+                    {d.fantasyPoints != null ? d.fantasyPoints.toFixed(1) : "—"}
+                  </td>
+                  <td className="py-1.5 text-right">
+                    <CategoryBadge category={d.category} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {team.avgOpportunityCostRounds != null && (
+            <p className="mt-2 text-xs text-zinc-500">
+              Avg opportunity cost: <strong>{team.avgOpportunityCostRounds} rounds</strong> of value
+              left on table
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function TrendBadge({ trend }: { trend: string }) {
