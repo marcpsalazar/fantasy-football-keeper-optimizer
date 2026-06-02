@@ -1458,6 +1458,63 @@ export async function getTeamDraftHistory(
   }
 }
 
+export type KeeperSignalPlayer = {
+  playerId: string;
+  playerName: string;
+  position: string;
+  nflTeam: string | null;
+  adpPick: number | null;
+  adpRound: number | null;
+  keeperScore: number | null;
+  confidence: number;
+};
+
+export type TeamKeeperSignal = {
+  teamId: string;
+  teamName: string;
+  ownerName: string | null;
+  hasRunOptimizer: boolean;
+  probableKeepers: KeeperSignalPlayer[];
+};
+
+export type LeagueKeeperSignals = {
+  myTeamId: string | null;
+  allProbableKeeperIds: string[];
+  signals: TeamKeeperSignal[];
+};
+
+function mapKeeperSignalPlayer(row: ApiRow): KeeperSignalPlayer {
+  return {
+    playerId: text(row.player_id),
+    playerName: text(row.player_name),
+    position: text(row.position),
+    nflTeam: text(row.nfl_team) || null,
+    adpPick: row.adp_pick != null ? number(row.adp_pick) : null,
+    adpRound: row.adp_round != null ? number(row.adp_round) : null,
+    keeperScore: row.keeper_score != null ? number(row.keeper_score) : null,
+    confidence: number(row.confidence),
+  };
+}
+
+function mapTeamKeeperSignal(row: ApiRow): TeamKeeperSignal {
+  return {
+    teamId: text(row.team_id),
+    teamName: text(row.team_name),
+    ownerName: text(row.owner_name) || null,
+    hasRunOptimizer: Boolean(row.has_run_optimizer),
+    probableKeepers: ((row.probable_keepers as ApiRow[]) ?? []).map(mapKeeperSignalPlayer),
+  };
+}
+
+export async function getLeagueKeeperSignals(leagueId: string): Promise<LeagueKeeperSignals> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/keeper-signals`);
+  return {
+    myTeamId: text(payload.my_team_id) || null,
+    allProbableKeeperIds: ((payload.all_probable_keeper_ids as string[]) ?? []),
+    signals: ((payload.signals as ApiRow[]) ?? []).map(mapTeamKeeperSignal),
+  };
+}
+
 export function exportUrl(
   leagueId: string,
   format: "xlsx" | "csv" | "pdf" | "adp-template" = "xlsx",
