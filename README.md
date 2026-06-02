@@ -30,6 +30,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
 - **Multi-league platform**: create or join multiple leagues, switch between them with the league selector. Platform admins can access all leagues without a per-league membership.
 - **Trade Analyzer**: model the keeper value impact of a proposed trade before agreeing to it. Supports player-for-player trades and draft pick swaps. Shows baseline vs. hypothetical keeper lineups, surplus delta, gained and lost players, and an optional AI narrative verdict.
 - **Opponent Keeper Intelligence**: surfaces probable keeper choices for every team in the league, derived from each team's optimizer recommendations. Visible in Mock Draft setup as an expandable panel showing opponent teams, their likely-kept players (name, position, ADP round, confidence), and a position breakdown. Probable keepers are also injected into the AI strategy plan context so the plan accounts for players likely off the board before pick 1.
+- **Historical Keeper ROI Tracker**: tracks whether past keeper decisions paid off. Admins import end-of-season outcome CSVs (player, finish rank, fantasy points); the app cross-references keeper cost and ADP at the time of the keep, auto-computes `met_adp_projection` and `is_bust` flags, and presents three views — League Season Summary (% hit ADP, bust rate, avg surplus by year), Team ROI (per-manager track record with expandable outcome rows), and Player History (recurring keeper candidates sorted by times kept).
 - **Sleeper league import**: paste a Sleeper League ID to automatically pull teams, draft results, and final rosters — preview first, then commit.
 - **Mock Draft**: run a simulated draft against AI-powered bots, get a personalized pre-draft strategy plan, and receive a graded post-draft analysis.
   - Full snake draft board with keeper forfeit pre-placement.
@@ -921,6 +922,10 @@ GET    /api/leagues/{league_id}/optimizer/results
 POST   /api/leagues/{league_id}/optimizer/scenarios
 POST   /api/leagues/{league_id}/optimizer/trade-analysis
 GET    /api/leagues/{league_id}/keeper-signals
+
+POST   /api/leagues/{league_id}/keeper-outcomes/preview
+POST   /api/leagues/{league_id}/keeper-outcomes/import
+GET    /api/leagues/{league_id}/keeper-history
 
 GET    /api/leagues/{league_id}/manual-overrides
 PUT    /api/leagues/{league_id}/manual-overrides

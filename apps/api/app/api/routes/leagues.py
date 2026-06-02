@@ -104,6 +104,8 @@ from app.services.ai_log import is_over_monthly_budget, monthly_usage_summary, r
 from app.services import draft_history as draft_history_svc
 from app.schemas.draft_history import TeamDraftHistoryRead
 from app.services import keeper_signals as keeper_signals_svc
+from app.services import keeper_history as keeper_history_svc
+from app.services.keeper_history import KeeperHistoryImportError
 
 router = APIRouter(
     prefix="/api",
@@ -2648,6 +2650,55 @@ def get_keeper_signals(
             for sig in signals.signals
         ],
     }
+
+
+@router.post("/leagues/{league_id}/keeper-outcomes/preview")
+def preview_keeper_outcomes(
+    league_id: uuid.UUID,
+    payload: dict,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    csv_text = payload.get("csv_text", "")
+    try:
+        result = keeper_history_svc.preview_outcomes_csv(session, league_id, csv_text)
+    except KeeperHistoryImportError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return result.to_payload()
+
+
+@router.post("/leagues/{league_id}/keeper-outcomes/import")
+def import_keeper_outcomes(
+    league_id: uuid.UUID,
+    payload: dict,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    csv_text = payload.get("csv_text", "")
+    try:
+        result = keeper_history_svc.import_outcomes_csv(session, league_id, csv_text)
+    except KeeperHistoryImportError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return {
+        "imported_count": result.imported,
+        "updated_count": result.updated,
+        "skipped_count": result.skipped,
+        "rows": result.rows,
+    }
+
+
+@router.get("/leagues/{league_id}/keeper-history")
+def get_keeper_history(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    _require_league(session, league_id)
+    return keeper_history_svc.get_keeper_history(session, league_id)
 
 
 def _is_league_admin(session: Session, user: User | None, league_id: uuid.UUID) -> bool:

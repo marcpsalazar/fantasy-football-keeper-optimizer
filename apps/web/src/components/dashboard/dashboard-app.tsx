@@ -152,6 +152,14 @@ import {
   type TeamDraftHistory,
   getLeagueDraftHistory,
   getLeagueKeeperSignals,
+  getKeeperHistory,
+  previewKeeperOutcomesCsv,
+  importKeeperOutcomesCsv,
+  type KeeperHistory,
+  type KeeperOutcomesPreviewResult,
+  type TeamKeeperHistory,
+  type PlayerKeeperHistory,
+  type LeagueKeeperSeasonSummary,
   type LeagueKeeperSignals,
   type TeamKeeperSignal,
   type OptimizerSettingsForm,
@@ -178,7 +186,8 @@ type ViewId =
   | "scenarios"
   | "outlooks"
   | "draft-impact"
-  | "mock-draft";
+  | "mock-draft"
+  | "keeper-history";
 
 type NavItem = {
   id: ViewId;
@@ -195,6 +204,7 @@ const navItems: NavItem[] = [
   { id: "scenarios", label: "Scenario Comparison", icon: GitCompare },
   { id: "draft-impact", label: "Draft Impact", icon: ClipboardList },
   { id: "mock-draft", label: "Mock Draft", icon: Bot },
+  { id: "keeper-history", label: "Keeper History", icon: History },
   { id: "outlooks", label: "Team Outlook", icon: ShieldCheck },
   { id: "teams", label: "Teams", icon: Users },
   { id: "draft", label: "Draft Results", icon: ClipboardList },
@@ -1685,6 +1695,7 @@ export function DashboardApp() {
             {activeView === "outlooks" && <TeamOutlooksPage />}
             {activeView === "draft-impact" && <DraftImpactPage />}
             {activeView === "mock-draft" && <MockDraftPage />}
+            {activeView === "keeper-history" && <KeeperHistoryPage />}
           </div>
         </section>
       </div>
@@ -4159,6 +4170,7 @@ function AdminDataImports({
     <div className="space-y-5">
       <SleeperImportPanel />
       <YahooImportPanel />
+      <KeeperOutcomesImportPanel />
       <div className="grid gap-5 xl:grid-cols-2">
         <CsvImportPanel
           buttonLabel="Import Draft Results"
@@ -4588,6 +4600,123 @@ function YahooImportPanel() {
             Select a Yahoo league and click Preview to validate before importing.
           </div>
         ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function KeeperOutcomesImportPanel() {
+  const { activeLeagueId } = useDashboard();
+  const [csvText, setCsvText] = React.useState("");
+  const [preview, setPreview] = React.useState<KeeperOutcomesPreviewResult | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [successMessage, setSuccessMessage] = React.useState("");
+
+  const handlePreview = async () => {
+    if (!activeLeagueId || !csvText.trim()) return;
+    setLoading(true);
+    setError("");
+    setSuccessMessage("");
+    setPreview(null);
+    try {
+      const result = await previewKeeperOutcomesCsv(activeLeagueId, csvText);
+      setPreview(result);
+    } catch {
+      setError("Preview failed — check the CSV format and try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!activeLeagueId || !csvText.trim()) return;
+    setLoading(true);
+    setError("");
+    setSuccessMessage("");
+    try {
+      const result = await importKeeperOutcomesCsv(activeLeagueId, csvText);
+      setSuccessMessage(
+        `Imported ${result.importedCount} new, updated ${result.updatedCount}, skipped ${result.skippedCount} rows.`,
+      );
+      setPreview(null);
+      setCsvText("");
+    } catch {
+      setError("Import failed — check the CSV and try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Season Outcomes CSV</CardTitle>
+        <CardDescription>
+          Import end-of-season keeper results to track ROI over time. Required columns:{" "}
+          <code className="text-xs">player, position, team, finish_rank, fantasy_points</code>.
+          Optional: <code className="text-xs">season_year, met_projection, is_bust, notes</code>.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Textarea
+          className="min-h-[120px] font-mono text-xs"
+          disabled={loading}
+          onChange={(e) => {
+            setCsvText(e.target.value);
+            setPreview(null);
+            setSuccessMessage("");
+            setError("");
+          }}
+          placeholder="player,position,team,finish_rank,fantasy_points&#10;Patrick Mahomes,QB,Chiefs,1,420.5"
+          value={csvText}
+        />
+        <div className="flex gap-2">
+          <Button
+            disabled={loading || !csvText.trim()}
+            onClick={handlePreview}
+            size="sm"
+            variant="outline"
+          >
+            {loading ? "Loading…" : "Preview"}
+          </Button>
+          <Button
+            disabled={loading || !preview?.valid}
+            onClick={handleImport}
+            size="sm"
+          >
+            Import
+          </Button>
+        </div>
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        {successMessage && <p className="text-sm text-emerald-600">{successMessage}</p>}
+        {preview && (
+          <div className="space-y-2 rounded-md border border-zinc-200 bg-white p-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={preview.valid ? "success" : "danger"}>
+                {preview.valid ? "Ready to Import" : "Has Errors"}
+              </Badge>
+              <span className="text-zinc-500">
+                {preview.validRows}/{preview.totalRows} valid rows
+              </span>
+              {preview.warningCount > 0 && (
+                <span className="text-amber-600">{preview.warningCount} warning(s)</span>
+              )}
+            </div>
+            {preview.errors.length > 0 && (
+              <ul className="space-y-1 text-red-600">
+                {preview.errors.slice(0, 5).map((e, i) => (
+                  <li key={i} className="text-xs">
+                    Row {String(e.row_number)}: {String(e.message)}
+                  </li>
+                ))}
+                {preview.errors.length > 5 && (
+                  <li className="text-xs text-zinc-500">…and {preview.errors.length - 5} more</li>
+                )}
+              </ul>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -6199,6 +6328,339 @@ function DraftImpactPage() {
           tableId="draft-impact"
           teamFilter={{ columnId: "team" }}
         />
+      </div>
+    </PagePanel>
+  );
+}
+
+const POSITION_COLORS: Record<string, string> = {
+  QB: "bg-violet-100 text-violet-800",
+  RB: "bg-emerald-100 text-emerald-800",
+  WR: "bg-sky-100 text-sky-800",
+  TE: "bg-amber-100 text-amber-800",
+};
+
+function positionColor(position: string | null): string {
+  return POSITION_COLORS[position ?? ""] ?? "bg-zinc-100 text-zinc-700";
+}
+
+function KeeperHistoryPage() {
+  const { activeLeagueId } = useDashboard();
+  const [history, setHistory] = React.useState<KeeperHistory | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [expandedTeamId, setExpandedTeamId] = React.useState<string | null>(null);
+  const [expandedPlayerId, setExpandedPlayerId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!activeLeagueId) return;
+    setLoading(true);
+    setError("");
+    getKeeperHistory(activeLeagueId)
+      .then(setHistory)
+      .catch(() => setError("Could not load keeper history."))
+      .finally(() => setLoading(false));
+  }, [activeLeagueId]);
+
+  if (loading) {
+    return (
+      <PagePanel title="Keeper History" description="Multi-year keeper ROI tracking by season, team, and player.">
+        <p className="text-sm text-zinc-500">Loading…</p>
+      </PagePanel>
+    );
+  }
+
+  if (error) {
+    return (
+      <PagePanel title="Keeper History" description="Multi-year keeper ROI tracking by season, team, and player.">
+        <p className="text-sm text-red-600">{error}</p>
+      </PagePanel>
+    );
+  }
+
+  if (!history || (history.leagueSummary.length === 0 && history.teamHistory.length === 0)) {
+    return (
+      <PagePanel title="Keeper History" description="Multi-year keeper ROI tracking by season, team, and player.">
+        <p className="text-sm text-zinc-500">
+          No keeper outcome data yet. Ask your league admin to import Season Outcomes CSV in the
+          Admin section.
+        </p>
+      </PagePanel>
+    );
+  }
+
+  return (
+    <PagePanel title="Keeper History" description="Multi-year keeper ROI tracking by season, team, and player.">
+      <div className="space-y-6">
+        {/* League Season Summary */}
+        {history.leagueSummary.length > 0 && (
+          <section>
+            <h3 className="mb-3 text-sm font-semibold text-zinc-700">League Season Summary</h3>
+            <div className="overflow-x-auto rounded-md border border-zinc-200">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Season</th>
+                    <th className="px-3 py-2 text-right">Keepers</th>
+                    <th className="px-3 py-2 text-right">Met ADP</th>
+                    <th className="px-3 py-2 text-right">Busts</th>
+                    <th className="px-3 py-2 text-right">Avg Surplus (rds)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {history.leagueSummary.map((s: LeagueKeeperSeasonSummary) => (
+                    <tr key={s.seasonYear} className="hover:bg-zinc-50">
+                      <td className="px-3 py-2 font-medium">{s.seasonYear}</td>
+                      <td className="px-3 py-2 text-right">{s.totalKeepers}</td>
+                      <td className="px-3 py-2 text-right">
+                        {s.metProjectionPct != null
+                          ? `${Math.round(s.metProjectionPct * 100)}%`
+                          : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {s.bustPct != null ? `${Math.round(s.bustPct * 100)}%` : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {s.avgSurplusRounds != null ? s.avgSurplusRounds.toFixed(1) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {/* Team ROI */}
+        {history.teamHistory.length > 0 && (
+          <section>
+            <h3 className="mb-3 text-sm font-semibold text-zinc-700">Team ROI</h3>
+            <div className="space-y-2">
+              {history.teamHistory.map((team: TeamKeeperHistory) => {
+                const isExpanded = expandedTeamId === team.teamId;
+                return (
+                  <div key={team.teamId} className="rounded-md border border-zinc-200">
+                    <button
+                      className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-zinc-50"
+                      onClick={() => setExpandedTeamId(isExpanded ? null : team.teamId)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium text-zinc-900">{team.teamName}</span>
+                        {team.ownerName && (
+                          <span className="text-sm text-zinc-500">{team.ownerName}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 text-sm text-zinc-600">
+                        <span>{team.totalKeepers} keepers</span>
+                        {team.metProjectionPct != null && (
+                          <span className="text-emerald-600">
+                            {Math.round(team.metProjectionPct * 100)}% hit
+                          </span>
+                        )}
+                        {team.avgSurplusRounds != null && (
+                          <span>
+                            {team.avgSurplusRounds > 0 ? "+" : ""}
+                            {team.avgSurplusRounds.toFixed(1)} rds surplus
+                          </span>
+                        )}
+                        <ChevronRight
+                          className={cn(
+                            "h-4 w-4 text-zinc-400 transition-transform",
+                            isExpanded && "rotate-90",
+                          )}
+                        />
+                      </div>
+                    </button>
+                    {isExpanded && (
+                      <div className="border-t border-zinc-100 px-4 py-3">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead className="text-zinc-500">
+                              <tr>
+                                <th className="pb-1 text-left">Season</th>
+                                <th className="pb-1 text-left">Player</th>
+                                <th className="pb-1 text-left">Pos</th>
+                                <th className="pb-1 text-right">Cost (rd)</th>
+                                <th className="pb-1 text-right">ADP (rd)</th>
+                                <th className="pb-1 text-right">Surplus</th>
+                                <th className="pb-1 text-right">Finish</th>
+                                <th className="pb-1 text-right">Pts</th>
+                                <th className="pb-1 text-center">Met ADP</th>
+                                <th className="pb-1 text-center">Bust</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-50">
+                              {team.outcomes.map((o) => (
+                                <tr key={o.outcomeId}>
+                                  <td className="py-1 pr-2">{o.seasonYear}</td>
+                                  <td className="py-1 pr-2 font-medium">{o.playerName}</td>
+                                  <td className="py-1 pr-2">
+                                    <span
+                                      className={cn(
+                                        "rounded px-1 py-0.5 text-xs font-medium",
+                                        positionColor(o.position),
+                                      )}
+                                    >
+                                      {o.position}
+                                    </span>
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.keeperCostRound ?? "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.adpRoundAtKeep ?? "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.keeperValueAtKeep != null
+                                      ? (o.keeperValueAtKeep > 0 ? "+" : "") +
+                                        o.keeperValueAtKeep.toFixed(1)
+                                      : "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">{o.finishRank ?? "—"}</td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.fantasyPoints != null ? o.fantasyPoints.toFixed(1) : "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-center">
+                                    {o.metAdpProjection == null
+                                      ? "—"
+                                      : o.metAdpProjection
+                                        ? "✓"
+                                        : "✗"}
+                                  </td>
+                                  <td className="py-1 text-center">
+                                    {o.isBust ? (
+                                      <span className="text-red-500">✗</span>
+                                    ) : (
+                                      <span className="text-zinc-300">—</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* Player History */}
+        {history.playerHistory.length > 0 && (
+          <section>
+            <h3 className="mb-3 text-sm font-semibold text-zinc-700">Player History</h3>
+            <div className="space-y-2">
+              {history.playerHistory.map((player: PlayerKeeperHistory) => {
+                const isExpanded = expandedPlayerId === player.playerId;
+                return (
+                  <div key={player.playerId} className="rounded-md border border-zinc-200">
+                    <button
+                      className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-zinc-50"
+                      onClick={() => setExpandedPlayerId(isExpanded ? null : player.playerId)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={cn(
+                            "rounded px-1.5 py-0.5 text-xs font-medium",
+                            positionColor(player.position),
+                          )}
+                        >
+                          {player.position}
+                        </span>
+                        <span className="font-medium text-zinc-900">{player.playerName}</span>
+                        {player.nflTeam && (
+                          <span className="text-xs text-zinc-500">{player.nflTeam}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 text-sm text-zinc-600">
+                        <span>×{player.timesKept}</span>
+                        {player.metProjectionPct != null && (
+                          <span className="text-emerald-600">
+                            {Math.round(player.metProjectionPct * 100)}% hit
+                          </span>
+                        )}
+                        {player.avgSurplusRounds != null && (
+                          <span>
+                            {player.avgSurplusRounds > 0 ? "+" : ""}
+                            {player.avgSurplusRounds.toFixed(1)} rds avg
+                          </span>
+                        )}
+                        <ChevronRight
+                          className={cn(
+                            "h-4 w-4 text-zinc-400 transition-transform",
+                            isExpanded && "rotate-90",
+                          )}
+                        />
+                      </div>
+                    </button>
+                    {isExpanded && (
+                      <div className="border-t border-zinc-100 px-4 py-3">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead className="text-zinc-500">
+                              <tr>
+                                <th className="pb-1 text-left">Season</th>
+                                <th className="pb-1 text-left">Team</th>
+                                <th className="pb-1 text-right">Cost (rd)</th>
+                                <th className="pb-1 text-right">ADP (rd)</th>
+                                <th className="pb-1 text-right">Surplus</th>
+                                <th className="pb-1 text-right">Finish</th>
+                                <th className="pb-1 text-right">Pts</th>
+                                <th className="pb-1 text-center">Hit</th>
+                                <th className="pb-1 text-center">Bust</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-50">
+                              {player.outcomes.map((o) => (
+                                <tr key={o.outcomeId}>
+                                  <td className="py-1 pr-2">{o.seasonYear}</td>
+                                  <td className="py-1 pr-2">{o.teamName}</td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.keeperCostRound ?? "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.adpRoundAtKeep ?? "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.keeperValueAtKeep != null
+                                      ? (o.keeperValueAtKeep > 0 ? "+" : "") +
+                                        o.keeperValueAtKeep.toFixed(1)
+                                      : "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-right">{o.finishRank ?? "—"}</td>
+                                  <td className="py-1 pr-2 text-right">
+                                    {o.fantasyPoints != null ? o.fantasyPoints.toFixed(1) : "—"}
+                                  </td>
+                                  <td className="py-1 pr-2 text-center">
+                                    {o.metAdpProjection == null
+                                      ? "—"
+                                      : o.metAdpProjection
+                                        ? "✓"
+                                        : "✗"}
+                                  </td>
+                                  <td className="py-1 text-center">
+                                    {o.isBust ? (
+                                      <span className="text-red-500">✗</span>
+                                    ) : (
+                                      <span className="text-zinc-300">—</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </div>
     </PagePanel>
   );

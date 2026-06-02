@@ -1515,6 +1515,209 @@ export async function getLeagueKeeperSignals(leagueId: string): Promise<LeagueKe
   };
 }
 
+// ── Keeper History ────────────────────────────────────────────────────────────
+
+export type KeeperOutcomeRow = {
+  outcomeId: string;
+  seasonYear: number;
+  teamName: string | null;
+  playerName: string | null;
+  position: string | null;
+  keeperCostRound: number | null;
+  adpRoundAtKeep: number | null;
+  keeperValueAtKeep: number | null;
+  finishRank: number | null;
+  fantasyPoints: number | null;
+  metAdpProjection: boolean | null;
+  isBust: boolean;
+  notes: string | null;
+};
+
+export type TeamKeeperHistory = {
+  teamId: string;
+  teamName: string;
+  ownerName: string | null;
+  seasons: number;
+  seasonYears: number[];
+  totalKeepers: number;
+  metProjectionCount: number;
+  metProjectionPct: number | null;
+  bustCount: number;
+  bustPct: number | null;
+  avgSurplusRounds: number | null;
+  outcomes: KeeperOutcomeRow[];
+};
+
+export type LeagueKeeperSeasonSummary = {
+  seasonYear: number;
+  totalKeepers: number;
+  metProjectionCount: number;
+  metProjectionPct: number | null;
+  bustCount: number;
+  bustPct: number | null;
+  avgSurplusRounds: number | null;
+};
+
+export type PlayerKeeperHistory = {
+  playerId: string;
+  playerName: string;
+  position: string;
+  nflTeam: string | null;
+  timesKept: number;
+  avgFinishRank: number | null;
+  avgKeeperCostRound: number | null;
+  avgSurplusRounds: number | null;
+  metProjectionCount: number;
+  metProjectionPct: number | null;
+  bustCount: number;
+  outcomes: KeeperOutcomeRow[];
+};
+
+export type KeeperHistory = {
+  leagueSummary: LeagueKeeperSeasonSummary[];
+  teamHistory: TeamKeeperHistory[];
+  playerHistory: PlayerKeeperHistory[];
+};
+
+function mapKeeperOutcomeRow(row: ApiRow): KeeperOutcomeRow {
+  return {
+    outcomeId: text(row.outcome_id),
+    seasonYear: number(row.season_year),
+    teamName: (row.team_name as string) ?? null,
+    playerName: (row.player_name as string) ?? null,
+    position: (row.position as string) ?? null,
+    keeperCostRound: (row.keeper_cost_round as number) ?? null,
+    adpRoundAtKeep: (row.adp_round_at_keep as number) ?? null,
+    keeperValueAtKeep: (row.keeper_value_at_keep as number) ?? null,
+    finishRank: (row.finish_rank as number) ?? null,
+    fantasyPoints: (row.fantasy_points as number) ?? null,
+    metAdpProjection: row.met_adp_projection == null ? null : Boolean(row.met_adp_projection),
+    isBust: Boolean(row.is_bust),
+    notes: (row.notes as string) ?? null,
+  };
+}
+
+function mapTeamKeeperHistory(row: ApiRow): TeamKeeperHistory {
+  return {
+    teamId: text(row.team_id),
+    teamName: text(row.team_name),
+    ownerName: (row.owner_name as string) ?? null,
+    seasons: number(row.seasons),
+    seasonYears: ((row.season_years as number[]) ?? []),
+    totalKeepers: number(row.total_keepers),
+    metProjectionCount: number(row.met_projection_count),
+    metProjectionPct: (row.met_projection_pct as number) ?? null,
+    bustCount: number(row.bust_count),
+    bustPct: (row.bust_pct as number) ?? null,
+    avgSurplusRounds: (row.avg_surplus_rounds as number) ?? null,
+    outcomes: ((row.outcomes as ApiRow[]) ?? []).map(mapKeeperOutcomeRow),
+  };
+}
+
+function mapLeagueKeeperSeasonSummary(row: ApiRow): LeagueKeeperSeasonSummary {
+  return {
+    seasonYear: number(row.season_year),
+    totalKeepers: number(row.total_keepers),
+    metProjectionCount: number(row.met_projection_count),
+    metProjectionPct: (row.met_projection_pct as number) ?? null,
+    bustCount: number(row.bust_count),
+    bustPct: (row.bust_pct as number) ?? null,
+    avgSurplusRounds: (row.avg_surplus_rounds as number) ?? null,
+  };
+}
+
+function mapPlayerKeeperHistory(row: ApiRow): PlayerKeeperHistory {
+  return {
+    playerId: text(row.player_id),
+    playerName: text(row.player_name),
+    position: text(row.position),
+    nflTeam: (row.nfl_team as string) ?? null,
+    timesKept: number(row.times_kept),
+    avgFinishRank: (row.avg_finish_rank as number) ?? null,
+    avgKeeperCostRound: (row.avg_keeper_cost_round as number) ?? null,
+    avgSurplusRounds: (row.avg_surplus_rounds as number) ?? null,
+    metProjectionCount: number(row.met_projection_count),
+    metProjectionPct: (row.met_projection_pct as number) ?? null,
+    bustCount: number(row.bust_count),
+    outcomes: ((row.outcomes as ApiRow[]) ?? []).map(mapKeeperOutcomeRow),
+  };
+}
+
+export type KeeperOutcomesPreviewResult = {
+  kind: string;
+  valid: boolean;
+  totalRows: number;
+  validRows: number;
+  errorCount: number;
+  warningCount: number;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  errors: Record<string, unknown>[];
+  warnings: Record<string, unknown>[];
+};
+
+export async function previewKeeperOutcomesCsv(
+  leagueId: string,
+  csvText: string,
+): Promise<KeeperOutcomesPreviewResult> {
+  const payload = await fetchJson<ApiRow>(
+    `/api/leagues/${leagueId}/keeper-outcomes/preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ csv_text: csvText }),
+    },
+  );
+  return {
+    kind: text(payload.kind),
+    valid: Boolean(payload.valid),
+    totalRows: number(payload.total_rows),
+    validRows: number(payload.valid_rows),
+    errorCount: number(payload.error_count),
+    warningCount: number(payload.warning_count),
+    columns: (payload.columns as string[]) ?? [],
+    rows: (payload.rows as Record<string, unknown>[]) ?? [],
+    errors: (payload.errors as Record<string, unknown>[]) ?? [],
+    warnings: (payload.warnings as Record<string, unknown>[]) ?? [],
+  };
+}
+
+export type KeeperOutcomesImportResult = {
+  importedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  rows: Record<string, unknown>[];
+};
+
+export async function importKeeperOutcomesCsv(
+  leagueId: string,
+  csvText: string,
+): Promise<KeeperOutcomesImportResult> {
+  const payload = await fetchJson<ApiRow>(
+    `/api/leagues/${leagueId}/keeper-outcomes/import`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ csv_text: csvText }),
+    },
+  );
+  return {
+    importedCount: number(payload.imported_count),
+    updatedCount: number(payload.updated_count),
+    skippedCount: number(payload.skipped_count),
+    rows: (payload.rows as Record<string, unknown>[]) ?? [],
+  };
+}
+
+export async function getKeeperHistory(leagueId: string): Promise<KeeperHistory> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/keeper-history`);
+  return {
+    leagueSummary: ((payload.league_summary as ApiRow[]) ?? []).map(mapLeagueKeeperSeasonSummary),
+    teamHistory: ((payload.team_history as ApiRow[]) ?? []).map(mapTeamKeeperHistory),
+    playerHistory: ((payload.player_history as ApiRow[]) ?? []).map(mapPlayerKeeperHistory),
+  };
+}
+
 export function exportUrl(
   leagueId: string,
   format: "xlsx" | "csv" | "pdf" | "adp-template" = "xlsx",

@@ -72,22 +72,9 @@ Opponent intelligence shipped: `apps/api/app/services/keeper_signals.py` derives
 
 ---
 
-### 2.3 Historical Keeper ROI Tracker
+### ~~2.3 Historical Keeper ROI Tracker~~ ✅ Complete
 
-**Why it matters:** Year-over-year data is a defensible moat. If the app tracks whether past keeper decisions paid off — did they finish in the top 12? did the ADP hold? — it gives users a reason to come back every offseason and builds unique per-league historical data no external source has.
-
-**Scope:**
-
-- New `season_year` dimension on all optimizer result records (already present on `League`)
-- New model: `KeeperOutcome` — records final season finish (fantasy points or rank), whether keeper met their ADP projection, and a boolean "bust" flag
-- Admin import: end-of-season results CSV (player, team, finish rank, fantasy points total)
-- New endpoint: `GET /api/leagues/{league_id}/keeper-history` — returns multi-year keeper ROI summary per team and per player
-- Frontend: "Keeper History" tab in the League Dashboard
-  - League-level: average surplus rounds captured per year; % of recommended keepers who hit their ADP projections
-  - Team-level: individual manager's keeper ROI track record
-  - Player-level: historical keeper cost vs. actual finish — useful for recurring keeper candidates
-
-**Dependencies:** Requires historical data accumulated over at least one prior season. Can be bootstrapped by letting admins manually enter prior-year outcomes via CSV.
+Shipped. `KeeperOutcome` model and Alembic migration `20260602_0012` add a dedicated table with full keeper economics (cost, ADP at time of keep, keeper value, finish rank, fantasy points, `met_adp_projection`, `is_bust`). `keeper_history.py` service handles CSV preview/import and multi-year aggregation. Three new endpoints: `POST /api/leagues/{league_id}/keeper-outcomes/preview`, `POST /api/leagues/{league_id}/keeper-outcomes/import`, and `GET /api/leagues/{league_id}/keeper-history`. The admin panel gains a Season Outcomes CSV card. A new "Keeper History" nav entry renders three collapsible sections: League Season Summary (keepers kept, % hit ADP, bust rate, avg surplus), Team ROI (per-team breakdown with expandable outcome rows), and Player History (sorted by times kept, with per-player outcome drill-down).
 
 ---
 
@@ -177,7 +164,7 @@ These features increase the value of the app for power users who return year-rou
 | 3 | Auction Draft Mode (1.2) | Opens a large excluded market segment | High |
 | 4 | Shareable Keeper Report Card (3.1) | Low effort, viral surface, organic acquisition | Low |
 | 5 | Commissioner Tools Pack (3.2) | Acquisition via commissioners = leverage | Medium |
-| 6 | Historical Keeper ROI Tracker (2.3) | Long-term data moat; requires at least one full season | Medium |
+| ✅ | ~~Historical Keeper ROI Tracker (2.3)~~ | — | — |
 | 7 | News → Keeper Value Alerts (4.1) | Drives offseason re-engagement | Medium |
 | 8 | Value Window Projection (4.2) | Depth feature for power users | Medium |
 
@@ -185,6 +172,6 @@ These features increase the value of the app for power users who return year-rou
 
 ## What to Build Next
 
-**Shareable Keeper Report Card (3.1)** or **Auction Draft Mode (1.2)** are the top candidates.
+**Shareable Keeper Report Card (3.1)** or **Auction Draft Mode (1.2)** are the top candidates. With 2.2 and 2.3 both shipped, the entire Tier 2 intelligence features are now live.
 
 The trade calculator and opponent intelligence are complete. The report card (3.1) is low effort and viral — it leverages the optimizer surplus data already computed and would get shared in league group chats. Auction mode (1.2) opens a large excluded market segment but requires a parallel optimizer path and new ADP source integration.
