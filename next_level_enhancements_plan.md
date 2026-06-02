@@ -106,19 +106,9 @@ Four-step guided workflow for closing out a keeper season:
 
 ---
 
-### 3.1 Shareable Keeper Report Card
+### ~~3.1 Shareable Keeper Report Card~~ ✅ Complete
 
-**Why it matters:** People share things that make them look smart. A one-page visual summary of a manager's keeper decisions — letter grade, surplus rounds captured, best/worst keeper, verdict — exportable as a PNG image card, would get shared in league group chats. It drives organic acquisition.
-
-**Scope:**
-
-- New export endpoint: `GET /api/leagues/{league_id}/teams/{team_id}/exports/keeper-card.png`
-  - Renders a styled card: team name, league name, season year, overall grade, total surplus rounds, best keeper call, worst keeper call (if any busts), a single verdict line
-  - Server-side render using `Pillow` (Python) or a Next.js API route that renders a React component to an image via `@vercel/og` or `html2canvas`
-- Frontend: "Share" button in Team Outlook page → downloads the PNG card
-- Design: clean dark card with league branding, position badges, round surplus indicators; readable at mobile share sizes
-
-**Dependencies:** Requires keeper recommendations and optimizer results (already exist). Post-season outcome data from the ROI tracker and end-of-season analysis now available to improve the grade narrative.
+Shipped: `apps/api/app/services/keeper_card.py` renders a 900×500 PNG card using Pillow. Queries the team's Default-scenario recommendations to compute total surplus rounds, assigns a letter grade (A ≥ 10 / B ≥ 6 / C ≥ 2 / D < 2), and draws a dark card with: league/year header, team name + owner, per-keeper position-coloured rows with surplus rounds, grade circle, surplus stat, best pick, and a verdict footer. Font resolution tries macOS → Ubuntu system fonts in order, falls back to Pillow's built-in default. `GET /api/leagues/{league_id}/teams/{team_id}/exports/keeper-card.png` endpoint added to `leagues.py`. Each `OutlookCard` on the Team Outlooks page gains a Share button: on mobile it calls `navigator.share({ files: [pngFile] })` to open the native OS share sheet (covering Instagram, Facebook, X, Messages, etc.); on desktop it falls back to a file download. `pillow>=10.1.0` added to `pyproject.toml`.
 
 ---
 
@@ -186,18 +176,18 @@ Four-step guided workflow for closing out a keeper season:
 | ✅ | ~~Opponent Keeper Intelligence (2.2)~~ | — | — |
 | ✅ | ~~Historical Keeper ROI Tracker (2.3)~~ | — | — |
 | ✅ | ~~End-of-Season Finalization Workflow (2.4)~~ | — | — |
+| ✅ | ~~Shareable Keeper Report Card (3.1)~~ | — | — |
 | 1 | Auction Draft Mode (1.2) | Opens a large excluded market segment | High |
-| 2 | Shareable Keeper Report Card (3.1) | Low effort, viral surface, organic acquisition | Low |
-| 3 | Commissioner Tools Pack (3.2) | Acquisition via commissioners = leverage | Medium |
-| 4 | News → Keeper Value Alerts (4.1) | Drives offseason re-engagement; news feed already live | Medium |
-| 5 | Value Window Projection (4.2) | Depth feature for power users; player age data now available via Sleeper | Medium |
+| 2 | Commissioner Tools Pack (3.2) | Acquisition via commissioners = leverage | Medium |
+| 3 | News → Keeper Value Alerts (4.1) | Drives offseason re-engagement; news feed already live | Medium |
+| 4 | Value Window Projection (4.2) | Depth feature for power users; player age data now available via Sleeper | Medium |
 
 ---
 
 ## What to Build Next
 
-**Shareable Keeper Report Card (3.1)** is the lowest-effort next step with the highest viral upside — it leverages optimizer surplus data and the new end-of-season outcome categorizations (HIT/MISS/BUST) that are now live, making the grade meaningful. Effort is low (server-side PNG render via Pillow + one export endpoint + a "Share" button).
-
 **Auction Draft Mode (1.2)** is the highest-impact unbuilt feature — it opens the entire auction keeper league segment that is currently excluded. It requires a parallel optimizer path and the FFC auction ADP endpoint, making it a heavier lift but the most strategically important gap remaining.
 
-**News → Keeper Value Alerts (4.1)** is closer to done than it looks: `news_feed.py` and the news endpoint are already live. The remaining work is pattern-matching headlines to keeper candidates and adding one optimizer pass for ADP sensitivity.
+**Commissioner Tools Pack (3.2)** is the clearest acquisition lever: one convinced commissioner brings 10+ users. The compliance checker and keeper reveal page are self-contained and could ship incrementally (reveal page first, then email reminders).
+
+**News → Keeper Value Alerts (4.1)** is closer to done than it looks: `news_feed.py` and the `/news/fantasy-football` endpoint are already live. The remaining work is pattern-matching headlines to keeper candidates and adding one optimizer pass per candidate for ADP sensitivity.
