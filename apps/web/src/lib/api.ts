@@ -712,11 +712,27 @@ export type TradeAnalysisResult = {
   baselineSurplus: number;
   hypotheticalSurplus: number;
   surplusDelta: number;
+  givePicksValue: number;
+  receivePicksValue: number;
+  pickValueDelta: number;
+  totalValueDelta: number;
   gained: TradePlayerRow[];
   lost: TradePlayerRow[];
+  givingTeamId: string;
+  givingTeamName: string;
+  givingBaselineKeepers: TradePlayerRow[];
+  givingHypotheticalKeepers: TradePlayerRow[];
+  givingBaselineSurplus: number;
+  givingHypotheticalSurplus: number;
+  givingSurplusDelta: number;
+  givingTotalValueDelta: number;
   aiNarrative: {
     verdict: "good" | "neutral" | "bad";
+    recommendation: "proceed" | "modify" | "decline";
     summary: string;
+    teamAAnalysis: string;
+    teamBAnalysis: string;
+    modifications: string[];
     keyRisk: string;
     opportunityCost: string;
   } | null;
@@ -743,26 +759,25 @@ export async function analyzeKeeperTrade(
   leagueId: string,
   params: {
     receivingTeamId: string;
+    givingTeamId?: string | null;
     give: { playerId: string }[];
     givePicks: { round: number }[];
     receive: { playerId: string; keeperCostRound: number | null }[];
-    receivePicks: { playerId: string; keeperCostRound: number }[];
+    receivePicks: { round: number }[];
     adpSnapshotId?: string | null;
     includeAi?: boolean;
   },
 ): Promise<TradeAnalysisResult> {
   const body = {
     receiving_team_id: params.receivingTeamId,
+    giving_team_id: params.givingTeamId ?? null,
     give: params.give.map((g) => ({ player_id: g.playerId })),
     give_picks: params.givePicks.map((p) => ({ round: p.round })),
     receive: params.receive.map((r) => ({
       player_id: r.playerId,
       keeper_cost_round: r.keeperCostRound,
     })),
-    receive_picks: params.receivePicks.map((p) => ({
-      player_id: p.playerId,
-      keeper_cost_round: p.keeperCostRound,
-    })),
+    receive_picks: params.receivePicks.map((p) => ({ round: p.round })),
     adp_snapshot_id: params.adpSnapshotId ?? null,
     include_ai: params.includeAi ?? false,
   };
@@ -785,12 +800,28 @@ export async function analyzeKeeperTrade(
     baselineSurplus: Number(raw.baseline_surplus ?? 0),
     hypotheticalSurplus: Number(raw.hypothetical_surplus ?? 0),
     surplusDelta: Number(raw.surplus_delta ?? 0),
+    givePicksValue: Number(raw.give_picks_value ?? 0),
+    receivePicksValue: Number(raw.receive_picks_value ?? 0),
+    pickValueDelta: Number(raw.pick_value_delta ?? 0),
+    totalValueDelta: Number(raw.total_value_delta ?? 0),
     gained: mapRows(raw.gained),
     lost: mapRows(raw.lost),
+    givingTeamId: String(raw.giving_team_id ?? ""),
+    givingTeamName: String(raw.giving_team_name ?? ""),
+    givingBaselineKeepers: mapRows(raw.giving_baseline_keepers),
+    givingHypotheticalKeepers: mapRows(raw.giving_hypothetical_keepers),
+    givingBaselineSurplus: Number(raw.giving_baseline_surplus ?? 0),
+    givingHypotheticalSurplus: Number(raw.giving_hypothetical_surplus ?? 0),
+    givingSurplusDelta: Number(raw.giving_surplus_delta ?? 0),
+    givingTotalValueDelta: Number(raw.giving_total_value_delta ?? 0),
     aiNarrative: aiRaw
       ? {
           verdict: (aiRaw.verdict as "good" | "neutral" | "bad") ?? "neutral",
+          recommendation: (aiRaw.recommendation as "proceed" | "modify" | "decline") ?? "modify",
           summary: String(aiRaw.summary ?? ""),
+          teamAAnalysis: String(aiRaw.team_a_analysis ?? ""),
+          teamBAnalysis: String(aiRaw.team_b_analysis ?? ""),
+          modifications: Array.isArray(aiRaw.modifications) ? (aiRaw.modifications as string[]) : [],
           keyRisk: String(aiRaw.key_risk ?? ""),
           opportunityCost: String(aiRaw.opportunity_cost ?? ""),
         }

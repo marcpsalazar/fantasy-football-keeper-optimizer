@@ -37,8 +37,7 @@ class TradeReceiveItem:
 
 @dataclass(frozen=True)
 class TradeReceivePickItem:
-    player_id: uuid.UUID  # Player already on your roster who will use this pick as keeper cost
-    keeper_cost_round: int  # The round of the received pick
+    round: int  # Incoming pick round — auto-assigned to best uncovered roster player
 
 
 @dataclass(frozen=True)
@@ -59,8 +58,12 @@ class TradePlayerRow:
 
 @dataclass
 class TradeNarrativeResult:
-    verdict: str  # "good" | "neutral" | "bad"
+    verdict: str  # "good" | "neutral" | "bad" from Team A perspective
+    recommendation: str  # "proceed" | "modify" | "decline"
     summary: str
+    team_a_analysis: str
+    team_b_analysis: str
+    modifications: list[str]
     key_risk: str
     opportunity_cost: str
     token_usage: dict[str, Any] | None = None
@@ -75,9 +78,42 @@ class TradeAnalysisResult:
     baseline_surplus: float
     hypothetical_surplus: float
     surplus_delta: float
+    give_picks_value: float
+    receive_picks_value: float
+    pick_value_delta: float
+    total_value_delta: float
     gained: list[TradePlayerRow]
     lost: list[TradePlayerRow]
+    # Team B side
+    giving_team_id: str = ""
+    giving_team_name: str = ""
+    giving_baseline_keepers: list[TradePlayerRow] = None  # type: ignore[assignment]
+    giving_hypothetical_keepers: list[TradePlayerRow] = None  # type: ignore[assignment]
+    giving_baseline_surplus: float = 0.0
+    giving_hypothetical_surplus: float = 0.0
+    giving_surplus_delta: float = 0.0
+    giving_total_value_delta: float = 0.0
     ai_narrative: TradeNarrativeResult | None = None
+
+    def __post_init__(self) -> None:
+        if self.giving_baseline_keepers is None:
+            self.giving_baseline_keepers = []
+        if self.giving_hypothetical_keepers is None:
+            self.giving_hypothetical_keepers = []
+
+
+def round_pick_value(pick_round: int, total_rounds: int = 15) -> float:
+    """
+    Pick value in keeper-surplus-equivalent rounds using a convex declining curve.
+    Round 1 ≈ 5.0, last round ≈ 0.0.
+    """
+    if pick_round < 1:
+        return 0.0
+    total = max(total_rounds, pick_round)
+    if total <= 1:
+        return 0.0
+    frac = max(0.0, (total - pick_round) / (total - 1))
+    return round(5.0 * (frac ** 1.8), 2)
 
 
 def analyze_trade(
@@ -87,6 +123,7 @@ def analyze_trade(
     give: list[TradeGiveItem],
     receive: list[TradeReceiveItem],
     *,
+    giving_team_id: uuid.UUID | None = None,
     give_picks: list[TradeGivePickItem] | None = None,
     receive_picks: list[TradeReceivePickItem] | None = None,
     adp_snapshot_id: uuid.UUID | None = None,
@@ -117,25 +154,36 @@ def analyze_trade(
     )
     baseline_team_recs = [r for r in baseline_recs if r.team_id == receiving_team_id]
 
-    # Collect player metadata (includes players involved in pick assignments)
     all_player_ids = (
         {r.player_id for r in baseline_recs}
         | {item.player_id for item in give}
         | {item.player_id for item in receive}
-        | {item.player_id for item in receive_picks}
     )
     players: dict[uuid.UUID, Player] = {
         p.id: p
         for p in session.exec(select(Player).where(Player.id.in_(all_player_ids))).all()
     }
 
-    # Validate received players and pick-assignment players exist
+    # Validate received players exist
     for item in receive:
         if item.player_id not in players:
             raise OptimizerInputError(f"Player {item.player_id} not found")
-    for item in receive_picks:
-        if item.player_id not in players:
-            raise OptimizerInputError(f"Player {item.player_id} not found")
+
+    # Pre-fetch keeper rounds for players Team A is giving away (needed for Team B side)
+    give_player_keeper_rounds: dict[uuid.UUID, int | None] = {}
+    for item in give:
+        pick = session.exec(
+            select(DraftPick).where(
+                DraftPick.league_id == league_id,
+                DraftPick.team_id == receiving_team_id,
+                DraftPick.player_id == item.player_id,
+                DraftPick.season_year == league.season_year,
+            )
+        ).first()
+        give_player_keeper_rounds[item.player_id] = pick.round if pick else None
+
+    giving_team = session.get(Team, giving_team_id) if giving_team_id else None
+    giving_team_baseline_recs = [r for r in baseline_recs if r.team_id == giving_team_id] if giving_team_id else []
 
     # Hypothetical run inside a savepoint — all changes are rolled back after
     savepoint = session.begin_nested()
@@ -228,47 +276,95 @@ def analyze_trade(
                     position=player.position,
                 ))
 
-        # Apply received picks to existing roster players (reassign keeper cost)
-        for pick_item in receive_picks:
-            player = players[pick_item.player_id]
-            round_num = max(1, int(pick_item.keeper_cost_round))
-            target_overall = (round_num - 1) * team_count + draft_slot
+        # Received picks are valued separately below — no keeper slot assignment needed
 
-            # Remove any existing pick for this player on this team
-            old_pick = session.exec(
-                select(DraftPick).where(
-                    DraftPick.league_id == league_id,
-                    DraftPick.team_id == receiving_team_id,
-                    DraftPick.player_id == pick_item.player_id,
-                    DraftPick.season_year == league.season_year,
-                )
-            ).first()
-            if old_pick is not None:
-                session.delete(old_pick)
-                session.flush()
+        # Apply Team B hypothetical changes in the same savepoint
+        if giving_team is not None:
+            giving_draft_slot = giving_team.draft_slot or (team_count // 2)
 
-            # Clear any pick at the target slot from another player
-            conflicting = session.exec(
-                select(DraftPick).where(
-                    DraftPick.league_id == league_id,
-                    DraftPick.season_year == league.season_year,
-                    DraftPick.overall_pick == target_overall,
-                )
-            ).first()
-            if conflicting is not None:
-                session.delete(conflicting)
-                session.flush()
+            # Team B loses the players it is sending to Team A
+            for item in receive:
+                b_entry = session.exec(
+                    select(FinalRosterEntry).where(
+                        FinalRosterEntry.league_id == league_id,
+                        FinalRosterEntry.team_id == giving_team_id,
+                        FinalRosterEntry.player_id == item.player_id,
+                        FinalRosterEntry.season_year == league.season_year,
+                    )
+                ).first()
+                if b_entry is not None:
+                    session.delete(b_entry)
+                b_pick = session.exec(
+                    select(DraftPick).where(
+                        DraftPick.league_id == league_id,
+                        DraftPick.team_id == giving_team_id,
+                        DraftPick.player_id == item.player_id,
+                        DraftPick.season_year == league.season_year,
+                    )
+                ).first()
+                if b_pick is not None:
+                    session.delete(b_pick)
 
-            session.add(DraftPick(
-                league_id=league_id,
-                team_id=receiving_team_id,
-                player_id=pick_item.player_id,
-                season_year=league.season_year,
-                round=round_num,
-                overall_pick=target_overall,
-                pick_in_round=draft_slot,
-                position=player.position,
-            ))
+            # Team B loses the picks it is sending to Team A
+            for pick_item in receive_picks:
+                b_round_picks = session.exec(
+                    select(DraftPick).where(
+                        DraftPick.league_id == league_id,
+                        DraftPick.team_id == giving_team_id,
+                        DraftPick.season_year == league.season_year,
+                        DraftPick.round == pick_item.round,
+                    )
+                ).all()
+                for p in b_round_picks:
+                    session.delete(p)
+
+            session.flush()
+
+            # Team B gains the players from Team A (with their original keeper costs)
+            for item in give:
+                player = players.get(item.player_id)
+                if player is None:
+                    continue
+                b_existing = session.exec(
+                    select(FinalRosterEntry).where(
+                        FinalRosterEntry.league_id == league_id,
+                        FinalRosterEntry.team_id == giving_team_id,
+                        FinalRosterEntry.player_id == item.player_id,
+                        FinalRosterEntry.season_year == league.season_year,
+                    )
+                ).first()
+                if b_existing is None:
+                    session.add(FinalRosterEntry(
+                        league_id=league_id,
+                        team_id=giving_team_id,
+                        player_id=item.player_id,
+                        season_year=league.season_year,
+                        position=player.position,
+                        roster_status="Bench",
+                    ))
+                keeper_round = give_player_keeper_rounds.get(item.player_id)
+                if keeper_round is not None:
+                    b_target = (keeper_round - 1) * team_count + giving_draft_slot
+                    b_conflict = session.exec(
+                        select(DraftPick).where(
+                            DraftPick.league_id == league_id,
+                            DraftPick.season_year == league.season_year,
+                            DraftPick.overall_pick == b_target,
+                        )
+                    ).first()
+                    if b_conflict is not None:
+                        session.delete(b_conflict)
+                        session.flush()
+                    session.add(DraftPick(
+                        league_id=league_id,
+                        team_id=giving_team_id,
+                        player_id=item.player_id,
+                        season_year=league.season_year,
+                        round=keeper_round,
+                        overall_pick=b_target,
+                        pick_in_round=giving_draft_slot,
+                        position=player.position,
+                    ))
 
         session.flush()
 
@@ -279,6 +375,7 @@ def analyze_trade(
             persist=False,
         )
         hypo_team_recs = [r for r in hypo_recs if r.team_id == receiving_team_id]
+        giving_hypo_recs = [r for r in hypo_recs if r.team_id == giving_team_id] if giving_team_id else []
 
     finally:
         savepoint.rollback()
@@ -305,6 +402,36 @@ def analyze_trade(
     gained = [r for r in hypo_rows if uuid.UUID(r.player_id) not in baseline_player_ids]
     lost = [r for r in baseline_rows if uuid.UUID(r.player_id) not in hypo_player_ids]
 
+    total_rounds = 16
+    if isinstance(league.roster_settings, dict):
+        slots = league.roster_settings.get("slots")
+        if isinstance(slots, dict):
+            derived = sum(int(v) for v in slots.values() if isinstance(v, (int, float)) and int(v) > 0)
+            if derived > 0:
+                total_rounds = derived
+
+    give_picks_value = round(sum(round_pick_value(p.round, total_rounds) for p in give_picks), 2)
+    receive_picks_value = round(sum(round_pick_value(p.round, total_rounds) for p in receive_picks), 2)
+    pick_value_delta = round(receive_picks_value - give_picks_value, 2)
+    surplus_delta = round(hypo_surplus - baseline_surplus, 2)
+
+    # Team B rows and surplus
+    giving_incoming_ids = {item.player_id for item in give}
+    giving_baseline_rows = [
+        _make_row(r, players, is_incoming=False)
+        for r in sorted(giving_team_baseline_recs, key=lambda r: -(r.keeper_score or 0))
+        if r.is_recommended
+    ]
+    giving_hypo_rows = [
+        _make_row(r, players, is_incoming=r.player_id in giving_incoming_ids)
+        for r in sorted(giving_hypo_recs, key=lambda r: -(r.keeper_score or 0))
+        if r.is_recommended
+    ]
+    giving_baseline_surplus = sum(r.keeper_value or 0 for r in giving_team_baseline_recs if r.is_recommended)
+    giving_hypo_surplus = sum(r.keeper_value or 0 for r in giving_hypo_recs if r.is_recommended)
+    giving_surplus_delta = round(giving_hypo_surplus - giving_baseline_surplus, 2)
+    giving_total_value_delta = round(giving_surplus_delta - pick_value_delta, 2)
+
     result = TradeAnalysisResult(
         receiving_team_id=str(receiving_team_id),
         receiving_team_name=receiving_team.name,
@@ -312,20 +439,28 @@ def analyze_trade(
         hypothetical_keepers=hypo_rows,
         baseline_surplus=round(baseline_surplus, 2),
         hypothetical_surplus=round(hypo_surplus, 2),
-        surplus_delta=round(hypo_surplus - baseline_surplus, 2),
+        surplus_delta=surplus_delta,
+        give_picks_value=give_picks_value,
+        receive_picks_value=receive_picks_value,
+        pick_value_delta=pick_value_delta,
+        total_value_delta=round(surplus_delta + pick_value_delta, 2),
         gained=gained,
         lost=lost,
+        giving_team_id=str(giving_team_id) if giving_team_id else "",
+        giving_team_name=giving_team.name if giving_team else "",
+        giving_baseline_keepers=giving_baseline_rows,
+        giving_hypothetical_keepers=giving_hypo_rows,
+        giving_baseline_surplus=round(giving_baseline_surplus, 2),
+        giving_hypothetical_surplus=round(giving_hypo_surplus, 2),
+        giving_surplus_delta=giving_surplus_delta,
+        giving_total_value_delta=giving_total_value_delta,
     )
 
     if include_ai and app_settings is not None:
         give_names = [players[i.player_id].full_name for i in give if i.player_id in players]
         give_pick_descs = [f"Round {p.round} pick" for p in give_picks]
         receive_names = [players[i.player_id].full_name for i in receive if i.player_id in players]
-        receive_pick_descs = [
-            f"Round {p.keeper_cost_round} pick → {players[p.player_id].full_name}"
-            for p in receive_picks
-            if p.player_id in players
-        ]
+        receive_pick_descs = [f"Round {p.round} pick" for p in receive_picks]
         try:
             result.ai_narrative = generate_trade_narrative(
                 settings=app_settings,
@@ -351,21 +486,8 @@ def generate_trade_narrative(
     if not _ai_enabled(settings):
         raise MockDraftAIError("AI is not enabled")
 
-    context: dict[str, Any] = {
-        "team_name": result.receiving_team_name,
-        "giving_away": give_names,
-        "receiving": receive_names,
-        "baseline_keepers": [
-            {
-                "name": r.player_name,
-                "position": r.position,
-                "keeper_value": r.keeper_value,
-                "keeper_cost_round": r.keeper_cost_round,
-                "adp_round": r.adp_round,
-            }
-            for r in result.baseline_keepers
-        ],
-        "hypothetical_keepers": [
+    def _keeper_rows(rows: list[TradePlayerRow]) -> list[dict[str, Any]]:
+        return [
             {
                 "name": r.player_name,
                 "position": r.position,
@@ -374,11 +496,32 @@ def generate_trade_narrative(
                 "adp_round": r.adp_round,
                 "incoming": r.is_incoming,
             }
-            for r in result.hypothetical_keepers
-        ],
-        "surplus_delta": result.surplus_delta,
-        "gained": [r.player_name for r in result.gained],
-        "lost": [r.player_name for r in result.lost],
+            for r in rows
+        ]
+
+    context: dict[str, Any] = {
+        "team_a": {
+            "name": result.receiving_team_name,
+            "sends": give_names,
+            "receives": receive_names,
+            "baseline_keepers": _keeper_rows(result.baseline_keepers),
+            "projected_keepers": _keeper_rows(result.hypothetical_keepers),
+            "keeper_surplus_change": result.surplus_delta,
+            "pick_value_received": result.receive_picks_value,
+            "pick_value_sent": result.give_picks_value,
+            "total_value_change": result.total_value_delta,
+        },
+        "team_b": {
+            "name": result.giving_team_name or "Team B",
+            "sends": receive_names,
+            "receives": give_names,
+            "baseline_keepers": _keeper_rows(result.giving_baseline_keepers),
+            "projected_keepers": _keeper_rows(result.giving_hypothetical_keepers),
+            "keeper_surplus_change": result.giving_surplus_delta,
+            "pick_value_received": result.give_picks_value,
+            "pick_value_sent": result.receive_picks_value,
+            "total_value_change": result.giving_total_value_delta,
+        },
     }
 
     schema = {
@@ -386,11 +529,23 @@ def generate_trade_narrative(
         "additionalProperties": False,
         "properties": {
             "verdict": {"type": "string", "enum": ["good", "neutral", "bad"]},
-            "summary": {"type": "string", "maxLength": 500},
+            "summary": {"type": "string", "maxLength": 600},
+            "recommendation": {"type": "string", "enum": ["proceed", "modify", "decline"]},
+            "team_a_analysis": {"type": "string", "maxLength": 400},
+            "team_b_analysis": {"type": "string", "maxLength": 400},
+            "modifications": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 200},
+                "maxItems": 3,
+            },
             "key_risk": {"type": "string", "maxLength": 300},
             "opportunity_cost": {"type": "string", "maxLength": 300},
         },
-        "required": ["verdict", "summary", "key_risk", "opportunity_cost"],
+        "required": [
+            "verdict", "summary", "recommendation",
+            "team_a_analysis", "team_b_analysis",
+            "modifications", "key_risk", "opportunity_cost",
+        ],
     }
 
     data, usage = _responses_json(
@@ -398,20 +553,29 @@ def generate_trade_narrative(
         name="trade_analysis",
         schema=schema,
         instructions=(
-            "You are a fantasy football keeper league analyst. Evaluate a proposed trade based on its "
-            "keeper value impact for the receiving team. "
-            "surplus_delta > 0 means the trade improves the team's total keeper surplus (positive). "
-            "Set verdict to: 'good' if surplus_delta > 3 or the strategic fit is clearly better, "
-            "'bad' if surplus_delta < -3 or the trade materially weakens keepers, 'neutral' otherwise. "
-            "Be direct and specific. Mention player names. Return JSON only."
+            "You are a fantasy football keeper league analyst evaluating a proposed trade from both teams' perspectives. "
+            "total_value_change combines keeper surplus change and draft pick value (in round-equivalent units). "
+            "Positive = the team gains value, negative = they lose value. "
+            "verdict: 'good' if Team A clearly benefits (total_value_change > 2), "
+            "'bad' if Team A clearly loses (total_value_change < -2), 'neutral' otherwise. "
+            "recommendation: 'proceed' if both teams benefit or the trade is balanced, "
+            "'modify' if one side is significantly lopsided but fixable, "
+            "'decline' if the trade is badly imbalanced or harmful to both teams. "
+            "In modifications, suggest 1-3 concrete adjustments (specific players or picks to add/swap) "
+            "that would make the trade more equitable and beneficial for both teams. "
+            "Be direct, mention player names, and keep analyses concise. Return JSON only."
         ),
         user_payload=context,
-        max_output_tokens=600,
+        max_output_tokens=900,
     )
 
     return TradeNarrativeResult(
         verdict=str(data.get("verdict") or "neutral"),
-        summary=str(data.get("summary") or "")[:500],
+        recommendation=str(data.get("recommendation") or "modify"),
+        summary=str(data.get("summary") or "")[:600],
+        team_a_analysis=str(data.get("team_a_analysis") or "")[:400],
+        team_b_analysis=str(data.get("team_b_analysis") or "")[:400],
+        modifications=[str(m)[:200] for m in (data.get("modifications") or [])],
         key_risk=str(data.get("key_risk") or "")[:300],
         opportunity_cost=str(data.get("opportunity_cost") or "")[:300],
         token_usage=usage,

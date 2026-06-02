@@ -186,12 +186,12 @@ class TradeReceiveItemRequest(BaseModel):
 
 
 class TradeReceivePickItemRequest(BaseModel):
-    player_id: uuid.UUID
-    keeper_cost_round: int
+    round: int
 
 
 class TradeAnalysisRunRequest(BaseModel):
     receiving_team_id: uuid.UUID
+    giving_team_id: uuid.UUID | None = None
     give: list[TradeGiveItemRequest] = []
     give_picks: list[TradeGivePickItemRequest] = []
     receive: list[TradeReceiveItemRequest] = []
@@ -1135,11 +1135,9 @@ def run_trade_analysis(
             [TradeGiveItem(player_id=g.player_id) for g in payload.give],
             [TradeReceiveItem(player_id=r.player_id, keeper_cost_round=r.keeper_cost_round)
              for r in payload.receive],
+            giving_team_id=payload.giving_team_id,
             give_picks=[TradeGivePickItem(round=p.round) for p in payload.give_picks],
-            receive_picks=[
-                TradeReceivePickItem(player_id=p.player_id, keeper_cost_round=p.keeper_cost_round)
-                for p in payload.receive_picks
-            ],
+            receive_picks=[TradeReceivePickItem(round=p.round) for p in payload.receive_picks],
             adp_snapshot_id=payload.adp_snapshot_id,
             user_id=_user_id(user),
             app_settings=app_settings if payload.include_ai else None,
@@ -1168,7 +1166,11 @@ def run_trade_analysis(
     if result.ai_narrative is not None:
         ai = {
             "verdict": result.ai_narrative.verdict,
+            "recommendation": result.ai_narrative.recommendation,
             "summary": result.ai_narrative.summary,
+            "team_a_analysis": result.ai_narrative.team_a_analysis,
+            "team_b_analysis": result.ai_narrative.team_b_analysis,
+            "modifications": result.ai_narrative.modifications,
             "key_risk": result.ai_narrative.key_risk,
             "opportunity_cost": result.ai_narrative.opportunity_cost,
         }
@@ -1181,8 +1183,20 @@ def run_trade_analysis(
         "baseline_surplus": result.baseline_surplus,
         "hypothetical_surplus": result.hypothetical_surplus,
         "surplus_delta": result.surplus_delta,
+        "give_picks_value": result.give_picks_value,
+        "receive_picks_value": result.receive_picks_value,
+        "pick_value_delta": result.pick_value_delta,
+        "total_value_delta": result.total_value_delta,
         "gained": [_row(r) for r in result.gained],
         "lost": [_row(r) for r in result.lost],
+        "giving_team_id": result.giving_team_id,
+        "giving_team_name": result.giving_team_name,
+        "giving_baseline_keepers": [_row(r) for r in result.giving_baseline_keepers],
+        "giving_hypothetical_keepers": [_row(r) for r in result.giving_hypothetical_keepers],
+        "giving_baseline_surplus": result.giving_baseline_surplus,
+        "giving_hypothetical_surplus": result.giving_hypothetical_surplus,
+        "giving_surplus_delta": result.giving_surplus_delta,
+        "giving_total_value_delta": result.giving_total_value_delta,
         "ai_narrative": ai,
     }
 
