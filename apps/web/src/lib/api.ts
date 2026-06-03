@@ -2506,6 +2506,50 @@ export async function getKeeperReveal(leagueId: string): Promise<KeeperRevealRes
   };
 }
 
+export type NewsAlert = {
+  playerId: string;
+  playerName: string;
+  position: string;
+  nflTeam: string | null;
+  teamName: string;
+  isRecommended: boolean;
+  currentKeeperValue: number | null;
+  currentAdpRound: number | null;
+  keeperCostRound: number | null;
+  /** ADP round at which keeper_value crosses minimum_keeper_value */
+  flipAdpRound: number | null;
+  headline: string;
+  headlineLink: string;
+  publishedAt: string;
+};
+
+export async function getNewsAlerts(
+  leagueId: string,
+  scenarioName?: string | null,
+): Promise<NewsAlert[]> {
+  const params = new URLSearchParams();
+  if (scenarioName) params.set("scenario_name", scenarioName);
+  const qs = params.toString();
+  const data = await fetchJson<{ alerts: Record<string, unknown>[]; total: number }>(
+    `/api/leagues/${leagueId}/news-impact${qs ? `?${qs}` : ""}`,
+  );
+  return data.alerts.map((row) => ({
+    playerId: text(row["player_id"]),
+    playerName: text(row["player_name"]),
+    position: text(row["position"]),
+    nflTeam: row["nfl_team"] != null ? text(row["nfl_team"]) : null,
+    teamName: text(row["team_name"]),
+    isRecommended: boolean(row["is_recommended"]),
+    currentKeeperValue: row["current_keeper_value"] != null ? Number(row["current_keeper_value"]) : null,
+    currentAdpRound: row["current_adp_round"] != null ? Number(row["current_adp_round"]) : null,
+    keeperCostRound: row["keeper_cost_round"] != null ? Number(row["keeper_cost_round"]) : null,
+    flipAdpRound: row["flip_adp_round"] != null ? Number(row["flip_adp_round"]) : null,
+    headline: text(row["headline"]),
+    headlineLink: text(row["headline_link"]),
+    publishedAt: text(row["published_at"]),
+  }));
+}
+
 export async function downloadBulkExport(leagueId: string, leagueName: string): Promise<void> {
   const response = await fetch(
     `${API_BASE_URL}/api/leagues/${leagueId}/exports/bulk`,

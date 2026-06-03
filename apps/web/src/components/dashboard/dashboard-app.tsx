@@ -37,6 +37,7 @@ import {
   Users,
   Wrench,
   X,
+  Zap,
 } from "lucide-react";
 import * as React from "react";
 import { createPortal } from "react-dom";
@@ -89,6 +90,7 @@ import {
   getAiUsage,
   getComplianceReport,
   getKeeperReveal,
+  getNewsAlerts,
   getLeagueMemberships,
   getPlayerSummary,
   getSmtpStatus,
@@ -141,6 +143,7 @@ import {
   type TeamForm,
   type AuthUser,
   type ComplianceResult,
+  type NewsAlert,
   type CsvImportKind,
   type CsvPreviewResult,
   type KeeperRevealResult,
@@ -2560,7 +2563,7 @@ function ProfilePage() {
 }
 
 function LeagueDashboard() {
-  const { currentUser, data, downloadCurrentAdpNow, isBusy } = useDashboard();
+  const { activeLeagueId, currentUser, data, downloadCurrentAdpNow, isBusy, isLeagueAdmin } = useDashboard();
   const recommendedKeepers = data.keeperRecommendations.filter(
     (recommendation) => recommendation.status === "Recommended",
   );
@@ -2769,7 +2772,8 @@ function LeagueDashboard() {
             </div>
             <Badge variant="info">Daily headlines</Badge>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {isLeagueAdmin && <NewsImpactSummary leagueId={activeLeagueId} />}
             <DashboardNewsList items={data.leagueNews} />
           </CardContent>
         </Card>
@@ -5538,46 +5542,52 @@ type OptimizerSettingsPageProps = OptimizerSettingsForm;
 
 function KeeperRecommendationsPage() {
   const {
+    activeLeagueId,
     data,
     exportRecommendations,
+    isLeagueAdmin,
     isBusy,
     setManualOverrideNow,
     tableDisplayResetSignal,
   } = useDashboard();
   return (
-    <PagePanel
-      title="Keeper Recommendations"
-      description={
-        <>
-          Optimizer output with value, score, eligibility, and selection reason.{" "}
-          <span className="text-emerald-700">Click a player name for an AI explanation.</span>
-        </>
-      }
-      action={
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={isBusy} onClick={() => exportRecommendations("xlsx")} variant="outline">
-            <Download className="size-4" aria-hidden="true" />
-            Excel
-          </Button>
-          <Button disabled={isBusy} onClick={() => exportRecommendations("csv")} variant="outline">
-            <Download className="size-4" aria-hidden="true" />
-            CSV
-          </Button>
-          <Button disabled={isBusy} onClick={() => exportRecommendations("pdf")} variant="outline">
-            <FileText className="size-4" aria-hidden="true" />
-            PDF
-          </Button>
-        </div>
-      }
-    >
-      <KeeperRecommendationsTable
-        data={data.keeperRecommendations}
-        onOverride={setManualOverrideNow}
-        resetSignal={tableDisplayResetSignal}
-        showOverrides
-        teamCount={data.teams.length}
-      />
-    </PagePanel>
+    <div className="space-y-5">
+      {isLeagueAdmin && <NewsImpactPanel leagueId={activeLeagueId} />}
+      <PagePanel
+        title="Keeper Recommendations"
+        description={
+          <>
+            Optimizer output with value, score, eligibility, and selection reason.{" "}
+            <span className="text-emerald-700">Click a player name for an AI explanation.</span>
+          </>
+        }
+        action={
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={isBusy} onClick={() => exportRecommendations("xlsx")} variant="outline">
+              <Download className="size-4" aria-hidden="true" />
+              Excel
+            </Button>
+            <Button disabled={isBusy} onClick={() => exportRecommendations("csv")} variant="outline">
+              <Download className="size-4" aria-hidden="true" />
+              CSV
+            </Button>
+            <Button disabled={isBusy} onClick={() => exportRecommendations("pdf")} variant="outline">
+              <FileText className="size-4" aria-hidden="true" />
+              PDF
+            </Button>
+          </div>
+        }
+      >
+        <KeeperRecommendationsTable
+          data={data.keeperRecommendations}
+          minimumKeeperValue={data.settings.minimumKeeperValue}
+          onOverride={setManualOverrideNow}
+          resetSignal={tableDisplayResetSignal}
+          showOverrides
+          teamCount={data.teams.length}
+        />
+      </PagePanel>
+    </div>
   );
 }
 
@@ -9699,6 +9709,7 @@ function ScenarioTeamCell({ teamResult }: { teamResult: ScenarioTeamResult }) {
 function KeeperRecommendationsTable({
   data,
   compact = false,
+  minimumKeeperValue = 1,
   onOverride,
   resetSignal,
   showOverrides = false,
@@ -9706,6 +9717,7 @@ function KeeperRecommendationsTable({
 }: {
   data: KeeperRecommendation[];
   compact?: boolean;
+  minimumKeeperValue?: number;
   onOverride?: (
     teamId: string | undefined,
     playerId: string | undefined,
@@ -9807,9 +9819,24 @@ function KeeperRecommendationsTable({
       {
         accessorKey: "keeperValue",
         header: "Value",
-        cell: ({ getValue }) => {
-          const value = getValue<number>();
-          return <span className={cn("font-medium", value > 0 && "text-emerald-700")}>{value}</span>;
+        cell: ({ row }) => {
+          const value = row.original.keeperValue;
+          const costRound = row.original.keeperCostRound;
+          const tc = teamCount ?? 1;
+          const flipRound =
+            costRound != null
+              ? Math.max(costRound - minimumKeeperValue / tc, 1)
+              : null;
+          return (
+            <div className="leading-tight">
+              <span className={cn("font-medium", value > 0 && "text-emerald-700")}>{value}</span>
+              {flipRound != null && (
+                <div className="text-[10px] text-zinc-400">
+                  flips Rd {flipRound % 1 === 0 ? flipRound : flipRound.toFixed(1)}
+                </div>
+              )}
+            </div>
+          );
         },
       },
       {
@@ -11356,6 +11383,181 @@ function RecommendationBadge({ status }: { status: KeeperRecommendation["status"
 // ---------------------------------------------------------------------------
 // Commissioner Tools Page (3.2)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// News Impact (4.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compact strip for the home dashboard — shows affected player names only.
+ * Zero-footprint when there are no alerts or the fetch fails.
+ */
+function NewsImpactSummary({ leagueId }: { leagueId: string | null }) {
+  const [alerts, setAlerts] = React.useState<NewsAlert[]>([]);
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    getNewsAlerts(leagueId)
+      .then(setAlerts)
+      .catch(() => {/* non-critical */});
+  }, [leagueId]);
+
+  if (alerts.length === 0) return null;
+
+  // Deduplicate by player so one player with multiple headlines shows once
+  const uniquePlayers = Array.from(
+    new Map(alerts.map((a) => [a.playerId, a])).values(),
+  );
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+      <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-900">
+        <Zap className="size-3.5 shrink-0" aria-hidden="true" />
+        {uniquePlayers.length} keeper candidate{uniquePlayers.length !== 1 ? "s" : ""} in today&apos;s news
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {uniquePlayers.map((a) => (
+          <span
+            key={a.playerId}
+            className={cn(
+              "inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium",
+              a.isRecommended
+                ? "bg-emerald-100 text-emerald-800"
+                : "bg-zinc-100 text-zinc-600",
+            )}
+          >
+            {a.playerName}
+            <span className="ml-1 font-normal opacity-70">{a.position}</span>
+          </span>
+        ))}
+      </div>
+      <p className="mt-1.5 text-xs text-amber-700">
+        Open Recommendations to see keeper value impact and flip rounds.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Full panel for the Recommendations page — expandable table with flip rounds
+ * and headline links.
+ */
+function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
+  const [alerts, setAlerts] = React.useState<NewsAlert[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    setLoading(true);
+    getNewsAlerts(leagueId)
+      .then((data) => {
+        setAlerts(data);
+        if (data.length > 0) setExpanded(true);
+      })
+      .catch(() => {/* silently skip — news impact is non-critical */})
+      .finally(() => setLoading(false));
+  }, [leagueId]);
+
+  if (loading || alerts.length === 0) return null;
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50">
+      <button
+        className="flex w-full items-center gap-2 px-4 py-3 text-left"
+        onClick={() => setExpanded((v) => !v)}
+        type="button"
+      >
+        <Zap className="size-4 shrink-0 text-amber-600" aria-hidden="true" />
+        <span className="text-sm font-semibold text-amber-900">
+          {alerts.length} keeper candidate{alerts.length !== 1 ? "s" : ""} in today&apos;s news
+        </span>
+        <span className="ml-auto text-xs text-amber-600">{expanded ? "Hide" : "Show"}</span>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-amber-200 px-4 pb-4 pt-2">
+          <div className="overflow-x-auto rounded border border-amber-200">
+            <table className="w-full text-sm">
+              <thead className="bg-amber-100 text-xs font-semibold uppercase text-amber-700">
+                <tr>
+                  <th className="px-3 py-2 text-left">Player</th>
+                  <th className="px-3 py-2 text-left">Team</th>
+                  <th className="px-3 py-2 text-center">Status</th>
+                  <th className="px-3 py-2 text-center">Value</th>
+                  <th className="px-3 py-2 text-center">Flips at Rd</th>
+                  <th className="px-3 py-2 text-left">Headline</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-amber-100 bg-white">
+                {alerts.map((alert, i) => (
+                  <tr key={i}>
+                    <td className="px-3 py-2 font-medium text-zinc-900">
+                      {alert.playerName}
+                      <span className="ml-1 text-xs text-zinc-400">
+                        {alert.position}{alert.nflTeam ? ` · ${alert.nflTeam}` : ""}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-zinc-700">{alert.teamName}</td>
+                    <td className="px-3 py-2 text-center">
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium",
+                          alert.isRecommended
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-zinc-100 text-zinc-600",
+                        )}
+                      >
+                        {alert.isRecommended ? "Keep" : "Pass"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {alert.currentKeeperValue != null ? (
+                        <span
+                          className={cn(
+                            "font-medium",
+                            alert.currentKeeperValue > 0 ? "text-emerald-700" : "text-zinc-500",
+                          )}
+                        >
+                          {alert.currentKeeperValue > 0 ? "+" : ""}
+                          {alert.currentKeeperValue}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-center text-zinc-600">
+                      {alert.flipAdpRound != null ? (
+                        <span title="ADP round at which recommendation eligibility flips">
+                          Rd {alert.flipAdpRound % 1 === 0 ? alert.flipAdpRound : alert.flipAdpRound.toFixed(1)}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="max-w-xs px-3 py-2">
+                      <a
+                        href={alert.headlineLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-amber-800 hover:underline"
+                      >
+                        {alert.headline}
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-amber-700">
+            &quot;Flips at Rd&quot; is the ADP round at which a player crosses the keeper value threshold — news shifting ADP beyond that point would change their recommendation.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function CommissionerToolsPage() {
   const { activeLeagueId, data, refreshData } = useDashboard();
