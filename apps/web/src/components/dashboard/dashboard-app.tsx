@@ -35,6 +35,7 @@ import {
   Upload,
   UserCircle,
   Users,
+  Wrench,
   X,
 } from "lucide-react";
 import * as React from "react";
@@ -76,6 +77,7 @@ import {
   deleteMockDraft,
   deleteTeam,
   downloadAdpTemplate,
+  downloadBulkExport,
   downloadCurrentAdp,
   downloadKeeperCard,
   endMockDraft,
@@ -85,8 +87,11 @@ import {
   generateScenarioNarrative,
   generateMockDraftStrategyPlan,
   getAiUsage,
+  getComplianceReport,
+  getKeeperReveal,
   getLeagueMemberships,
   getPlayerSummary,
+  getSmtpStatus,
   hydrateTeams,
   importCompositeAdpSnapshot,
   importCsv,
@@ -122,8 +127,10 @@ import {
   saveLeagueRosterSettings,
   saveScenarioSelection,
   setManualOverride,
+  sendKeeperReminders,
   startMockDraft,
   updateAdminUser,
+  updateCommissionerSettings,
   updateLeagueCalendarSettings,
   updateLeagueMemberRole,
   updateProfile,
@@ -133,9 +140,12 @@ import {
   type AdminUser,
   type TeamForm,
   type AuthUser,
+  type ComplianceResult,
   type CsvImportKind,
   type CsvPreviewResult,
+  type KeeperRevealResult,
   type SleeperImportPreview,
+  type SmtpStatus,
   type YahooAuthStatus,
   type YahooImportPreview,
   type YahooUserLeague,
@@ -214,7 +224,8 @@ type ViewId =
   | "keeper-history"
   | "final-keepers"
   | "season-analysis"
-  | "draft-board";
+  | "draft-board"
+  | "commissioner-tools";
 
 type NavItem = {
   id: ViewId;
@@ -236,6 +247,7 @@ const navItems: NavItem[] = [
   { id: "draft-board", label: "Final Draft Board", icon: ClipboardList },
   { id: "season-analysis", label: "Season Analysis", icon: BarChart2 },
   { id: "outlooks", label: "Team Outlook", icon: ShieldCheck },
+  { id: "commissioner-tools", label: "Commissioner Tools", icon: Wrench, adminOnly: true },
   { id: "teams", label: "Teams", icon: Users },
   { id: "draft", label: "Draft Results", icon: ClipboardList },
   { id: "rosters", label: "Final Rosters", icon: ListChecks },
@@ -423,6 +435,15 @@ const screenGuides: ScreenGuide[] = [
     howToRead: "The League Season Summary table shows league-wide hit rate, bust rate, and opportunity cost per season. Team ROI cards break down each manager's historical keeper decisions. Player History cards show each recurring keeper candidate's track record — how often they were kept, and whether they paid off.",
     watchFor: "Data only appears after season outcomes have been imported for at least one year. The richer the outcome history, the more meaningful the trend data becomes.",
     view: "keeper-history",
+  },
+  {
+    title: "Commissioner Tools",
+    icon: Wrench,
+    bestFor: "League commissioners who need to send deadline reminders, verify all teams are within keeper rules, control when keeper selections are revealed, and bundle all team reports into a single download.",
+    howToRead: "Compliance Checker runs automatically when you open the page — a green 'All Teams Pass' badge means every team is within limits. Keeper Reveal shows what each team will see before and after the reveal date. Reminder Emails requires SMTP configuration on the server.",
+    watchFor: "Run the optimizer first so the compliance checker has recommendation data. Set a reveal date before finalization to create pre-draft anticipation. SMTP credentials must be set on the server before email sending is enabled.",
+    view: "commissioner-tools",
+    adminOnly: true,
   },
 ];
 
@@ -1813,6 +1834,7 @@ export function DashboardApp() {
             {activeView === "final-keepers" && <FinalKeepersPage />}
             {activeView === "draft-board" && <DraftBoardPage />}
             {activeView === "season-analysis" && <SeasonAnalysisPage />}
+            {activeView === "commissioner-tools" && isLeagueAdmin && <CommissionerToolsPage />}
           </div>
         </section>
       </div>
@@ -3242,19 +3264,6 @@ function AdminPage({
         <>
           <div className="flex items-center gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-              <CalendarDays className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">League Dates</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Set the keeper deadline and NFL regular season start date.
-              </p>
-            </div>
-          </div>
-          <LeagueCalendarSettingsPanel />
-
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
               <Users className="size-5" aria-hidden="true" />
             </div>
             <div className="min-w-0">
@@ -3789,69 +3798,6 @@ function AIUsagePanel() {
         </Card>
       )}
     </div>
-  );
-}
-
-function LeagueCalendarSettingsPanel() {
-  const { data, isBusy, saveLeagueCalendarSettings } = useDashboard();
-  const [form, setForm] = React.useState<LeagueCalendarSettings>({
-    keeperPickDeadline: data.league?.keeperPickDeadline ?? "",
-    regularSeasonStartDate:
-      data.league?.regularSeasonStartDate ?? defaultRegularSeasonStartDate(data.league?.seasonYear),
-  });
-
-  React.useEffect(() => {
-    setForm({
-      keeperPickDeadline: data.league?.keeperPickDeadline ?? "",
-      regularSeasonStartDate:
-        data.league?.regularSeasonStartDate ?? defaultRegularSeasonStartDate(data.league?.seasonYear),
-    });
-  }, [data.league?.keeperPickDeadline, data.league?.regularSeasonStartDate, data.league?.seasonYear]);
-
-  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    await saveLeagueCalendarSettings(form);
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Countdown Clock Dates</CardTitle>
-        <CardDescription>
-          Dates are saved at the league level and shown to every user in the header.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form className="grid gap-4 md:grid-cols-[1fr_1fr_auto]" onSubmit={(event) => void submit(event)}>
-          <div className="grid gap-2">
-            <Label htmlFor="keeper-pick-deadline">Keeper Pick Deadline</Label>
-            <Input
-              id="keeper-pick-deadline"
-              onChange={(event) =>
-                setForm((current) => ({ ...current, keeperPickDeadline: event.target.value }))
-              }
-              type="date"
-              value={form.keeperPickDeadline}
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="regular-season-start-date">Regular Season Start Date</Label>
-            <Input
-              id="regular-season-start-date"
-              onChange={(event) =>
-                setForm((current) => ({ ...current, regularSeasonStartDate: event.target.value }))
-              }
-              type="date"
-              value={form.regularSeasonStartDate}
-            />
-          </div>
-          <Button className="self-end" disabled={isBusy || data.source !== "api"} type="submit">
-            <Save className="size-4" aria-hidden="true" />
-            Save Dates
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -11405,4 +11351,535 @@ function RecommendationBadge({ status }: { status: KeeperRecommendation["status"
   const variant =
     status === "Recommended" ? "success" : status === "Eligible" ? "info" : "danger";
   return <Badge variant={variant}>{status}</Badge>;
+}
+
+// ---------------------------------------------------------------------------
+// Commissioner Tools Page (3.2)
+// ---------------------------------------------------------------------------
+
+function CommissionerToolsPage() {
+  const { activeLeagueId, data, refreshData } = useDashboard();
+  const league = data.league;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-violet-700 text-white">
+          <Wrench className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-zinc-950">Commissioner Tools</h2>
+          <p className="mt-1 text-sm text-zinc-600">
+            Draft date, keeper reveal, compliance checker, reminders, and bulk export.
+          </p>
+        </div>
+      </div>
+
+      <CommissionerDatesPanel league={league} leagueId={activeLeagueId} refreshData={refreshData} />
+      <ComplianceCheckerPanel leagueId={activeLeagueId} />
+      <KeeperRevealPanel leagueId={activeLeagueId} league={league} />
+      <ReminderEmailPanel leagueId={activeLeagueId} league={league} />
+      <BulkExportPanel leagueId={activeLeagueId} league={league} />
+    </div>
+  );
+}
+
+function CommissionerDatesPanel({
+  league,
+  leagueId,
+  refreshData,
+}: {
+  league: WorkspaceData["league"];
+  leagueId: string | null;
+  refreshData: (leagueId?: string) => Promise<void>;
+}) {
+  const [keeperPickDeadline, setKeeperPickDeadline] = React.useState(league?.keeperPickDeadline ?? "");
+  const [regularSeasonStartDate, setRegularSeasonStartDate] = React.useState(
+    league?.regularSeasonStartDate ?? defaultRegularSeasonStartDate(league?.seasonYear),
+  );
+  const [draftDate, setDraftDate] = React.useState(league?.draftDate ?? "");
+  const [revealDate, setRevealDate] = React.useState(league?.keeperRevealDate ?? "");
+  const [saving, setSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    setKeeperPickDeadline(league?.keeperPickDeadline ?? "");
+    setRegularSeasonStartDate(
+      league?.regularSeasonStartDate ?? defaultRegularSeasonStartDate(league?.seasonYear),
+    );
+    setDraftDate(league?.draftDate ?? "");
+    setRevealDate(league?.keeperRevealDate ?? "");
+  }, [
+    league?.keeperPickDeadline,
+    league?.regularSeasonStartDate,
+    league?.seasonYear,
+    league?.draftDate,
+    league?.keeperRevealDate,
+  ]);
+
+  const handleSave = async () => {
+    if (!leagueId) return;
+    setSaving(true);
+    setError("");
+    setSaved(false);
+    try {
+      await updateLeagueCalendarSettings(leagueId, { keeperPickDeadline, regularSeasonStartDate });
+      await updateCommissionerSettings(leagueId, { draftDate, keeperRevealDate: revealDate });
+      await refreshData(leagueId);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch {
+      setError("Failed to save league dates.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <PagePanel
+      title="League Dates"
+      description="Set all key dates for this season. Keeper deadline and season start appear as countdowns in the header."
+    >
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor="keeper-pick-deadline">Keeper Pick Deadline</Label>
+          <Input
+            id="keeper-pick-deadline"
+            type="date"
+            value={keeperPickDeadline}
+            onChange={(e) => setKeeperPickDeadline(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="draft-date">Draft Date</Label>
+          <Input
+            id="draft-date"
+            type="date"
+            value={draftDate}
+            onChange={(e) => setDraftDate(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="reveal-date">Keeper Reveal Date</Label>
+          <Input
+            id="reveal-date"
+            type="date"
+            value={revealDate}
+            onChange={(e) => setRevealDate(e.target.value)}
+          />
+          <p className="text-xs text-zinc-500">
+            On this date all teams&apos; keepers become visible league-wide.
+          </p>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="regular-season-start-date">Regular Season Start</Label>
+          <Input
+            id="regular-season-start-date"
+            type="date"
+            value={regularSeasonStartDate}
+            onChange={(e) => setRegularSeasonStartDate(e.target.value)}
+          />
+        </div>
+      </div>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {saved && <p className="mt-2 text-sm text-emerald-600">Saved.</p>}
+      <div className="mt-4">
+        <Button onClick={handleSave} disabled={saving || !leagueId}>
+          {saving ? "Saving…" : "Save Dates"}
+        </Button>
+      </div>
+    </PagePanel>
+  );
+}
+
+function ComplianceCheckerPanel({ leagueId }: { leagueId: string | null }) {
+  const [result, setResult] = React.useState<ComplianceResult | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  const runCheck = React.useCallback(() => {
+    if (!leagueId) return;
+    setLoading(true);
+    setError("");
+    getComplianceReport(leagueId)
+      .then(setResult)
+      .catch(() => setError("Could not run compliance check. Run the optimizer first."))
+      .finally(() => setLoading(false));
+  }, [leagueId]);
+
+  React.useEffect(() => {
+    runCheck();
+  }, [runCheck]);
+
+  const allPassBadge = result?.allPass ? (
+    <Badge variant="success">All Teams Pass</Badge>
+  ) : (
+    <Badge variant="danger">Compliance Issues Found</Badge>
+  );
+
+  return (
+    <PagePanel
+      title="Keeper Rule Compliance"
+      description="Per-team pass/fail check against max keepers, position limits, and cost validity."
+      action={
+        <Button variant="outline" size="sm" onClick={runCheck} disabled={loading}>
+          <RefreshCw className={cn("mr-1.5 size-3.5", loading && "animate-spin")} />
+          Refresh
+        </Button>
+      }
+    >
+      {loading && <p className="text-sm text-zinc-500">Checking…</p>}
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      {result && !loading && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">{allPassBadge}</div>
+          <div className="overflow-x-auto rounded-md border border-zinc-200">
+            <table className="w-full text-sm">
+              <thead className="bg-zinc-50 text-xs font-semibold uppercase text-zinc-600">
+                <tr>
+                  <th className="px-3 py-2 text-left">Team</th>
+                  <th className="px-3 py-2 text-center">Keepers</th>
+                  <th className="px-3 py-2 text-center">Max Keepers</th>
+                  <th className="px-3 py-2 text-center">Per Position</th>
+                  <th className="px-3 py-2 text-center">QB Limit</th>
+                  <th className="px-3 py-2 text-center">Cost Valid</th>
+                  <th className="px-3 py-2 text-center">Overall</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {result.teams.map((team) => (
+                  <tr key={team.teamId} className={cn(!team.passes && "bg-red-50")}>
+                    <td className="px-3 py-2 font-medium">{team.teamName}</td>
+                    <td className="px-3 py-2 text-center">
+                      {team.keeperCount}/{team.maxKeepersAllowed}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <ComplianceBadge pass={team.maxKeepersPass} />
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <ComplianceBadge pass={team.maxPerPositionPass} />
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <ComplianceBadge pass={team.maxQbPass} />
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <ComplianceBadge pass={team.costValidityPass} />
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <ComplianceBadge pass={team.passes} bold />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {result.teams.some((t) => t.invalidCostPlayers.length > 0) && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <strong>Invalid costs:</strong>{" "}
+              {result.teams
+                .flatMap((t) => t.invalidCostPlayers.map((p) => `${t.teamName}: ${p}`))
+                .join("; ")}
+            </div>
+          )}
+        </div>
+      )}
+    </PagePanel>
+  );
+}
+
+function ComplianceBadge({ pass, bold }: { pass: boolean; bold?: boolean }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs",
+        pass ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800",
+        bold && "font-semibold",
+      )}
+    >
+      {pass ? "Pass" : "Fail"}
+    </span>
+  );
+}
+
+function KeeperRevealPanel({
+  leagueId,
+  league,
+}: {
+  leagueId: string | null;
+  league: WorkspaceData["league"];
+}) {
+  const [reveal, setReveal] = React.useState<KeeperRevealResult | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    setLoading(true);
+    getKeeperReveal(leagueId)
+      .then(setReveal)
+      .catch(() => setError("Could not load keeper reveal data."))
+      .finally(() => setLoading(false));
+  }, [leagueId]);
+
+  const revealDateStr = league?.keeperRevealDate
+    ? new Date(league.keeperRevealDate + "T00:00:00").toLocaleDateString("en-US", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    : null;
+
+  return (
+    <PagePanel
+      title="Keeper Reveal"
+      description="Control when all teams' keeper selections become visible to each other."
+    >
+      <div className="space-y-4">
+        {revealDateStr ? (
+          <div className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-800">
+            <strong>Reveal date set:</strong> {revealDateStr}
+            {reveal?.revealed && (
+              <span className="ml-2 font-semibold text-emerald-700">(Revealed)</span>
+            )}
+            {!reveal?.revealed && (
+              <span className="ml-2 text-zinc-500">(Not yet revealed)</span>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-zinc-500">
+            No reveal date set. Set one in League Dates above to enable the reveal feature.
+          </p>
+        )}
+
+        {loading && <p className="text-sm text-zinc-500">Loading reveal preview…</p>}
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        {reveal && !loading && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-zinc-700">
+              {reveal.revealed
+                ? "All keeper selections are now public."
+                : "Before the reveal date, each team only sees their own keepers. Preview:"}
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {reveal.teams.map((team) => (
+                <div
+                  key={team.teamId}
+                  className={cn(
+                    "rounded-md border p-3 text-sm",
+                    team.hidden ? "border-zinc-200 bg-zinc-50" : "border-emerald-200 bg-emerald-50",
+                  )}
+                >
+                  <div className="font-semibold text-zinc-900">{team.teamName}</div>
+                  {team.hidden ? (
+                    <div className="mt-1 text-xs text-zinc-400 italic">Hidden until reveal</div>
+                  ) : team.keepers.length === 0 ? (
+                    <div className="mt-1 text-xs text-zinc-400">No keepers finalized</div>
+                  ) : (
+                    <ul className="mt-1 space-y-0.5">
+                      {team.keepers.map((k) => (
+                        <li key={k.playerId} className="text-xs text-zinc-700">
+                          {k.playerName}
+                          {k.position && (
+                            <span className="ml-1 text-zinc-400">({k.position})</span>
+                          )}
+                          {k.keeperCostRound && (
+                            <span className="ml-1 text-zinc-400">R{k.keeperCostRound}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </PagePanel>
+  );
+}
+
+function ReminderEmailPanel({
+  leagueId,
+  league,
+}: {
+  leagueId: string | null;
+  league: WorkspaceData["league"];
+}) {
+  const [smtpStatus, setSmtpStatus] = React.useState<SmtpStatus | null>(null);
+  const [sending, setSending] = React.useState(false);
+  const [dryRunResult, setDryRunResult] = React.useState<string[] | null>(null);
+  const [sentCount, setSentCount] = React.useState<number | null>(null);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    getSmtpStatus(leagueId)
+      .then(setSmtpStatus)
+      .catch(() => {/* smtp status is optional */});
+  }, [leagueId]);
+
+  const handleDryRun = async () => {
+    if (!leagueId) return;
+    setSending(true);
+    setError("");
+    setDryRunResult(null);
+    setSentCount(null);
+    try {
+      const result = await sendKeeperReminders(leagueId, true);
+      setDryRunResult(result.recipients);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to preview recipients.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleSend = async () => {
+    if (!leagueId) return;
+    setSending(true);
+    setError("");
+    setDryRunResult(null);
+    setSentCount(null);
+    try {
+      const result = await sendKeeperReminders(leagueId, false);
+      setSentCount(result.sent);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to send reminders.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const deadlineStr = league?.keeperPickDeadline
+    ? new Date(league.keeperPickDeadline + "T00:00:00").toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      })
+    : null;
+
+  return (
+    <PagePanel
+      title="Keeper Deadline Reminders"
+      description="Send reminder emails to all league members with linked accounts."
+    >
+      <div className="space-y-4">
+        {deadlineStr ? (
+          <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
+            Deadline: <strong>{deadlineStr}</strong>
+          </div>
+        ) : (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            No keeper deadline set. Add one in League Dates above first.
+          </div>
+        )}
+
+        {smtpStatus !== null && (
+          <div className="flex items-center gap-2 text-sm">
+            <span
+              className={cn(
+                "inline-block size-2 rounded-full",
+                smtpStatus.configured ? "bg-emerald-500" : "bg-zinc-400",
+              )}
+            />
+            <span className={smtpStatus.configured ? "text-zinc-700" : "text-zinc-500"}>
+              {smtpStatus.configured
+                ? `SMTP configured (${smtpStatus.host}:${smtpStatus.port})`
+                : "SMTP not configured — set SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD env vars"}
+            </span>
+          </div>
+        )}
+
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        {dryRunResult !== null && (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm">
+            <p className="font-medium text-zinc-700">
+              Preview: {dryRunResult.length} recipient(s)
+            </p>
+            {dryRunResult.length > 0 && (
+              <ul className="mt-1 space-y-0.5 text-xs text-zinc-600">
+                {dryRunResult.map((email) => (
+                  <li key={email}>{email}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+        {sentCount !== null && (
+          <p className="text-sm text-emerald-700 font-medium">
+            Reminders sent to {sentCount} member(s).
+          </p>
+        )}
+
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleDryRun} disabled={sending || !leagueId}>
+            Preview Recipients
+          </Button>
+          <Button
+            onClick={handleSend}
+            disabled={sending || !leagueId || !smtpStatus?.configured || !deadlineStr}
+          >
+            {sending ? "Sending…" : "Send Reminders"}
+          </Button>
+        </div>
+        {!smtpStatus?.configured && (
+          <p className="text-xs text-zinc-400">
+            Email sending is disabled until SMTP is configured on the server.
+          </p>
+        )}
+      </div>
+    </PagePanel>
+  );
+}
+
+function BulkExportPanel({
+  leagueId,
+  league,
+}: {
+  leagueId: string | null;
+  league: WorkspaceData["league"];
+}) {
+  const [downloading, setDownloading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [done, setDone] = React.useState(false);
+
+  const handleDownload = async () => {
+    if (!leagueId || !league) return;
+    setDownloading(true);
+    setError("");
+    setDone(false);
+    try {
+      await downloadBulkExport(leagueId, league.name);
+      setDone(true);
+      setTimeout(() => setDone(false), 4000);
+    } catch {
+      setError("Failed to generate bulk export. Run the optimizer first to generate recommendations.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <PagePanel
+      title="Bulk Export"
+      description="Download a single ZIP file containing individual PDFs for every team plus the full Excel workbook."
+    >
+      <div className="space-y-3">
+        <p className="text-sm text-zinc-600">
+          The ZIP includes one PDF per team, an all-teams combined PDF, and a multi-sheet Excel
+          workbook — ready to share with every team owner before draft day.
+        </p>
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        {done && <p className="text-sm text-emerald-700 font-medium">Download started.</p>}
+        <Button onClick={handleDownload} disabled={downloading || !leagueId}>
+          <Download className="mr-1.5 size-4" />
+          {downloading ? "Building…" : "Download All Reports (ZIP)"}
+        </Button>
+      </div>
+    </PagePanel>
+  );
 }

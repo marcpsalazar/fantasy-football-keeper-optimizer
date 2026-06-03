@@ -41,6 +41,8 @@ class League(TimestampMixin, table=True):
     max_qb_keepers: int = Field(default=1)
     keeper_pick_deadline: date | None = Field(default=None)
     regular_season_start_date: date | None = Field(default=None)
+    draft_date: date | None = Field(default=None)
+    keeper_reveal_date: date | None = Field(default=None)
     keepers_finalized: bool = Field(default=False)
     keepers_finalized_at: datetime | None = Field(default=None)
     keepers_finalized_by_user_id: uuid.UUID | None = Field(default=None, foreign_key="users.id")

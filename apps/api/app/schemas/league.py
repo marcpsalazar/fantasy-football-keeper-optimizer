@@ -15,6 +15,8 @@ class LeagueBase(BaseModel):
     max_qb_keepers: int = 1
     keeper_pick_deadline: date | None = None
     regular_season_start_date: date | None = None
+    draft_date: date | None = None
+    keeper_reveal_date: date | None = None
     roster_settings: dict[str, Any] = Field(default_factory=dict)
     keeper_rules: dict[str, Any] = Field(default_factory=dict)
 
@@ -33,6 +35,8 @@ class LeagueUpdate(BaseModel):
     max_qb_keepers: int | None = None
     keeper_pick_deadline: date | None = None
     regular_season_start_date: date | None = None
+    draft_date: date | None = None
+    keeper_reveal_date: date | None = None
     roster_settings: dict[str, Any] | None = None
     keeper_rules: dict[str, Any] | None = None
 

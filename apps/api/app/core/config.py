@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     yahoo_redirect_uri: str = "http://localhost:8000/api/auth/yahoo/callback"
     frontend_url: str = "http://localhost:3000"
     adp_yahoo_player_limit: int = 200
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str = "noreply@keeperoptimizer.com"
+    smtp_from_name: str = "Keeper Optimizer"
+    smtp_use_tls: bool = True
 
     @property
     def use_secure_session_cookie(self) -> bool:
