@@ -2563,7 +2563,7 @@ function ProfilePage() {
 }
 
 function LeagueDashboard() {
-  const { currentUser, data, downloadCurrentAdpNow, isBusy } = useDashboard();
+  const { activeLeagueId, currentUser, data, downloadCurrentAdpNow, isBusy, isLeagueAdmin } = useDashboard();
   const recommendedKeepers = data.keeperRecommendations.filter(
     (recommendation) => recommendation.status === "Recommended",
   );
@@ -2772,7 +2772,8 @@ function LeagueDashboard() {
             </div>
             <Badge variant="info">Daily headlines</Badge>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {isLeagueAdmin && <NewsImpactSummary leagueId={activeLeagueId} />}
             <DashboardNewsList items={data.leagueNews} />
           </CardContent>
         </Card>
@@ -11384,9 +11385,63 @@ function RecommendationBadge({ status }: { status: KeeperRecommendation["status"
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// News Impact Panel (4.1)
+// News Impact (4.1)
 // ---------------------------------------------------------------------------
 
+/**
+ * Compact strip for the home dashboard — shows affected player names only.
+ * Zero-footprint when there are no alerts or the fetch fails.
+ */
+function NewsImpactSummary({ leagueId }: { leagueId: string | null }) {
+  const [alerts, setAlerts] = React.useState<NewsAlert[]>([]);
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    getNewsAlerts(leagueId)
+      .then(setAlerts)
+      .catch(() => {/* non-critical */});
+  }, [leagueId]);
+
+  if (alerts.length === 0) return null;
+
+  // Deduplicate by player so one player with multiple headlines shows once
+  const uniquePlayers = Array.from(
+    new Map(alerts.map((a) => [a.playerId, a])).values(),
+  );
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+      <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-900">
+        <Zap className="size-3.5 shrink-0" aria-hidden="true" />
+        {uniquePlayers.length} keeper candidate{uniquePlayers.length !== 1 ? "s" : ""} in today&apos;s news
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {uniquePlayers.map((a) => (
+          <span
+            key={a.playerId}
+            className={cn(
+              "inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium",
+              a.isRecommended
+                ? "bg-emerald-100 text-emerald-800"
+                : "bg-zinc-100 text-zinc-600",
+            )}
+          >
+            {a.playerName}
+            <span className="ml-1 font-normal opacity-70">{a.position}</span>
+          </span>
+        ))}
+      </div>
+      <p className="mt-1.5 text-xs text-amber-700">
+        Open Recommendations to see keeper value impact and flip rounds.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Full panel for the Recommendations page — expandable table with flip rounds
+ * and headline links.
+ */
 function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
   const [alerts, setAlerts] = React.useState<NewsAlert[]>([]);
   const [loading, setLoading] = React.useState(false);

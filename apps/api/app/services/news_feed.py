@@ -32,7 +32,7 @@ class _NewsCache:
 
 _NEWS_CACHE: _NewsCache | None = None
 _NEWS_CACHE_LOCK = Lock()
-_NEWS_CACHE_TTL = timedelta(hours=24)
+_NEWS_CACHE_TTL = timedelta(hours=4)
 
 _FANTASY_STRATEGY_TERMS = (
     "adp",
