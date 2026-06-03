@@ -99,6 +99,8 @@ export type LeagueSummary = {
   draftType: string;
   keeperPickDeadline: string | null;
   regularSeasonStartDate: string | null;
+  draftDate: string | null;
+  keeperRevealDate: string | null;
   rosterSettings: LeagueRosterSettings;
 };
 
@@ -127,6 +129,11 @@ export type LeagueMembership = {
 export type LeagueCalendarSettings = {
   keeperPickDeadline: string;
   regularSeasonStartDate: string;
+};
+
+export type CommissionerSettings = {
+  draftDate: string;
+  keeperRevealDate: string;
 };
 
 export type LeagueRosterSettings = {
@@ -373,6 +380,8 @@ export const mockWorkspaceData: WorkspaceData = {
     draftType: "snake",
     keeperPickDeadline: null,
     regularSeasonStartDate: "2026-09-10",
+    draftDate: null,
+    keeperRevealDate: null,
     rosterSettings: defaultLeagueRosterSettings,
   },
   activeSnapshot: {
@@ -1046,6 +1055,21 @@ export async function deleteTeam(teamId: string): Promise<void> {
       throw new Error(`API ${response.status}: ${await response.text()}`);
     }
   });
+}
+
+export async function updateCommissionerSettings(
+  leagueId: string,
+  settings: CommissionerSettings,
+): Promise<LeagueSummary> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}`, {
+    body: JSON.stringify({
+      draft_date: settings.draftDate || null,
+      keeper_reveal_date: settings.keeperRevealDate || null,
+    }),
+    headers: { "content-type": "application/json" },
+    method: "PATCH",
+  });
+  return mapLeague(payload);
 }
 
 export async function updateLeagueCalendarSettings(
@@ -2320,6 +2344,190 @@ export async function downloadKeeperCard(leagueId: string, teamId: string): Prom
   URL.revokeObjectURL(downloadUrl);
 }
 
+// ---------------------------------------------------------------------------
+// Commissioner Tools (3.2)
+// ---------------------------------------------------------------------------
+
+export type ComplianceTeamResult = {
+  teamId: string;
+  teamName: string;
+  draftSlot: number | null;
+  passes: boolean;
+  maxKeepersPass: boolean;
+  maxPerPositionPass: boolean;
+  maxQbPass: boolean;
+  costValidityPass: boolean;
+  keeperCount: number;
+  maxKeepersAllowed: number;
+  qbCount: number;
+  maxQbAllowed: number;
+  positionCounts: Record<string, number>;
+  maxPerPositionAllowed: number;
+  invalidCostPlayers: string[];
+};
+
+export type ComplianceResult = {
+  leagueId: string;
+  leagueName: string;
+  allPass: boolean;
+  teams: ComplianceTeamResult[];
+};
+
+export type SmtpStatus = {
+  configured: boolean;
+  host: string;
+  port: number;
+  fromEmail: string;
+};
+
+export type ReminderResult = {
+  sent: number;
+  recipients: string[];
+  dryRun: boolean;
+};
+
+export type RevealKeeperRow = {
+  playerId: string;
+  playerName: string;
+  position: string | null;
+  nflTeam: string | null;
+  keeperCostRound: number | null;
+};
+
+export type RevealTeamRow = {
+  teamId: string;
+  teamName: string;
+  ownerName: string | null;
+  draftSlot: number | null;
+  hidden: boolean;
+  keepers: RevealKeeperRow[];
+};
+
+export type KeeperRevealResult = {
+  leagueId: string;
+  leagueName: string;
+  seasonYear: number;
+  revealDate: string | null;
+  revealed: boolean;
+  keepersFinalized: boolean;
+  teams: RevealTeamRow[];
+};
+
+export async function getComplianceReport(
+  leagueId: string,
+  scenarioName?: string | null,
+): Promise<ComplianceResult> {
+  const params = new URLSearchParams();
+  if (scenarioName) params.set("scenario_name", scenarioName);
+  const qs = params.toString();
+  const data = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/commissioner/compliance${qs ? `?${qs}` : ""}`,
+  );
+  return {
+    leagueId: text(data["league_id"]),
+    leagueName: text(data["league_name"]),
+    allPass: boolean(data["all_pass"]),
+    teams: array(data["teams"]).map((t) => ({
+      teamId: text(t["team_id"]),
+      teamName: text(t["team_name"]),
+      draftSlot: nullableNumber(t["draft_slot"]),
+      passes: boolean(t["passes"]),
+      maxKeepersPass: boolean(t["max_keepers_pass"]),
+      maxPerPositionPass: boolean(t["max_per_position_pass"]),
+      maxQbPass: boolean(t["max_qb_pass"]),
+      costValidityPass: boolean(t["cost_validity_pass"]),
+      keeperCount: number(t["keeper_count"]),
+      maxKeepersAllowed: number(t["max_keepers_allowed"]),
+      qbCount: number(t["qb_count"]),
+      maxQbAllowed: number(t["max_qb_allowed"]),
+      positionCounts: objectRecord(t["position_counts"]) as Record<string, number>,
+      maxPerPositionAllowed: number(t["max_per_position_allowed"]),
+      invalidCostPlayers: stringArray(t["invalid_cost_players"]),
+    })),
+  };
+}
+
+export async function getSmtpStatus(leagueId: string): Promise<SmtpStatus> {
+  const data = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/commissioner/reminders/smtp-status`,
+  );
+  return {
+    configured: boolean(data["configured"]),
+    host: text(data["host"]),
+    port: number(data["port"], 587),
+    fromEmail: text(data["from_email"]),
+  };
+}
+
+export async function sendKeeperReminders(
+  leagueId: string,
+  dryRun = false,
+): Promise<ReminderResult> {
+  const data = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/commissioner/reminders/send`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dry_run: dryRun }),
+    },
+  );
+  return {
+    sent: number(data["sent"]),
+    recipients: stringArray(data["recipients"]),
+    dryRun: boolean(data["dry_run"]),
+  };
+}
+
+export async function getKeeperReveal(leagueId: string): Promise<KeeperRevealResult> {
+  const data = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/reveal`,
+  );
+  return {
+    leagueId: text(data["league_id"]),
+    leagueName: text(data["league_name"]),
+    seasonYear: number(data["season_year"]),
+    revealDate: data["reveal_date"] ? text(data["reveal_date"]) : null,
+    revealed: boolean(data["revealed"]),
+    keepersFinalized: boolean(data["keepers_finalized"]),
+    teams: array(data["teams"]).map((t) => ({
+      teamId: text(t["team_id"]),
+      teamName: text(t["team_name"]),
+      ownerName: t["owner_name"] ? text(t["owner_name"]) : null,
+      draftSlot: nullableNumber(t["draft_slot"]),
+      hidden: boolean(t["hidden"]),
+      keepers: array(t["keepers"]).map((k) => ({
+        playerId: text(k["player_id"]),
+        playerName: text(k["player_name"]),
+        position: k["position"] ? text(k["position"]) : null,
+        nflTeam: k["nfl_team"] ? text(k["nfl_team"]) : null,
+        keeperCostRound: nullableNumber(k["keeper_cost_round"]),
+      })),
+    })),
+  };
+}
+
+export async function downloadBulkExport(leagueId: string, leagueName: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/leagues/${leagueId}/exports/bulk`,
+    {
+      cache: "no-store",
+      credentials: "include",
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${leagueName.replace(/\s+/g, "_")}_keeper_reports.zip`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function loadScenarios(
   leagueId: string,
 ): Promise<{ comparisons: ScenarioComparison[]; narrative: ScenarioNarrative | null }> {
@@ -2384,6 +2592,8 @@ function mapLeague(row: ApiRow): LeagueSummary {
     draftType: text(row.draft_type, "snake"),
     keeperPickDeadline: text(row.keeper_pick_deadline) || null,
     regularSeasonStartDate: text(row.regular_season_start_date) || null,
+    draftDate: text(row.draft_date) || null,
+    keeperRevealDate: text(row.keeper_reveal_date) || null,
     rosterSettings: mapLeagueRosterSettings(row.roster_settings),
   };
 }

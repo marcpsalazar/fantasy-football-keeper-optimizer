@@ -113,6 +113,11 @@ from app.services.sleeper_season_stats import SleeperStatsError
 from app.services import season_analysis as season_analysis_svc
 from app.services.season_analysis import SeasonAnalysisError
 from app.services.keeper_card import KeeperCardError, build_keeper_card
+from app.services import compliance as compliance_svc
+from app.services.compliance import LeagueComplianceResult
+from app.services import notifications as notifications_svc
+from app.services.notifications import NotificationError
+from app.services.bulk_export import BulkExportError, build_bulk_pdf_zip
 
 router = APIRouter(
     prefix="/api",
@@ -3331,4 +3336,212 @@ def _table(rows: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
         "columns": columns,
         "rows": rows,
         **extra,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Commissioner Tools (3.2)
+# ---------------------------------------------------------------------------
+
+class KeeperReminderRequest(BaseModel):
+    dry_run: bool = False
+
+
+@router.get("/leagues/{league_id}/commissioner/compliance")
+def get_compliance_report(
+    league_id: uuid.UUID,
+    scenario_name: str | None = Query(default=None),
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    try:
+        result = compliance_svc.check_league_compliance(
+            session,
+            league_id,
+            scenario_name=scenario_name,
+            user_id=user.id if user else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return _compliance_result_to_dict(result)
+
+
+@router.post("/leagues/{league_id}/commissioner/reminders/send")
+def send_keeper_reminders(
+    league_id: uuid.UUID,
+    payload: KeeperReminderRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    try:
+        recipients = notifications_svc.send_keeper_deadline_reminders(
+            session,
+            league_id,
+            dry_run=payload.dry_run,
+        )
+    except NotificationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return {
+        "sent": len(recipients),
+        "recipients": recipients,
+        "dry_run": payload.dry_run,
+    }
+
+
+@router.get("/leagues/{league_id}/commissioner/reminders/smtp-status")
+def get_smtp_status(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    return notifications_svc.smtp_status()
+
+
+@router.get("/leagues/{league_id}/reveal")
+def get_keeper_reveal(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Public reveal endpoint: before reveal_date only shows requesting user's team;
+    on/after reveal_date shows all teams' finalized keepers."""
+    league = session.get(League, league_id)
+    if league is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+
+    from app.models.final_keeper import FinalKeeperSelection
+    from datetime import date as _date
+
+    today = _date.today()
+    reveal_date = league.keeper_reveal_date
+    revealed = reveal_date is not None and today >= reveal_date
+
+    teams = session.exec(select(Team).where(Team.league_id == league_id)).all()
+    team_by_id = {t.id: t for t in teams}
+
+    selections = session.exec(
+        select(FinalKeeperSelection).where(FinalKeeperSelection.league_id == league_id)
+    ).all()
+    player_ids = {s.player_id for s in selections}
+    players: dict[uuid.UUID, Player] = {}
+    if player_ids:
+        players = {
+            p.id: p
+            for p in session.exec(select(Player).where(Player.id.in_(player_ids))).all()
+        }
+
+    my_team_id: uuid.UUID | None = None
+    if user:
+        my_team = next((t for t in teams if t.user_id == user.id), None)
+        my_team_id = my_team.id if my_team else None
+
+    team_rows: list[dict[str, Any]] = []
+    for team in sorted(teams, key=lambda t: (t.draft_slot or 99, t.name)):
+        is_mine = team.id == my_team_id
+        if not revealed and not is_mine:
+            team_rows.append(
+                {
+                    "team_id": str(team.id),
+                    "team_name": team.name,
+                    "owner_name": team.owner_name,
+                    "draft_slot": team.draft_slot,
+                    "hidden": True,
+                    "keepers": [],
+                }
+            )
+            continue
+
+        team_selections = [s for s in selections if s.team_id == team.id]
+        keeper_rows = []
+        for sel in team_selections:
+            player = players.get(sel.player_id)
+            keeper_rows.append(
+                {
+                    "player_id": str(sel.player_id),
+                    "player_name": player.full_name if player else str(sel.player_id),
+                    "position": player.position if player else None,
+                    "nfl_team": player.nfl_team if player else None,
+                    "keeper_cost_round": sel.cost_round,
+                }
+            )
+
+        team_rows.append(
+            {
+                "team_id": str(team.id),
+                "team_name": team.name,
+                "owner_name": team.owner_name,
+                "draft_slot": team.draft_slot,
+                "hidden": False,
+                "keepers": keeper_rows,
+            }
+        )
+
+    return {
+        "league_id": str(league_id),
+        "league_name": league.name,
+        "season_year": league.season_year,
+        "reveal_date": reveal_date.isoformat() if reveal_date else None,
+        "revealed": revealed,
+        "keepers_finalized": league.keepers_finalized,
+        "teams": team_rows,
+    }
+
+
+@router.get("/leagues/{league_id}/exports/bulk")
+def download_bulk_export(
+    league_id: uuid.UUID,
+    scenario_name: str | None = Query(default=None),
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> Response:
+    assert_league_admin(session, user, league_id)
+    league = session.get(League, league_id)
+    if league is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+    try:
+        zip_bytes = build_bulk_pdf_zip(
+            session,
+            league_id,
+            scenario_name=scenario_name,
+            user_id=user.id if user else None,
+        )
+    except BulkExportError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    filename = f"{league.name.replace(' ', '_')}_{league.season_year}_keeper_reports.zip"
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _compliance_result_to_dict(result: LeagueComplianceResult) -> dict[str, Any]:
+    return {
+        "league_id": result.league_id,
+        "league_name": result.league_name,
+        "all_pass": result.all_pass,
+        "teams": [
+            {
+                "team_id": t.team_id,
+                "team_name": t.team_name,
+                "draft_slot": t.draft_slot,
+                "passes": t.passes,
+                "max_keepers_pass": t.max_keepers_pass,
+                "max_per_position_pass": t.max_per_position_pass,
+                "max_qb_pass": t.max_qb_pass,
+                "cost_validity_pass": t.cost_validity_pass,
+                "keeper_count": t.keeper_count,
+                "max_keepers_allowed": t.max_keepers_allowed,
+                "qb_count": t.qb_count,
+                "max_qb_allowed": t.max_qb_allowed,
+                "position_counts": t.position_counts,
+                "max_per_position_allowed": t.max_per_position_allowed,
+                "invalid_cost_players": t.invalid_cost_players,
+            }
+            for t in result.teams
+        ],
     }
