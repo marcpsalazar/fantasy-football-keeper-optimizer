@@ -25,7 +25,7 @@ The core product is fully functional and deployed. All Tier 1, Tier 2, and sever
   4. Final Draft Board — snake-draft grid showing forfeited keeper picks by round/team
 - **Draft History / Owner Profiles** — cross-season pick data used to generate AI bot enrichment and real owner tendency profiles in mock draft strategy plans
 
-The biggest remaining gaps are **auction league support** (entire excluded market segment), **viral surface area** (nothing shareable), and **commissioner tooling** (no reminders, compliance checks, or reveal mechanics).
+The biggest remaining gaps are **auction league support** (entire excluded market segment) and **engagement hooks** (news-driven alerts, multi-year projections). Commissioner tooling and the shareable report card have shipped.
 
 ---
 
@@ -112,18 +112,17 @@ Shipped: `apps/api/app/services/keeper_card.py` renders a 900×500 PNG card usin
 
 ---
 
-### 3.2 Commissioner Tools Pack
+### ~~3.2 Commissioner Tools Pack~~ ✅ Complete
 
-**Why it matters:** Commissioners choose the platform for the whole league. One convinced commissioner brings 10+ new users. Giving commissioners tools they actually need on draft day — deadline reminders, a compliance checker, a league-wide keeper reveal — makes the app a commissioner platform, not just a personal optimizer.
+Shipped: a dedicated **Commissioner Tools** tab (admin-only, Wrench icon) with five panels:
 
-**Scope:**
+- **League Dates** — all four season dates in one place: keeper pick deadline, draft date, keeper reveal date, regular season start. Consolidated from the former Admin > League Dates panel so commissioners manage the full calendar from one screen.
+- **Keeper Rule Compliance Checker** (`apps/api/app/services/compliance.py`) — runs automatically on page load; per-team pass/fail table against four rules: max keepers, max per position, max QB keepers, cost validity (cost ≥ 1). Red rows highlight violations; lists invalid-cost player names explicitly. `GET /api/leagues/{id}/commissioner/compliance`.
+- **Keeper Reveal** — date-gated reveal: before `keeper_reveal_date`, each user sees only their own team's keepers; on or after the reveal date, all teams' selections become visible league-wide. `GET /api/leagues/{id}/reveal`. Commissioner panel shows a live preview of what each team currently sees.
+- **Keeper Deadline Reminders** (`apps/api/app/services/notifications.py`) — sends an HTML + plain-text reminder email to every active league member with a linked account. Dry-run mode previews the recipient list without sending. SMTP configured via `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` env vars. `POST /api/leagues/{id}/commissioner/reminders/send`.
+- **Bulk Export** (`apps/api/app/services/bulk_export.py`) — single-click ZIP containing one team outlook PDF per team, a combined all-teams PDF, and the full Excel keeper recommendations workbook. `GET /api/leagues/{id}/exports/bulk`.
 
-- **Keeper Deadline Reminder Emails:** commissioner enters draft date and keeper deadline; app sends reminder emails to all league members with assigned accounts 7 days and 2 days before deadline. Uses `sendgrid` or `SMTP` via a new `apps/api/app/services/notifications.py`.
-- **Keeper Rule Compliance Checker:** before the draft, shows a table of all teams with a pass/fail per rule (max keepers, max per position, max QB, cost validity). Red badge if any team is over limits, green if all teams are compliant.
-- **League-Wide Keeper Reveal Page:** commissioner sets a "reveal date"; before that date, individual users see only their own keepers; on reveal date, a public `/leagues/{league_id}/reveal` page shows all teams' keepers simultaneously. Creates anticipation and is shareable.
-- **Bulk Export:** single-click export of all teams' keeper reports as a ZIP of PDFs or a single multi-team Excel workbook.
-
-**Dependencies:** User account + email system (auth exists; email delivery is new). Reveal page needs a `keeper_locked` field on `Team`.
+New league fields: `draft_date`, `keeper_reveal_date` (migration `20260602_0015`). Admin tab no longer contains date settings — all four dates live in Commissioner Tools.
 
 ---
 
@@ -177,10 +176,10 @@ Shipped: `apps/api/app/services/keeper_card.py` renders a 900×500 PNG card usin
 | ✅ | ~~Historical Keeper ROI Tracker (2.3)~~ | — | — |
 | ✅ | ~~End-of-Season Finalization Workflow (2.4)~~ | — | — |
 | ✅ | ~~Shareable Keeper Report Card (3.1)~~ | — | — |
+| ✅ | ~~Commissioner Tools Pack (3.2)~~ | — | — |
 | 1 | Auction Draft Mode (1.2) | Opens a large excluded market segment | High |
-| 2 | Commissioner Tools Pack (3.2) | Acquisition via commissioners = leverage | Medium |
-| 3 | News → Keeper Value Alerts (4.1) | Drives offseason re-engagement; news feed already live | Medium |
-| 4 | Value Window Projection (4.2) | Depth feature for power users; player age data now available via Sleeper | Medium |
+| 2 | News → Keeper Value Alerts (4.1) | Drives offseason re-engagement; news feed already live | Medium |
+| 3 | Value Window Projection (4.2) | Depth feature for power users; player age data now available via Sleeper | Medium |
 
 ---
 
@@ -188,6 +187,6 @@ Shipped: `apps/api/app/services/keeper_card.py` renders a 900×500 PNG card usin
 
 **Auction Draft Mode (1.2)** is the highest-impact unbuilt feature — it opens the entire auction keeper league segment that is currently excluded. It requires a parallel optimizer path and the FFC auction ADP endpoint, making it a heavier lift but the most strategically important gap remaining.
 
-**Commissioner Tools Pack (3.2)** is the clearest acquisition lever: one convinced commissioner brings 10+ users. The compliance checker and keeper reveal page are self-contained and could ship incrementally (reveal page first, then email reminders).
-
 **News → Keeper Value Alerts (4.1)** is closer to done than it looks: `news_feed.py` and the `/news/fantasy-football` endpoint are already live. The remaining work is pattern-matching headlines to keeper candidates and adding one optimizer pass per candidate for ADP sensitivity.
+
+**Value Window Projection (4.2)** is a pure depth feature — player age is already available from the Sleeper player DB. The value is high for power users doing multi-year roster construction.
