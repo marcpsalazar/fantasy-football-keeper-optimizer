@@ -25,7 +25,7 @@ The core product is fully functional and deployed. All Tier 1, Tier 2, and sever
   4. Final Draft Board — snake-draft grid showing forfeited keeper picks by round/team
 - **Draft History / Owner Profiles** — cross-season pick data used to generate AI bot enrichment and real owner tendency profiles in mock draft strategy plans
 
-The biggest remaining gaps are **auction league support** (entire excluded market segment) and **engagement hooks** (news-driven alerts, multi-year projections). Commissioner tooling and the shareable report card have shipped.
+The biggest remaining gaps are **auction league support** (entire excluded market segment) and **value window projections** (multi-year keeper ROI). Commissioner tooling, news-driven alerts, and the shareable report card have all shipped.
 
 ---
 
@@ -130,20 +130,16 @@ New league fields: `draft_date`, `keeper_reveal_date` (migration `20260602_0015`
 
 ---
 
-### 4.1 Real-Time News → Keeper Value Alerts
+### ~~4.1 Real-Time News → Keeper Value Alerts~~ ✅ Complete
 
-**Why it matters:** An injury, trade, or depth chart change can shift a player's ADP by 5–10 rounds overnight, flipping a borderline keeper from a pass to a must-keep (or vice versa). The app already has a live news feed (`/news/fantasy-football` endpoint, powered by `news_feed.py`) — wiring it to the optimizer so it surfaces "this news affects your keeper value" would make users open the app throughout the offseason, not just at draft time.
+Shipped: `apps/api/app/services/news_impact.py` matches Google News headlines against active keeper candidates using word-boundary regex on first + last name (avoids false positives from last-name-only collisions and nicknames). For each match, `flip_adp_round` is computed — the ADP round at which `keeper_value` would cross `minimum_keeper_value` (`keeper_cost_round − minimum_keeper_value / team_count`). News cache TTL reduced from 24h to 4h.
 
-**Current state:** `news_feed.py` fetches and caches RSS headlines. The news feed is live and displayed in the UI. What's missing is the optimizer-side impact analysis and the alert surface.
+`GET /api/leagues/{id}/news-impact` (admin-only) returns alerts sorted recommended-first by value magnitude.
 
-**Scope:**
-
-- News feed ingestion service (already exists) monitors headlines for player names matching active keeper candidates
-- New endpoint: `POST /api/leagues/{league_id}/optimizer/news-impact` — given a player and a projected new ADP, returns updated keeper value and recommendation change
-- Frontend: "Impact Alerts" banner in League Dashboard when a news story matches a keeper candidate and the new ADP would change their recommendation status
-- ADP sensitivity display: in Keeper Recommendations, a "Would flip at ADP X" annotation showing how far ADP needs to move before the recommendation changes
-
-**Dependencies:** News feed (exists). ADP sensitivity requires one additional optimizer pass per candidate with modified ADP — computationally cheap.
+Two frontend surfaces:
+- **Home dashboard — League Briefing card**: `NewsImpactSummary` renders an amber strip with deduplicated player name chips (emerald = currently recommended, grey = pass) when any keeper candidates appear in today's headlines. Zero-footprint when no matches.
+- **Recommendations page**: `NewsImpactPanel` is a full expandable table (auto-opens on load) showing player, fantasy team, Keep/Pass status, current keeper value, flip round, and a linked headline.
+- **Recommendations table — Value column**: every eligible candidate gains a `"flips Rd X"` sub-line computed inline from `keeperCostRound` and `minimumKeeperValue` — no extra API call.
 
 ---
 
@@ -177,9 +173,9 @@ New league fields: `draft_date`, `keeper_reveal_date` (migration `20260602_0015`
 | ✅ | ~~End-of-Season Finalization Workflow (2.4)~~ | — | — |
 | ✅ | ~~Shareable Keeper Report Card (3.1)~~ | — | — |
 | ✅ | ~~Commissioner Tools Pack (3.2)~~ | — | — |
+| ✅ | ~~News → Keeper Value Alerts (4.1)~~ | — | — |
 | 1 | Auction Draft Mode (1.2) | Opens a large excluded market segment | High |
-| 2 | News → Keeper Value Alerts (4.1) | Drives offseason re-engagement; news feed already live | Medium |
-| 3 | Value Window Projection (4.2) | Depth feature for power users; player age data now available via Sleeper | Medium |
+| 2 | Value Window Projection (4.2) | Depth feature for power users; player age data now available via Sleeper | Medium |
 
 ---
 
@@ -187,6 +183,4 @@ New league fields: `draft_date`, `keeper_reveal_date` (migration `20260602_0015`
 
 **Auction Draft Mode (1.2)** is the highest-impact unbuilt feature — it opens the entire auction keeper league segment that is currently excluded. It requires a parallel optimizer path and the FFC auction ADP endpoint, making it a heavier lift but the most strategically important gap remaining.
 
-**News → Keeper Value Alerts (4.1)** is closer to done than it looks: `news_feed.py` and the `/news/fantasy-football` endpoint are already live. The remaining work is pattern-matching headlines to keeper candidates and adding one optimizer pass per candidate for ADP sensitivity.
-
-**Value Window Projection (4.2)** is a pure depth feature — player age is already available from the Sleeper player DB. The value is high for power users doing multi-year roster construction.
+**Value Window Projection (4.2)** is the only remaining Tier 4 depth feature — player age is already available from the Sleeper player DB, and position aging curves are built-in constants. The value is high for power users thinking about multi-year roster construction.
