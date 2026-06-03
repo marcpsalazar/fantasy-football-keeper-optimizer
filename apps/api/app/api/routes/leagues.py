@@ -118,6 +118,8 @@ from app.services.compliance import LeagueComplianceResult
 from app.services import notifications as notifications_svc
 from app.services.notifications import NotificationError
 from app.services.bulk_export import BulkExportError, build_bulk_pdf_zip
+from app.services import news_impact as news_impact_svc
+from app.services.news_impact import NewsAlert
 
 router = APIRouter(
     prefix="/api",
@@ -3517,6 +3519,49 @@ def download_bulk_export(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# News Impact (4.1)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/leagues/{league_id}/news-impact")
+def get_news_impact(
+    league_id: uuid.UUID,
+    scenario_name: str | None = Query(default=None),
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    alerts = news_impact_svc.get_news_alerts(
+        session,
+        league_id,
+        scenario_name=scenario_name,
+        user_id=user.id if user else None,
+    )
+    return {
+        "alerts": [_alert_to_dict(a) for a in alerts],
+        "total": len(alerts),
+    }
+
+
+def _alert_to_dict(alert: NewsAlert) -> dict[str, Any]:
+    return {
+        "player_id": alert.player_id,
+        "player_name": alert.player_name,
+        "position": alert.position,
+        "nfl_team": alert.nfl_team,
+        "team_name": alert.team_name,
+        "is_recommended": alert.is_recommended,
+        "current_keeper_value": alert.current_keeper_value,
+        "current_adp_round": alert.current_adp_round,
+        "keeper_cost_round": alert.keeper_cost_round,
+        "flip_adp_round": alert.flip_adp_round,
+        "headline": alert.headline,
+        "headline_link": alert.headline_link,
+        "published_at": alert.published_at,
+    }
 
 
 def _compliance_result_to_dict(result: LeagueComplianceResult) -> dict[str, Any]:
