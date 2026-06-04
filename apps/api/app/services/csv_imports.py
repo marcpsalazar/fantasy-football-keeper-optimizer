@@ -102,6 +102,7 @@ def import_final_rosters_csv(session: Session, league_id: uuid.UUID, csv_text: s
         position = _position(_required(row, "position"))
         roster_status = _first(row, "roster_status", "status") or "Bench"
         season_year = _int(_first(row, "season_year", "season", "year"), league.season_year)
+        keeper_salary = _optional_float(_first(row, "keeper_salary", "salary", "retained_salary", "cost"))
 
         team = _get_or_create_team(session, league, team_name)
         player = _get_or_create_player(session, player_name, position, _first(row, "nfl_team"))
@@ -122,11 +123,14 @@ def import_final_rosters_csv(session: Session, league_id: uuid.UUID, csv_text: s
                 season_year=season_year,
                 position=position,
                 roster_status=roster_status,
+                keeper_salary=keeper_salary,
             )
             session.add(roster_entry)
         else:
             roster_entry.position = position
             roster_entry.roster_status = roster_status
+            if keeper_salary is not None:
+                roster_entry.keeper_salary = keeper_salary
 
         session.flush()
         rows.append(
@@ -140,6 +144,7 @@ def import_final_rosters_csv(session: Session, league_id: uuid.UUID, csv_text: s
                 "position": position,
                 "season_year": season_year,
                 "roster_status": roster_entry.roster_status,
+                "keeper_salary": roster_entry.keeper_salary,
             }
         )
 
@@ -208,6 +213,7 @@ def import_adp_csv(session: Session, league_id: uuid.UUID, csv_text: str) -> Imp
                 draftsharks_3d_value=_optional_float(
                     _first(row, "3d_value", "draftsharks_3d_value", "draft_sharks_3d_value")
                 ),
+                auction_value=_optional_float(_first(row, "ffc_auction_adp", "auction_value", "auction_adp")),
             )
             session.add(adp_entry)
         else:
@@ -229,6 +235,9 @@ def import_adp_csv(session: Session, league_id: uuid.UUID, csv_text: str) -> Imp
             adp_entry.draftsharks_3d_value = _optional_float(
                 _first(row, "3d_value", "draftsharks_3d_value", "draft_sharks_3d_value")
             )
+            auction_value_update = _optional_float(_first(row, "ffc_auction_adp", "auction_value", "auction_adp"))
+            if auction_value_update is not None:
+                adp_entry.auction_value = auction_value_update
 
         session.flush()
         rows.append(

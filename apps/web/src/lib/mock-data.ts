@@ -26,6 +26,7 @@ export type FinalRosterEntry = {
   position: string;
   rosterStatus: string;
   acquiredVia: string;
+  keeperSalary?: number | null;
 };
 
 export type ADPEntry = {

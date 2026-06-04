@@ -30,6 +30,7 @@ class FinalRosterEntry(TimestampMixin, table=True):
     season_year: int = Field(index=True)
     position: str = Field(index=True, max_length=10)
     roster_status: str = Field(default="Bench", index=True, max_length=40)
+    keeper_salary: float | None = Field(default=None)
 
     league: "League" = Relationship(back_populates="final_roster_entries")
     team: "Team" = Relationship(back_populates="final_roster_entries")

@@ -61,6 +61,7 @@ class ADPEntry(TimestampMixin, table=True):
     draftsharks_projection: float | None = Field(default=None)
     ceiling_projection: float | None = Field(default=None)
     draftsharks_3d_value: float | None = Field(default=None)
+    auction_value: float | None = Field(default=None)
 
     snapshot: "ADPSnapshot" = Relationship(back_populates="entries")
     player: "Player" = Relationship(back_populates="adp_entries")

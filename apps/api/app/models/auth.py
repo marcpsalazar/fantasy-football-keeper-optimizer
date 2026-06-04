@@ -69,3 +69,5 @@ class AppDefaultOptimizerSettings(TimestampMixin, table=True):
     enable_qb_scarcity_bonus: bool = Field(default=True)
     enable_elite_player_bonus: bool = Field(default=True)
     elite_player_max_negative_edge: float = Field(default=12)
+    budget_per_team: float | None = Field(default=None)
+    max_keeper_salary_pct: float | None = Field(default=None)

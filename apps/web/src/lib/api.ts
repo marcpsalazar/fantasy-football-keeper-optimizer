@@ -97,6 +97,7 @@ export type LeagueSummary = {
   seasonYear: number;
   scoringFormat: string;
   draftType: string;
+  draftFormat: string;
   keeperPickDeadline: string | null;
   regularSeasonStartDate: string | null;
   draftDate: string | null;
@@ -378,6 +379,7 @@ export const mockWorkspaceData: WorkspaceData = {
     seasonYear: 2026,
     scoringFormat: "superflex",
     draftType: "snake",
+    draftFormat: "snake",
     keeperPickDeadline: null,
     regularSeasonStartDate: "2026-09-10",
     draftDate: null,
@@ -1081,6 +1083,18 @@ export async function updateLeagueCalendarSettings(
       keeper_pick_deadline: settings.keeperPickDeadline || null,
       regular_season_start_date: settings.regularSeasonStartDate || null,
     }),
+    headers: { "content-type": "application/json" },
+    method: "PATCH",
+  });
+  return mapLeague(payload);
+}
+
+export async function updateLeagueFormat(
+  leagueId: string,
+  draftFormat: "snake" | "auction",
+): Promise<LeagueSummary> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}`, {
+    body: JSON.stringify({ draft_format: draftFormat }),
     headers: { "content-type": "application/json" },
     method: "PATCH",
   });
@@ -2634,6 +2648,7 @@ function mapLeague(row: ApiRow): LeagueSummary {
     seasonYear: number(row.season_year),
     scoringFormat: text(row.scoring_format, "superflex"),
     draftType: text(row.draft_type, "snake"),
+    draftFormat: text(row.draft_format, "snake"),
     keeperPickDeadline: text(row.keeper_pick_deadline) || null,
     regularSeasonStartDate: text(row.regular_season_start_date) || null,
     draftDate: text(row.draft_date) || null,
@@ -2748,6 +2763,7 @@ function mapFinalRosterEntry(row: ApiRow): FinalRosterEntry {
     position: text(row.position),
     rosterStatus: text(row.roster_status, "Bench"),
     acquiredVia: text(row.acquired_via, "Unknown"),
+    keeperSalary: row.keeper_salary != null ? Number(row.keeper_salary) : null,
   };
 }
 
