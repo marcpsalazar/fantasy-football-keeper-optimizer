@@ -134,6 +134,7 @@ import {
   updateAdminUser,
   updateCommissionerSettings,
   updateLeagueCalendarSettings,
+  updateLeagueFormat,
   updateLeagueMemberRole,
   updateProfile,
   uploadLeagueAvatar,
@@ -3284,6 +3285,19 @@ function AdminPage({
               <SlidersHorizontal className="size-5" aria-hidden="true" />
             </div>
             <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">Draft Format</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Switch between snake (pick-cost) and auction (salary-cost) keeper valuation.
+              </p>
+            </div>
+          </div>
+          <DraftFormatPanel />
+
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+              <SlidersHorizontal className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
               <h2 className="text-lg font-semibold text-zinc-950">League Settings</h2>
               <p className="mt-1 text-sm text-zinc-600">
                 Configure roster slots, bench limits, and draftable position caps.
@@ -3802,6 +3816,90 @@ function AIUsagePanel() {
         </Card>
       )}
     </div>
+  );
+}
+
+function DraftFormatPanel() {
+  const { activeLeagueId, data, isBusy, refreshData } = useDashboard();
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const currentFormat = (data.league?.draftFormat ?? "snake") as "snake" | "auction";
+  const [format, setFormat] = React.useState<"snake" | "auction">(currentFormat);
+
+  React.useEffect(() => {
+    setFormat((data.league?.draftFormat ?? "snake") as "snake" | "auction");
+  }, [data.league?.draftFormat]);
+
+  const handleSave = async () => {
+    if (!activeLeagueId) return;
+    setSaving(true);
+    setError("");
+    try {
+      await updateLeagueFormat(activeLeagueId, format);
+      await refreshData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update draft format.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Draft Format</CardTitle>
+        <CardDescription>
+          Choose whether keeper costs are draft picks (snake) or retained salaries (auction). Changing this switches the optimizer to the appropriate valuation formula.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors ${format === "snake" ? "border-emerald-600 bg-emerald-50" : "border-zinc-200 bg-white hover:bg-zinc-50"}`}>
+            <input
+              checked={format === "snake"}
+              className="mt-0.5 accent-emerald-700"
+              onChange={() => setFormat("snake")}
+              type="radio"
+            />
+            <div>
+              <p className="font-semibold text-zinc-900">Snake Draft</p>
+              <p className="mt-0.5 text-sm text-zinc-500">
+                Keeper cost is a forfeited draft pick. Keeper value = cost pick − ADP pick (rounds saved).
+              </p>
+            </div>
+          </label>
+          <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors ${format === "auction" ? "border-emerald-600 bg-emerald-50" : "border-zinc-200 bg-white hover:bg-zinc-50"}`}>
+            <input
+              checked={format === "auction"}
+              className="mt-0.5 accent-emerald-700"
+              onChange={() => setFormat("auction")}
+              type="radio"
+            />
+            <div>
+              <p className="font-semibold text-zinc-900">Auction Draft</p>
+              <p className="mt-0.5 text-sm text-zinc-500">
+                Keeper cost is a retained salary ($). Keeper value = market ADP value − retained salary (dollar surplus).
+              </p>
+            </div>
+          </label>
+        </div>
+        {format === "auction" && (
+          <p className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+            Auction mode requires a <strong>keeper_salary</strong> column in your roster CSV and FFC auction ADP data (fetched automatically from the composite ADP build).
+          </p>
+        )}
+        {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+        <div className="flex justify-end">
+          <Button
+            disabled={isBusy || saving || data.source !== "api" || !activeLeagueId || format === currentFormat}
+            onClick={() => void handleSave()}
+          >
+            <Save className="size-4" aria-hidden="true" />
+            Save Draft Format
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -5580,6 +5678,7 @@ function KeeperRecommendationsPage() {
       >
         <KeeperRecommendationsTable
           data={data.keeperRecommendations}
+          draftFormat={data.league?.draftFormat ?? "snake"}
           minimumKeeperValue={data.settings.minimumKeeperValue}
           onOverride={setManualOverrideNow}
           resetSignal={tableDisplayResetSignal}
@@ -9709,6 +9808,7 @@ function ScenarioTeamCell({ teamResult }: { teamResult: ScenarioTeamResult }) {
 function KeeperRecommendationsTable({
   data,
   compact = false,
+  draftFormat = "snake",
   minimumKeeperValue = 1,
   onOverride,
   resetSignal,
@@ -9717,6 +9817,7 @@ function KeeperRecommendationsTable({
 }: {
   data: KeeperRecommendation[];
   compact?: boolean;
+  draftFormat?: string;
   minimumKeeperValue?: number;
   onOverride?: (
     teamId: string | undefined,
@@ -9727,6 +9828,7 @@ function KeeperRecommendationsTable({
   showOverrides?: boolean;
   teamCount?: number;
 }) {
+  const isAuction = draftFormat === "auction";
   const { currentUser, data: workspaceData } = useDashboard();
   const leagueId = workspaceData.league?.id;
   const [loadingIds, setLoadingIds] = React.useState<Set<string>>(new Set());
@@ -9764,6 +9866,7 @@ function KeeperRecommendationsTable({
   );
 
   const columns = React.useMemo<ColumnDef<KeeperRecommendation>[]>(
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     () => [
       {
         accessorKey: "team",
@@ -9808,28 +9911,40 @@ function KeeperRecommendationsTable({
       },
       {
         accessorKey: "keeperCostPick",
-        header: "Cost Pick",
-        cell: ({ row }) => formatKeeperCost(row.original, teamCount),
+        header: isAuction ? "Salary ($)" : "Cost Pick",
+        cell: ({ row }) =>
+          isAuction
+            ? row.original.keeperCostPick != null
+              ? `$${row.original.keeperCostPick}`
+              : "—"
+            : formatKeeperCost(row.original, teamCount),
       },
       {
         accessorKey: "adpPick",
-        header: "ADP",
-        cell: ({ row }) => formatRecommendationAdp(row.original, teamCount),
+        header: isAuction ? "Market ($)" : "ADP",
+        cell: ({ row }) =>
+          isAuction
+            ? row.original.adpPick != null
+              ? `$${row.original.adpPick}`
+              : "—"
+            : formatRecommendationAdp(row.original, teamCount),
       },
       {
         accessorKey: "keeperValue",
-        header: "Value",
+        header: isAuction ? "Surplus ($)" : "Value",
         cell: ({ row }) => {
           const value = row.original.keeperValue;
           const costRound = row.original.keeperCostRound;
           const tc = teamCount ?? 1;
           const flipRound =
-            costRound != null
+            !isAuction && costRound != null
               ? Math.max(costRound - minimumKeeperValue / tc, 1)
               : null;
           return (
             <div className="leading-tight">
-              <span className={cn("font-medium", value > 0 && "text-emerald-700")}>{value}</span>
+              <span className={cn("font-medium", value > 0 && "text-emerald-700")}>
+                {isAuction && value != null ? `$${value}` : value}
+              </span>
               {flipRound != null && (
                 <div className="text-[10px] text-zinc-400">
                   flips Rd {flipRound % 1 === 0 ? flipRound : flipRound.toFixed(1)}
@@ -9864,8 +9979,10 @@ function KeeperRecommendationsTable({
       currentUser,
       errorIds,
       handleGenerateExplanation,
+      isAuction,
       loadingIds,
       localExplanations,
+      minimumKeeperValue,
       onOverride,
       setSelectedRec,
       teamCount,

@@ -51,6 +51,7 @@ class ADPEntryBase(BaseModel):
     draftsharks_projection: float | None = None
     ceiling_projection: float | None = None
     draftsharks_3d_value: float | None = None
+    auction_value: float | None = None
 
 
 class ADPEntryCreate(ADPEntryBase):
@@ -72,6 +73,7 @@ class ADPEntryUpdate(BaseModel):
     draftsharks_projection: float | None = None
     ceiling_projection: float | None = None
     draftsharks_3d_value: float | None = None
+    auction_value: float | None = None
 
 
 class ADPEntryRead(ADPEntryBase):

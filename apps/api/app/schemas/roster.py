@@ -11,6 +11,7 @@ class FinalRosterEntryBase(BaseModel):
     season_year: int
     position: str
     roster_status: str = "Bench"
+    keeper_salary: float | None = None
 
 
 class FinalRosterEntryCreate(FinalRosterEntryBase):
@@ -24,6 +25,7 @@ class FinalRosterEntryUpdate(BaseModel):
     season_year: int | None = None
     position: str | None = None
     roster_status: str | None = None
+    keeper_salary: float | None = None
 
 
 class FinalRosterEntryRead(FinalRosterEntryBase):

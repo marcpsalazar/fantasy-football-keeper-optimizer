@@ -10,6 +10,7 @@ class LeagueBase(BaseModel):
     season_year: int
     scoring_format: str = "superflex"
     draft_type: str = "snake"
+    draft_format: str = "snake"
     max_keepers: int = 4
     max_keepers_per_position: int = 2
     max_qb_keepers: int = 1
@@ -30,6 +31,7 @@ class LeagueUpdate(BaseModel):
     season_year: int | None = None
     scoring_format: str | None = None
     draft_type: str | None = None
+    draft_format: str | None = None
     max_keepers: int | None = None
     max_keepers_per_position: int | None = None
     max_qb_keepers: int | None = None

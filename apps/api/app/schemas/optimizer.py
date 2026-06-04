@@ -32,6 +32,8 @@ class OptimizerSettingsBase(BaseModel):
     enable_qb_scarcity_bonus: bool = True
     enable_elite_player_bonus: bool = True
     elite_player_max_negative_edge: float = 12
+    budget_per_team: float | None = None
+    max_keeper_salary_pct: float | None = None
 
 
 class OptimizerSettingsCreate(OptimizerSettingsBase):
@@ -65,6 +67,8 @@ class OptimizerSettingsUpdate(BaseModel):
     enable_qb_scarcity_bonus: bool | None = None
     enable_elite_player_bonus: bool | None = None
     elite_player_max_negative_edge: float | None = None
+    budget_per_team: float | None = None
+    max_keeper_salary_pct: float | None = None
 
 
 class OptimizerSettingsRead(OptimizerSettingsBase):

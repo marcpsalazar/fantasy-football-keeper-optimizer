@@ -48,6 +48,7 @@ class ProviderRow:
     draftsharks_projection: float | None = None
     ceiling_projection: float | None = None
     draftsharks_3d_value: float | None = None
+    auction_value: float | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class CompositeCandidate:
     draftsharks_adp: float | None
     ffc_2qb_adp: float | None
     ffc_ppr_adp: float | None
+    ffc_auction_adp: float | None
     yahoo_adp: float | None
     existing_adp: float | None
     review_flag: str
@@ -148,6 +150,7 @@ def build_composite_adp_template_rows(
     source_draftsharks = _fetch_draftsharks_superflex_rows(settings, team_count)
     source_ffc_2qb = _fetch_ffc_rows(settings, league, team_count, "2qb")
     source_ffc_ppr = _fetch_ffc_rows(settings, league, team_count, "ppr")
+    source_ffc_auction = _fetch_ffc_auction_rows(settings, league, team_count)
     source_yahoo = (
         _fetch_yahoo_adp_rows(yahoo_access_token, settings)
         if yahoo_access_token
@@ -176,6 +179,7 @@ def build_composite_adp_template_rows(
         set(source_draftsharks.rows)
         | set(source_ffc_2qb.rows)
         | set(source_ffc_ppr.rows)
+        | set(source_ffc_auction.rows)
         | set(source_yahoo.rows)
     )
     focus_limit = max(300, team_count * 25)
@@ -191,6 +195,7 @@ def build_composite_adp_template_rows(
                 source_draftsharks=source_draftsharks.rows,
                 source_ffc_2qb=source_ffc_2qb.rows,
                 source_ffc_ppr=source_ffc_ppr.rows,
+                source_ffc_auction=source_ffc_auction.rows,
                 source_yahoo=source_yahoo.rows,
                 sleeper_players=sleeper_players,
                 current_by_key=current_by_key,
@@ -302,6 +307,7 @@ def _build_candidate(
     source_draftsharks: dict[tuple[str, str], ProviderRow],
     source_ffc_2qb: dict[tuple[str, str], ProviderRow],
     source_ffc_ppr: dict[tuple[str, str], ProviderRow],
+    source_ffc_auction: dict[tuple[str, str], ProviderRow],
     source_yahoo: dict[tuple[str, str], ProviderRow],
     sleeper_players: dict[tuple[str, str], dict[str, str]],
     current_by_key: dict[tuple[str, str], tuple[Player, ADPEntry]],
@@ -310,6 +316,7 @@ def _build_candidate(
     draftsharks_row = source_draftsharks.get(key)
     ffc_2qb_row = source_ffc_2qb.get(key)
     ffc_ppr_row = source_ffc_ppr.get(key)
+    ffc_auction_row = source_ffc_auction.get(key)
     yahoo_row = source_yahoo.get(key)
     current = current_by_key.get(key)
     sleeper = sleeper_players.get(key)
@@ -325,6 +332,7 @@ def _build_candidate(
         or (draftsharks_row.player if draftsharks_row else None)
         or (ffc_2qb_row.player if ffc_2qb_row else None)
         or (ffc_ppr_row.player if ffc_ppr_row else None)
+        or (ffc_auction_row.player if ffc_auction_row else None)
         or (yahoo_row.player if yahoo_row else None)
         or (league_player.full_name if league_player else "")
     )
@@ -333,6 +341,7 @@ def _build_candidate(
         or (draftsharks_row.position if draftsharks_row else None)
         or (ffc_2qb_row.position if ffc_2qb_row else None)
         or (ffc_ppr_row.position if ffc_ppr_row else None)
+        or (ffc_auction_row.position if ffc_auction_row else None)
         or (yahoo_row.position if yahoo_row else None)
         or (sleeper.get("position") if sleeper else "")
         or ""
@@ -343,6 +352,7 @@ def _build_candidate(
         or (draftsharks_row.nfl_team if draftsharks_row and draftsharks_row.nfl_team else None)
         or (ffc_2qb_row.nfl_team if ffc_2qb_row and ffc_2qb_row.nfl_team else None)
         or (ffc_ppr_row.nfl_team if ffc_ppr_row and ffc_ppr_row.nfl_team else None)
+        or (ffc_auction_row.nfl_team if ffc_auction_row and ffc_auction_row.nfl_team else None)
         or (yahoo_row.nfl_team if yahoo_row and yahoo_row.nfl_team else None)
         or (current[0].nfl_team if current and current[0].nfl_team else None)
     )
@@ -386,6 +396,7 @@ def _build_candidate(
         draftsharks_adp=draftsharks_row.adp_pick if draftsharks_row else None,
         ffc_2qb_adp=ffc_2qb_row.adp_pick if ffc_2qb_row else None,
         ffc_ppr_adp=ffc_ppr_row.adp_pick if ffc_ppr_row else None,
+        ffc_auction_adp=ffc_auction_row.adp_pick if ffc_auction_row else None,
         yahoo_adp=yahoo_row.adp_pick if yahoo_row else None,
         existing_adp=existing_adp,
         source_count=source_count,
@@ -542,6 +553,7 @@ def _candidate_row(
         "draftsharks_superflex_adp": _fmt(candidate.draftsharks_adp),
         "ffc_2qb_adp": _fmt(candidate.ffc_2qb_adp),
         "ffc_ppr_adp": _fmt(candidate.ffc_ppr_adp),
+        "ffc_auction_adp": _fmt(candidate.ffc_auction_adp),
         "yahoo_adp": _fmt(candidate.yahoo_adp),
         "existing_adp": _fmt(candidate.existing_adp),
         "composite_method": candidate.composite_method,
@@ -572,6 +584,8 @@ def _source_note(candidate: CompositeCandidate) -> str:
         parts.append(f"FFC2QB:{candidate.ffc_2qb_adp:g}")
     if candidate.ffc_ppr_adp is not None:
         parts.append(f"FFCPPR:{candidate.ffc_ppr_adp:g}")
+    if candidate.ffc_auction_adp is not None:
+        parts.append(f"FFCAuction:${candidate.ffc_auction_adp:g}")
     if candidate.yahoo_adp is not None:
         parts.append(f"Y:{candidate.yahoo_adp:g}")
     if candidate.existing_adp is not None:
@@ -851,6 +865,62 @@ def _fetch_ffc_rows_from_html(
     if not rows:
         return ProviderFetchResult(rows={}, error=f"{prior_error}; FFC {scoring} page returned no usable rows")
     return ProviderFetchResult(rows=rows)
+
+
+def _fetch_ffc_auction_rows(
+    settings: Settings,
+    league: League,
+    team_count: int,
+) -> ProviderFetchResult:
+    api_request_url = (
+        f"{settings.fantasy_football_calculator_adp_url}/auction"
+        f"?{urllib.parse.urlencode({'teams': team_count, 'year': league.season_year})}"
+    )
+    try:
+        payload = _read_remote_payload(
+            api_request_url,
+            settings,
+            accept_header="application/json, */*;q=0.5",
+        )
+        response_json = json.loads(payload.decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return ProviderFetchResult(rows={}, error=f"FFC auction HTTP {exc.code}")
+    except (urllib.error.URLError, OSError):
+        return ProviderFetchResult(rows={}, error="FFC auction unreachable")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return ProviderFetchResult(rows={}, error="FFC auction invalid response")
+
+    rows = _parse_ffc_auction_json_rows(response_json)
+    if not rows:
+        return ProviderFetchResult(rows={}, error="FFC auction returned no usable rows")
+    return ProviderFetchResult(rows=rows)
+
+
+def _parse_ffc_auction_json_rows(response_json: object) -> dict[tuple[str, str], ProviderRow]:
+    if not isinstance(response_json, dict):
+        return {}
+    players = response_json.get("players")
+    if not isinstance(players, list):
+        return {}
+
+    rows: dict[tuple[str, str], ProviderRow] = {}
+    for player in players:
+        if not isinstance(player, dict):
+            continue
+        name = _player_name(player)
+        position = _normalize_position(str(player.get("position", "")))
+        # FFC auction ADP is the average auction price in dollars
+        auction_value = _player_adp(player)
+        if not name or not position or auction_value is None or auction_value <= 0:
+            continue
+        rows[_player_key(name, position)] = ProviderRow(
+            player=name,
+            position=position,
+            adp_pick=auction_value,
+            auction_value=auction_value,
+            nfl_team=_string(player.get("team")) or _string(player.get("nfl_team")),
+        )
+    return rows
 
 
 def _parse_ffc_json_rows(response_json: object) -> dict[tuple[str, str], ProviderRow]:

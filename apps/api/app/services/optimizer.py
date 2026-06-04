@@ -141,7 +141,11 @@ _SETTINGS_COPY_FIELDS = (
     "enable_qb_scarcity_bonus",
     "enable_elite_player_bonus",
     "elite_player_max_negative_edge",
+    "budget_per_team",
+    "max_keeper_salary_pct",
 )
+
+_AUCTION_BUDGET_DEFAULT = 200.0
 
 
 def run_optimizer(
@@ -630,6 +634,26 @@ def _build_candidate(
         raise OptimizerInputError(f"Missing player for roster entry {roster_entry.id}")
 
     override_type = _normalize_override(manual_override.override_type if manual_override else None)
+
+    is_auction = league.draft_format == "auction"
+
+    if is_auction:
+        return _build_auction_candidate(
+            league=league,
+            settings=settings,
+            settings_id=settings_id,
+            adp_snapshot=adp_snapshot,
+            team=team,
+            player=player,
+            roster_entry=roster_entry,
+            adp_entry=adp_entry,
+            manual_override=manual_override,
+            scenario_name=scenario_name,
+            team_count=team_count,
+            user_id=user_id,
+            override_type=override_type,
+        )
+
     adp_pick = adp_entry.adp_pick if adp_entry else None
     adp_round = adp_entry.adp_round if adp_entry else None
 
@@ -704,6 +728,147 @@ def _build_candidate(
     recommendation.is_eligible = is_eligible
     recommendation.reason = reason
     return KeeperCandidate(recommendation, roster_entry, player, override_type)
+
+
+def _build_auction_candidate(
+    *,
+    league: League,
+    settings: OptimizerSettings,
+    settings_id: uuid.UUID | None,
+    adp_snapshot: ADPSnapshot,
+    team: Team | None,
+    player: Player,
+    roster_entry: FinalRosterEntry,
+    adp_entry: ADPEntry | None,
+    manual_override: ManualOverride | None,
+    scenario_name: str,
+    team_count: int,
+    user_id: uuid.UUID | None,
+    override_type: str,
+) -> KeeperCandidate:
+    auction_value = adp_entry.auction_value if adp_entry else None
+    retained_salary = roster_entry.keeper_salary
+
+    recommendation = KeeperRecommendation(
+        league_id=league.id,
+        user_id=user_id,
+        team_id=roster_entry.team_id,
+        player_id=player.id,
+        settings_id=settings_id,
+        adp_snapshot_id=adp_snapshot.id,
+        scenario_name=scenario_name,
+        # Repurpose pick fields for auction semantics: cost_pick = retained $, adp_pick = market $
+        keeper_cost_pick=retained_salary,
+        keeper_cost_round=None,
+        adp_pick=auction_value,
+        adp_round=None,
+        is_eligible=False,
+        is_recommended=False,
+    )
+
+    if auction_value is None:
+        recommendation.reason = "Missing auction ADP value"
+        return KeeperCandidate(recommendation, roster_entry, player, override_type)
+
+    if retained_salary is None:
+        recommendation.reason = "Missing keeper salary"
+        return KeeperCandidate(recommendation, roster_entry, player, override_type)
+
+    # Dollar surplus: positive = good deal (market pays more than retained salary)
+    keeper_value = auction_value - retained_salary
+    budget = settings.budget_per_team or _AUCTION_BUDGET_DEFAULT
+    score = _calculate_auction_keeper_score(
+        settings=settings,
+        league=league,
+        team=team,
+        player=player,
+        keeper_value=keeper_value,
+        auction_value=auction_value,
+        roster_status=roster_entry.roster_status,
+        team_count=team_count,
+        budget=budget,
+    )
+    recommendation.keeper_value = round(keeper_value, 3)
+    recommendation.keeper_score = round(score, 3)
+
+    if override_type == EXCLUDE_OVERRIDE:
+        recommendation.reason = "Manual override excluded player"
+        return KeeperCandidate(recommendation, roster_entry, player, override_type)
+
+    if override_type == FORCE_KEEP_OVERRIDE:
+        recommendation.is_eligible = True
+        recommendation.reason = "Manual override forced keeper"
+        return KeeperCandidate(recommendation, roster_entry, player, override_type, selection_priority=1)
+
+    is_eligible, reason = _calculate_auction_eligibility(
+        settings=settings,
+        keeper_value=keeper_value,
+        retained_salary=retained_salary,
+        auction_value=auction_value,
+        budget=budget,
+        keeper_score=score,
+    )
+    recommendation.is_eligible = is_eligible
+    recommendation.reason = reason
+    return KeeperCandidate(recommendation, roster_entry, player, override_type)
+
+
+def _calculate_auction_keeper_score(
+    *,
+    settings: OptimizerSettings,
+    league: League,
+    team: Team | None,
+    player: Player,
+    keeper_value: float,
+    auction_value: float,
+    roster_status: str,
+    team_count: int,
+    budget: float,
+) -> float:
+    position = _normalize_position(player.position)
+    dollar_scale = budget / _AUCTION_BUDGET_DEFAULT
+
+    score = keeper_value * position_weight(settings, position)
+    score += status_bonus(settings, roster_status) * dollar_scale
+    if settings.enable_qb_scarcity_bonus and position == "QB" and "superflex" in league.scoring_format.lower():
+        score += _auction_qb_scarcity_bonus(auction_value, budget)
+
+    return score
+
+
+def _auction_qb_scarcity_bonus(auction_value: float, budget: float) -> float:
+    # Elite QB scarcity in dollar terms: worth ~10% of the budget for a top-5 QB
+    elite_cutoff_dollars = budget * 0.20
+    if auction_value >= elite_cutoff_dollars:
+        return budget * 0.10
+    if auction_value >= elite_cutoff_dollars * 0.60:
+        return budget * 0.06
+    if auction_value >= elite_cutoff_dollars * 0.30:
+        return budget * 0.03
+    return 0.0
+
+
+def _calculate_auction_eligibility(
+    *,
+    settings: OptimizerSettings,
+    keeper_value: float,
+    retained_salary: float,
+    auction_value: float,
+    budget: float,
+    keeper_score: float,
+) -> tuple[bool, str]:
+    if settings.max_keeper_salary_pct is not None:
+        max_salary = budget * (settings.max_keeper_salary_pct / 100.0)
+        if retained_salary > max_salary:
+            return False, "Salary exceeds max keeper salary cap"
+
+    if keeper_value < settings.minimum_keeper_value:
+        return False, "Keeper value below minimum"
+
+    if keeper_score < settings.minimum_keeper_score:
+        return False, "Keeper score below minimum"
+
+    return True, "Eligible"
 
 
 def _select_recommendations(

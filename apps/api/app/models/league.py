@@ -50,6 +50,7 @@ class League(TimestampMixin, table=True):
         default_factory=dict,
         sa_column=Column(JSON, nullable=False),
     )
+    draft_format: str = Field(default="snake", max_length=20)
     keeper_rules: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column(JSON, nullable=False),
