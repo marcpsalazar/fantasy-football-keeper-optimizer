@@ -120,6 +120,7 @@ from app.services.notifications import NotificationError
 from app.services.bulk_export import BulkExportError, build_bulk_pdf_zip
 from app.services import news_impact as news_impact_svc
 from app.services.news_impact import NewsAlert
+from app.services import value_window as value_window_svc
 
 router = APIRouter(
     prefix="/api",
@@ -3590,3 +3591,25 @@ def _compliance_result_to_dict(result: LeagueComplianceResult) -> dict[str, Any]
             for t in result.teams
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Value Window Projection (4.2)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/leagues/{league_id}/optimizer/results/{recommendation_id}/value-window")
+def get_value_window(
+    league_id: uuid.UUID,
+    recommendation_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    result = value_window_svc.get_value_window(
+        session,
+        league_id,
+        recommendation_id,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Recommendation not found or missing ADP data")
+    return value_window_svc.value_window_to_dict(result)

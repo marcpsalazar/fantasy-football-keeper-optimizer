@@ -145,20 +145,11 @@ Two frontend surfaces:
 
 ---
 
-### 4.2 Value Window Multi-Year Projection
+### ~~4.2 Value Window Multi-Year Projection~~ ✅ Complete
 
 **Why it matters:** "Keep now or let go" is a multi-year decision. A 30-year-old WR on a declining ADP trajectory is a different keeper than a 23-year-old breakout candidate. Showing a player's expected keeper cost trajectory over 2–3 seasons — and when they stop being a value keep — is unique and actionable.
 
-**Scope:**
-
-- New model inputs: player age (derivable from Sleeper's player database — already fetched during Sleeper import), position aging curves (built-in constants for QB/RB/WR/TE career arcs)
-- New service: `apps/api/app/services/value_window.py`
-  - Inputs: current ADP, current keeper cost, player age, position
-  - Outputs: projected ADP in years 1, 2, 3 (applying position aging curve); projected keeper cost in each year (assuming same-team keeper escalation rule); projected value window (years where keeping is positive expected value)
-- AI enhancement: narrative explaining the value window and when to consider trading the player instead of keeping
-- Frontend: "Value Window" expandable section in Keeper Explanation modal — shows a simple bar or line chart of keep value by year; "Optimal keep through Year N" verdict
-
-**Dependencies:** Player age data (available from Sleeper player DB since Sleeper import is live). Position aging curves are built-in constants.
+Shipped: `Player.birth_date` field (migration `20260604_0017`); Sleeper import now extracts and stores `birth_date` from the Sleeper player DB. `apps/api/app/services/value_window.py` computes a 4-year projection (current + 3 forward) using position-specific aging curves (QB/RB/WR/TE) with interpolated ADP-degradation rates by player age. Keeper cost escalates +1 round/year (standard keeper rule). `GET /api/leagues/{id}/optimizer/results/{rec_id}/value-window` endpoint added. Frontend: "Value Window" collapsible section in the Keeper Explanation modal shows a horizontal bar chart (green = value, red = cost exceeds ADP) per season with cost round / ADP round labels and an "Optimal keep through Year N" verdict. Players without `birth_date` (CSV-imported, no Sleeper sync) fall back to flat-ADP projections with an amber notice.
 
 ---
 
@@ -177,7 +168,7 @@ Two frontend surfaces:
 | ✅ | ~~Commissioner Tools Pack (3.2)~~ | — | — |
 | ✅ | ~~News → Keeper Value Alerts (4.1)~~ | — | — |
 | ✅ | ~~Auction Draft Mode (1.2)~~ | — | — |
-| 2 | Value Window Projection (4.2) | Depth feature for power users; player age data now available via Sleeper | Medium |
+| ✅ | ~~Value Window Projection (4.2)~~ | — | — |
 
 ---
 

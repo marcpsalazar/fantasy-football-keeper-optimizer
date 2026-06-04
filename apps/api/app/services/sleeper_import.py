@@ -5,6 +5,7 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 from sqlmodel import Session, select
@@ -101,9 +102,19 @@ def _fetch_league_data(
 # Mapping helpers
 # ---------------------------------------------------------------------------
 
-def _build_player_lookup(players_db: dict[str, Any]) -> dict[str, dict[str, str | None]]:
-    """Returns sleeper_player_id → {full_name, position, nfl_team}."""
-    result: dict[str, dict[str, str | None]] = {}
+def _parse_birth_date(raw: Any) -> date | None:
+    """Parse Sleeper birth_date string (YYYY-MM-DD) to a date object."""
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+def _build_player_lookup(players_db: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Returns sleeper_player_id → {full_name, position, nfl_team, birth_date}."""
+    result: dict[str, dict[str, Any]] = {}
     for pid, p in players_db.items():
         if not isinstance(p, dict):
             continue
@@ -119,6 +130,7 @@ def _build_player_lookup(players_db: dict[str, Any]) -> dict[str, dict[str, str 
             "full_name": full_name,
             "position": pos,
             "nfl_team": p.get("team") or None,
+            "birth_date": _parse_birth_date(p.get("birth_date")),
         }
     return result
 
@@ -158,6 +170,7 @@ def _get_or_create_player(
     full_name: str,
     position: str,
     nfl_team: str | None,
+    birth_date: date | None = None,
 ) -> Player:
     # Exact Sleeper ID match (fastest path after first import).
     player = session.exec(
@@ -166,6 +179,8 @@ def _get_or_create_player(
     if player is not None:
         if nfl_team and player.nfl_team != nfl_team:
             player.nfl_team = nfl_team
+        if birth_date and player.birth_date is None:
+            player.birth_date = birth_date
         return player
 
     # Name + position fallback (matches rows created by CSV import).
@@ -181,6 +196,8 @@ def _get_or_create_player(
         player.external_id = sleeper_id
         if nfl_team and player.nfl_team != nfl_team:
             player.nfl_team = nfl_team
+        if birth_date and player.birth_date is None:
+            player.birth_date = birth_date
         return player
 
     player = Player(
@@ -188,6 +205,7 @@ def _get_or_create_player(
         position=position,
         nfl_team=nfl_team,
         external_id=sleeper_id,
+        birth_date=birth_date,
     )
     session.add(player)
     session.flush()
@@ -379,6 +397,7 @@ def commit_sleeper_import(
 
         player = _get_or_create_player(
             session, pid, info["full_name"], info["position"], info.get("nfl_team"),
+            birth_date=info.get("birth_date"),
         )
         pick_in_round = pick_no - (round_number - 1) * num_teams
 
@@ -429,6 +448,7 @@ def commit_sleeper_import(
 
             player = _get_or_create_player(
                 session, str(pid), info["full_name"], info["position"], info.get("nfl_team"),
+                birth_date=info.get("birth_date"),
             )
 
             if str(pid) in reserve:

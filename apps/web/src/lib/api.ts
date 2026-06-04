@@ -3786,3 +3786,58 @@ function round(value: number): number {
 function camel(value: string): string {
   return value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 }
+
+// ---------------------------------------------------------------------------
+// Value Window Projection (4.2)
+// ---------------------------------------------------------------------------
+
+export type ValueWindowYear = {
+  yearOffset: number;
+  playerAge: number | null;
+  keeperCostRound: number;
+  projectedAdpRound: number;
+  projectedKeeperValue: number;
+  isValue: boolean;
+};
+
+export type ValueWindowResult = {
+  playerId: string;
+  playerName: string;
+  position: string;
+  currentAge: number | null;
+  hasAgeData: boolean;
+  minimumKeeperValue: number;
+  teamCount: number;
+  optimalKeepThroughYear: number | null;
+  years: ValueWindowYear[];
+};
+
+export async function getValueWindow(
+  leagueId: string,
+  recommendationId: string,
+): Promise<ValueWindowResult> {
+  const data = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/optimizer/results/${recommendationId}/value-window`,
+  );
+  return {
+    playerId: text(data["player_id"]),
+    playerName: text(data["player_name"]),
+    position: text(data["position"]),
+    currentAge: data["current_age"] != null ? Number(data["current_age"]) : null,
+    hasAgeData: boolean(data["has_age_data"]),
+    minimumKeeperValue: Number(data["minimum_keeper_value"] ?? 1),
+    teamCount: Number(data["team_count"] ?? 12),
+    optimalKeepThroughYear:
+      data["optimal_keep_through_year"] != null
+        ? Number(data["optimal_keep_through_year"])
+        : null,
+    years: array(data["years"]).map((row) => ({
+      yearOffset: Number(row["year_offset"] ?? 0),
+      playerAge: row["player_age"] != null ? Number(row["player_age"]) : null,
+      keeperCostRound: Number(row["keeper_cost_round"] ?? 0),
+      projectedAdpRound: Number(row["projected_adp_round"] ?? 0),
+      projectedKeeperValue: Number(row["projected_keeper_value"] ?? 0),
+      isValue: boolean(row["is_value"]),
+    })),
+  };
+}
