@@ -35,7 +35,9 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
   - **Final Draft Board**: auto-generated snake draft grid derived from Final Keeper Selections. Forfeited picks are highlighted in red with the kept player's name and position. Available picks show by overall pick number, with columns fixed by draft slot.
   - **Season Analysis**: post-season decision quality report. Cross-references Final Keeper Selections, KeeperOutcomes, and Recommendations to categorize each player as Hit, Miss, Bust, Left on Table, Dodged, Below ADP, or Unknown. Shows league-level hit rate, bust rate, recommendation accuracy, and opportunity cost, with per-team expandable tables.
   - **Keeper History** (formerly Historical Keeper ROI Tracker): multi-year ROI tracking by season, team, and player. Admins import end-of-season outcomes via Sleeper auto-fetch (available to all leagues regardless of platform — no Sleeper account required) or CSV fallback. The Sleeper stats API cross-references keeper candidates by Sleeper player ID first, then by full name + NFL team composite.
+- **Player headshots**: player dialogs (keeper explanation modal and mock draft player detail) display the player's headshot sourced from the Sleeper CDN, with a team-color circle fallback showing the team abbreviation when no photo is available.
 - **Sleeper league import**: paste a Sleeper League ID to automatically pull teams, draft results, and final rosters — preview first, then commit.
+- **Yahoo Fantasy league import**: connect via Yahoo OAuth to automatically pull teams, draft results, and final rosters from a Yahoo Fantasy Sports league — preview first, then commit.
 - **Mock Draft**: run a simulated draft against AI-powered bots, get a personalized pre-draft strategy plan, and receive a graded post-draft analysis.
   - Full snake draft board with keeper forfeit pre-placement.
   - 9 bot personalities × 3 difficulty levels, configurable per team.
@@ -45,7 +47,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
   - Position draft limits enforced — Draft button disabled and roster tiles highlighted when a position cap is reached.
   - Pick timer (30 / 60 / 90 / 120 seconds) with auto-pick on expiry.
   - Completed mock history with letter grade, score, and recap. Side-by-side draft comparison. Rerun analysis on any completed session.
-- **AI keeper explanations**: click any player name in Keeper Recommendations for a plain-English explanation of why the optimizer recommended or passed on that player (short reason, value explanation, risk note, opportunity cost, decision badge). Responses are cached.
+- **AI keeper explanations**: click any player name in Keeper Recommendations to open a detail modal showing the player's headshot, position, and a plain-English explanation of why the optimizer recommended or passed on that player (short reason, value explanation, risk note, opportunity cost, decision badge). Responses are cached.
 - **AI scenario narratives**: click "Generate AI Analysis" in Scenario Comparison for a plain-English tradeoff summary across all five presets. Personalized for the signed-in user's assigned team when available.
 - **Composite ADP**: one-click "Update ADP" button builds a weighted-median board from DraftSharks + Fantasy Football Calculator and imports it directly.
 - **AI cost controls**: set a monthly token budget (`AI_MONTHLY_TOKEN_BUDGET`) to cap all AI spending. Platform admins can review token usage and estimated costs in the Admin AI Usage panel.
@@ -381,6 +383,21 @@ python -m app.db.seed
 ```
 
 `CREATE_TABLES_ON_STARTUP=true` remains available for quick throwaway development databases, but Alembic is the normal path for local and production schema changes.
+
+### One-time data backfill scripts
+
+`apps/api/backfill_player_images.py` — matches existing CSV-imported players to Sleeper's player database by name and position, then writes the Sleeper CDN headshot URL to `players.image_url`. Only needs to be run once after migrating to `0018`. New Sleeper and Yahoo imports populate `image_url` automatically.
+
+```bash
+# Local
+cd apps/api
+.venv/bin/python backfill_player_images.py
+
+# Production (via Railway public DB URL)
+railway run --service Postgres -- bash -c 'DATABASE_URL="$DATABASE_PUBLIC_URL" .venv/bin/python backfill_player_images.py'
+```
+
+Pass `--dry-run` to preview matches without writing to the database.
 
 For a database that was previously created with `CREATE_TABLES_ON_STARTUP=true`, stamp the baseline before applying newer migrations:
 
@@ -834,7 +851,7 @@ the current ADP snapshot.
 **During the draft:**
 
 - Keeper forfeits are pre-placed on the draft board. They do not count as picks and cannot be changed.
-- When it is your pick, use `Available Players` to browse by position or scroll by ADP. Click a player row to open the player detail dialog; if `PLAYER_SUMMARY_AI_ENABLED=true`, click `Generate Summary` for an AI scouting note on that player.
+- When it is your pick, use `Available Players` to browse by position or scroll by ADP. Click a player row to open the player detail dialog, which shows the player's headshot, stats, and ADP edge. If `PLAYER_SUMMARY_AI_ENABLED=true`, an AI scouting note is also shown.
 - Click `Draft` to select a player.
 - If a position's draft limit is reached, the `Draft` button for players of that position is grayed out and the corresponding roster tile turns red.
 - Bots pick automatically. AI bot picks are used when `MOCK_DRAFT_AI_ENABLED=true`; otherwise bots fall back to deterministic scoring. Set `MOCK_DRAFT_AI_MAX_AI_ROUND` to limit AI picks to early rounds (0 = unlimited).
@@ -1127,6 +1144,6 @@ CREATE_TABLES_ON_STARTUP=true uvicorn app.main:app --reload
 
 ## Current Limitations
 
-- Yahoo and ESPN league imports are not implemented. Sleeper is the only supported third-party league provider.
+- ESPN league import is not implemented. Sleeper and Yahoo Fantasy Sports are the supported third-party league providers.
 - Frontend CRUD is focused on users, teams, imports, optimizer runs, overrides, scenarios, draft impact, and exports.
 - PDF reports are intentionally simple and dependency-free.
