@@ -53,6 +53,8 @@ export type KeeperRecommendation = {
   team: string;
   player: string;
   position: string;
+  nflTeam?: string | null;
+  imageUrl?: string | null;
   scenario?: string;
   keeperCostPick: number;
   keeperCostRound: number;

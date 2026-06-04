@@ -319,6 +319,7 @@ def _resolve_player_names(
                 "full_name": full_name,
                 "position": position,
                 "nfl_team": editorial_team,
+                "image_url": pl_flat.get("image_url") or None,
             }
     return result
 
@@ -428,6 +429,7 @@ def _get_or_create_player(
     full_name: str,
     position: str,
     nfl_team: str | None,
+    image_url: str | None = None,
 ) -> Player:
     """Match player by name+position (no yahoo_id stored to avoid conflict with sleeper IDs)."""
     candidates = session.exec(
@@ -441,9 +443,11 @@ def _get_or_create_player(
     if player is not None:
         if nfl_team and player.nfl_team != nfl_team:
             player.nfl_team = nfl_team
+        if image_url and player.image_url is None:
+            player.image_url = image_url
         return player
 
-    player = Player(full_name=full_name, position=position, nfl_team=nfl_team)
+    player = Player(full_name=full_name, position=position, nfl_team=nfl_team, image_url=image_url)
     session.add(player)
     session.flush()
     return player
@@ -660,7 +664,7 @@ def commit_yahoo_import(
             warnings.append(f"Skipping draft pick #{dp.get('overall_pick')} — team_key {team_key!r} not matched.")
             continue
 
-        player = _get_or_create_player(session, full_name, pos, info.get("nfl_team"))
+        player = _get_or_create_player(session, full_name, pos, info.get("nfl_team"), image_url=info.get("image_url"))
         overall_pick = dp["overall_pick"]
         rd = dp["round"]
         pick_in_round = overall_pick - (rd - 1) * num_teams
@@ -699,7 +703,7 @@ def commit_yahoo_import(
             full_name = info.get("full_name", "")
             if pos not in _VALID_POSITIONS or not full_name:
                 continue
-            player = _get_or_create_player(session, full_name, pos, info.get("nfl_team"))
+            player = _get_or_create_player(session, full_name, pos, info.get("nfl_team"), image_url=info.get("image_url"))
             selected_pos = rp.get("selected_position", "BN")
             if selected_pos in ("IR", "IL"):
                 roster_status = "IR"

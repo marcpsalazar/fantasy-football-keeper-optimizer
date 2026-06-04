@@ -69,6 +69,7 @@ class MockDraftAvailablePlayer(BaseModel):
     adp_round: float | None = None
     risk: float | None = None
     projection: float | None = None
+    image_url: str | None = None
 
 
 class MockDraftRosterNeed(BaseModel):

@@ -131,6 +131,7 @@ def _build_player_lookup(players_db: dict[str, Any]) -> dict[str, dict[str, Any]
             "position": pos,
             "nfl_team": p.get("team") or None,
             "birth_date": _parse_birth_date(p.get("birth_date")),
+            "image_url": f"https://sleepercdn.com/content/nfl/players/thumb/{pid}.jpg",
         }
     return result
 
@@ -171,6 +172,7 @@ def _get_or_create_player(
     position: str,
     nfl_team: str | None,
     birth_date: date | None = None,
+    image_url: str | None = None,
 ) -> Player:
     # Exact Sleeper ID match (fastest path after first import).
     player = session.exec(
@@ -181,6 +183,8 @@ def _get_or_create_player(
             player.nfl_team = nfl_team
         if birth_date and player.birth_date is None:
             player.birth_date = birth_date
+        if image_url and player.image_url is None:
+            player.image_url = image_url
         return player
 
     # Name + position fallback (matches rows created by CSV import).
@@ -198,6 +202,8 @@ def _get_or_create_player(
             player.nfl_team = nfl_team
         if birth_date and player.birth_date is None:
             player.birth_date = birth_date
+        if image_url and player.image_url is None:
+            player.image_url = image_url
         return player
 
     player = Player(
@@ -206,6 +212,7 @@ def _get_or_create_player(
         nfl_team=nfl_team,
         external_id=sleeper_id,
         birth_date=birth_date,
+        image_url=image_url,
     )
     session.add(player)
     session.flush()
@@ -398,6 +405,7 @@ def commit_sleeper_import(
         player = _get_or_create_player(
             session, pid, info["full_name"], info["position"], info.get("nfl_team"),
             birth_date=info.get("birth_date"),
+            image_url=info.get("image_url"),
         )
         pick_in_round = pick_no - (round_number - 1) * num_teams
 
@@ -449,6 +457,7 @@ def commit_sleeper_import(
             player = _get_or_create_player(
                 session, str(pid), info["full_name"], info["position"], info.get("nfl_team"),
                 birth_date=info.get("birth_date"),
+                image_url=info.get("image_url"),
             )
 
             if str(pid) in reserve:

@@ -430,6 +430,7 @@ def _available_player_payload(
                 adp_round=adp.adp_round if adp else None,
                 risk=adp.risk if adp else None,
                 projection=adp.consensus_projection if adp else None,
+                image_url=player.image_url,
             )
         )
     return rows
