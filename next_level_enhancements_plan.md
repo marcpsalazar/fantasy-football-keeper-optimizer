@@ -25,7 +25,7 @@ The core product is fully functional and deployed. All Tier 1, Tier 2, and sever
   4. Final Draft Board — snake-draft grid showing forfeited keeper picks by round/team
 - **Draft History / Owner Profiles** — cross-season pick data used to generate AI bot enrichment and real owner tendency profiles in mock draft strategy plans
 
-The biggest remaining gaps are **auction league support** (entire excluded market segment) and **value window projections** (multi-year keeper ROI). Commissioner tooling, news-driven alerts, and the shareable report card have all shipped.
+**All planned features across all four tiers have now shipped.** The plan is fully executed as of June 2026. The only open question is what to build next — see the bottom of this document.
 
 ---
 
@@ -174,6 +174,10 @@ Shipped: `Player.birth_date` field (migration `20260604_0017`); Sleeper import n
 
 ## What to Build Next
 
-**Auction Draft Mode (1.2)** is the highest-impact unbuilt feature — it opens the entire auction keeper league segment that is currently excluded. It requires a parallel optimizer path and the FFC auction ADP endpoint, making it a heavier lift but the most strategically important gap remaining.
+All four tiers of the original plan are complete. Potential directions for a follow-on roadmap:
 
-**Value Window Projection (4.2)** is the only remaining Tier 4 depth feature — player age is already available from the Sleeper player DB, and position aging curves are built-in constants. The value is high for power users thinking about multi-year roster construction.
+- **In-season roster tools** — waiver wire optimizer, start/sit recommendations (currently out of scope by design; would require a strategic decision to expand the product surface)
+- **Value window AI narrative** — the projection data exists; adding a GPT-generated "trade vs. keep" narrative per player would make 4.2 even more actionable
+- **Auction value window** — extend `value_window.py` to project dollar surplus trajectories for auction leagues (currently snake-only)
+- **Mobile-optimized draft room** — the mock draft UI works on mobile but isn't touch-first; a dedicated mobile layout for live draft day would increase stickiness
+- **Keeper deadline push notifications** — extend the SMTP reminder system to support browser push or SMS via Twilio
