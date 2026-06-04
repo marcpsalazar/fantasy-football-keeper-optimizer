@@ -45,7 +45,7 @@ Yahoo import shipped: `apps/api/app/services/yahoo_import.py` and `yahoo_oauth.p
 
 ---
 
-### 1.2 Auction Draft Mode
+### ~~1.2 Auction Draft Mode~~ ✅ Complete
 
 **Why it matters:** A large segment of keeper leagues use auction format. In auction keeper leagues, the keeper cost is a retained salary (dollar value), not a draft pick. The entire optimizer math — `Keeper Value = Cost Pick - ADP Pick` — does not apply. Without this, the app is useless for auction leagues.
 
@@ -60,6 +60,8 @@ Yahoo import shipped: `apps/api/app/services/yahoo_import.py` and `yahoo_oauth.p
 - Frontend: auction-mode toggle in league settings; salary column replaces pick cost column in Keeper Recommendations table
 
 **Dependencies:** FFC auction ADP endpoint (already fetching from FFC; add auction format parameter).
+
+Shipped: `draft_format` field on `League` (snake | auction). `final_roster_entries.keeper_salary` stores retained salary; `adp_entries.auction_value` stores FFC auction dollar value, fetched from `fantasyfootballcalculator.com/api/v1/adp/auction` and persisted through the composite ADP build. Parallel optimizer path (`_build_auction_candidate`) computes dollar surplus (`market_value − retained_salary`); QB scarcity bonus scales by `budget_per_team`; `max_keeper_salary_pct` eligibility gate. Roster CSV accepts `keeper_salary` column. Admin tab gains `DraftFormatPanel` (snake/auction radio toggle). Recommendations table shows Salary ($) / Market ($) / Surplus ($) in auction mode.
 
 ---
 
@@ -174,7 +176,7 @@ Two frontend surfaces:
 | ✅ | ~~Shareable Keeper Report Card (3.1)~~ | — | — |
 | ✅ | ~~Commissioner Tools Pack (3.2)~~ | — | — |
 | ✅ | ~~News → Keeper Value Alerts (4.1)~~ | — | — |
-| 1 | Auction Draft Mode (1.2) | Opens a large excluded market segment | High |
+| ✅ | ~~Auction Draft Mode (1.2)~~ | — | — |
 | 2 | Value Window Projection (4.2) | Depth feature for power users; player age data now available via Sleeper | Medium |
 
 ---
