@@ -206,7 +206,9 @@ import {
   type TradeAnalysisResult,
   type TradePlayerRow,
   type UserForm,
+  type ValueWindowResult,
   type WorkspaceData,
+  getValueWindow,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -9837,6 +9839,9 @@ function KeeperRecommendationsTable({
     Record<string, KeeperExplanation>
   >({});
   const [selectedRec, setSelectedRec] = React.useState<KeeperRecommendation | null>(null);
+  const [valueWindowCache, setValueWindowCache] = React.useState<Record<string, ValueWindowResult>>({});
+  const [valueWindowLoading, setValueWindowLoading] = React.useState<Set<string>>(new Set());
+  const [valueWindowErrors, setValueWindowErrors] = React.useState<Set<string>>(new Set());
 
   const handleGenerateExplanation = React.useCallback(
     async (rec: KeeperRecommendation) => {
@@ -9856,6 +9861,31 @@ function KeeperRecommendationsTable({
         setErrorIds((prev) => new Set(prev).add(rec.id!));
       } finally {
         setLoadingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(rec.id!);
+          return next;
+        });
+      }
+    },
+    [leagueId],
+  );
+
+  const handleFetchValueWindow = React.useCallback(
+    async (rec: KeeperRecommendation) => {
+      if (!leagueId || !rec.id) return;
+      setValueWindowLoading((prev) => new Set(prev).add(rec.id!));
+      setValueWindowErrors((prev) => {
+        const next = new Set(prev);
+        next.delete(rec.id!);
+        return next;
+      });
+      try {
+        const result = await getValueWindow(leagueId, rec.id);
+        setValueWindowCache((prev) => ({ ...prev, [rec.id!]: result }));
+      } catch {
+        setValueWindowErrors((prev) => new Set(prev).add(rec.id!));
+      } finally {
+        setValueWindowLoading((prev) => {
           const next = new Set(prev);
           next.delete(rec.id!);
           return next;
@@ -9895,6 +9925,9 @@ function KeeperRecommendationsTable({
                   : !!rec.aiExplanation;
                 if (!hasExplanation && rec.id && !loadingIds.has(rec.id) && !errorIds.has(rec.id)) {
                   handleGenerateExplanation(rec);
+                }
+                if (rec.id && !valueWindowCache[rec.id] && !valueWindowLoading.has(rec.id)) {
+                  handleFetchValueWindow(rec);
                 }
               }}
               type="button"
@@ -10018,6 +10051,10 @@ function KeeperRecommendationsTable({
           hasError={modalRec.id ? errorIds.has(modalRec.id) : false}
           onClose={() => setSelectedRec(null)}
           onRetry={() => handleGenerateExplanation(modalRec)}
+          valueWindow={modalRec.id ? (valueWindowCache[modalRec.id] ?? null) : null}
+          isValueWindowLoading={modalRec.id ? valueWindowLoading.has(modalRec.id) : false}
+          isValueWindowError={modalRec.id ? valueWindowErrors.has(modalRec.id) : false}
+          onRetryValueWindow={() => handleFetchValueWindow(modalRec)}
         />
       )}
     </>
@@ -10057,6 +10094,10 @@ function KeeperExplanationModal({
   hasError,
   onClose,
   onRetry,
+  valueWindow,
+  isValueWindowLoading,
+  isValueWindowError,
+  onRetryValueWindow,
 }: {
   rec: KeeperRecommendation;
   explanation: KeeperExplanation | null;
@@ -10064,6 +10105,10 @@ function KeeperExplanationModal({
   hasError: boolean;
   onClose: () => void;
   onRetry: () => void;
+  valueWindow: ValueWindowResult | null;
+  isValueWindowLoading: boolean;
+  isValueWindowError: boolean;
+  onRetryValueWindow: () => void;
 }) {
   React.useEffect(() => {
     const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -10152,7 +10197,122 @@ function KeeperExplanationModal({
             </div>
           )}
         </div>
+        <ValueWindowSection
+          valueWindow={valueWindow}
+          isLoading={isValueWindowLoading}
+          hasError={isValueWindowError}
+          onRetry={onRetryValueWindow}
+        />
       </div>
+    </div>
+  );
+}
+
+const YEAR_LABELS = ["This year", "Year 2", "Year 3", "Year 4"];
+
+function ValueWindowSection({
+  valueWindow,
+  isLoading,
+  hasError,
+  onRetry,
+}: {
+  valueWindow: ValueWindowResult | null;
+  isLoading: boolean;
+  hasError: boolean;
+  onRetry: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+
+  const showTrigger = valueWindow !== null || isLoading || hasError;
+  if (!showTrigger) return null;
+
+  return (
+    <div className="border-t border-zinc-100">
+      <button
+        className="flex w-full items-center justify-between px-5 py-3 text-left text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+      >
+        <span className="flex items-center gap-1.5">
+          <BarChart2 className="size-3.5 text-zinc-400" aria-hidden="true" />
+          Value Window
+        </span>
+        <ChevronRight
+          className={cn("size-4 text-zinc-400 transition-transform", open && "rotate-90")}
+          aria-hidden="true"
+        />
+      </button>
+
+      {open && (
+        <div className="px-5 pb-4 pt-1">
+          {isLoading && (
+            <div className="flex items-center gap-2 text-sm text-zinc-500">
+              <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
+              Loading projection…
+            </div>
+          )}
+          {hasError && !isLoading && (
+            <div className="space-y-1.5">
+              <p className="text-sm text-red-600">Failed to load value window.</p>
+              <button className="text-sm text-zinc-600 underline" onClick={onRetry} type="button">
+                Try again
+              </button>
+            </div>
+          )}
+          {!isLoading && !hasError && valueWindow && (
+            <div className="space-y-3">
+              {!valueWindow.hasAgeData && (
+                <p className="text-xs text-amber-600">
+                  Age data not available — projections assume flat ADP (cost escalation only).
+                </p>
+              )}
+              <div className="space-y-1.5">
+                {valueWindow.years.map((yr) => {
+                  const label = YEAR_LABELS[yr.yearOffset] ?? `Year ${yr.yearOffset + 1}`;
+                  const barWidth = Math.min(
+                    100,
+                    Math.max(0, (yr.projectedKeeperValue / 10) * 100),
+                  );
+                  return (
+                    <div key={yr.yearOffset} className="flex items-center gap-2 text-xs">
+                      <span className="w-[4.5rem] shrink-0 text-zinc-500">{label}</span>
+                      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                        <div className="relative h-2 w-full overflow-hidden rounded-full bg-zinc-100">
+                          <div
+                            className={cn(
+                              "h-full rounded-full transition-all",
+                              yr.isValue ? "bg-emerald-500" : "bg-red-400",
+                            )}
+                            style={{ width: `${barWidth}%` }}
+                          />
+                        </div>
+                        <span
+                          className={cn(
+                            "w-10 shrink-0 text-right font-medium tabular-nums",
+                            yr.isValue ? "text-emerald-700" : "text-red-600",
+                          )}
+                        >
+                          {yr.projectedKeeperValue > 0 ? "+" : ""}
+                          {yr.projectedKeeperValue.toFixed(1)}
+                        </span>
+                      </div>
+                      <span className="w-20 shrink-0 text-right text-zinc-400">
+                        Rd {yr.keeperCostRound} / {yr.projectedAdpRound}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-zinc-500">
+                {valueWindow.optimalKeepThroughYear !== null
+                  ? `Optimal keep through ${YEAR_LABELS[valueWindow.optimalKeepThroughYear] ?? `Year ${valueWindow.optimalKeepThroughYear + 1}`}${valueWindow.currentAge ? ` (age ${valueWindow.currentAge})` : ""}.`
+                  : "Not a value keeper — cost exceeds ADP projection in all windows."}
+                {" "}Cost vs. ADP round; bar = rounds of surplus (cap 10).
+              </p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

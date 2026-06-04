@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 from typing import TYPE_CHECKING
 
 from sqlalchemy import UniqueConstraint
@@ -28,6 +29,7 @@ class Player(TimestampMixin, table=True):
     full_name: str = Field(index=True, max_length=160)
     position: str = Field(index=True, max_length=10)
     nfl_team: str | None = Field(default=None, index=True, max_length=10)
+    birth_date: date | None = Field(default=None)
 
     keeper_candidates: list["KeeperCandidate"] = Relationship(back_populates="player")
     draft_picks: list["DraftPick"] = Relationship(back_populates="player")
