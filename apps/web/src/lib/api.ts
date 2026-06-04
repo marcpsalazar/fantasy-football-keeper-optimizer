@@ -239,6 +239,7 @@ export type MockDraftAvailablePlayer = {
   adpRound: number | null;
   risk: number | null;
   projection: number | null;
+  imageUrl: string | null;
 };
 
 export type MockDraftAnalysis = {
@@ -2788,6 +2789,8 @@ function mapRecommendation(row: ApiRow): KeeperRecommendation {
     team: text(row.team_name),
     player: text(row.player_name),
     position: text(row.position),
+    nflTeam: text(row.nfl_team) || null,
+    imageUrl: text(row.image_url) || null,
     scenario: text(row.scenario_name),
     keeperCostPick: number(row.keeper_cost_pick),
     keeperCostRound: number(row.keeper_cost_round),
@@ -3034,6 +3037,7 @@ function mapMockDraftAvailablePlayer(row: ApiRow): MockDraftAvailablePlayer {
     adpRound: nullableNumber(row.adp_round),
     risk: nullableNumber(row.risk),
     projection: nullableNumber(row.projection),
+    imageUrl: text(row.image_url) || null,
   };
 }
 

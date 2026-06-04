@@ -3079,6 +3079,7 @@ def _optimizer_table(
                 "player_name": player.full_name if player else None,
                 "position": player.position if player else None,
                 "nfl_team": player.nfl_team if player else None,
+                "image_url": player.image_url if player else None,
                 "settings_id": str(recommendation.settings_id)
                 if recommendation.settings_id
                 else None,

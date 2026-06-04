@@ -9023,6 +9023,60 @@ const DRAFT_REC_VARIANT: Record<
   avoid: "danger",
 };
 
+const NFL_TEAM_COLORS: Record<string, string> = {
+  ARI: "bg-red-700", ATL: "bg-red-800", BAL: "bg-purple-900", BUF: "bg-blue-700",
+  CAR: "bg-blue-600", CHI: "bg-blue-900", CIN: "bg-orange-600", CLE: "bg-orange-700",
+  DAL: "bg-blue-800", DEN: "bg-orange-700", DET: "bg-blue-500", GB: "bg-green-700",
+  HOU: "bg-blue-900", IND: "bg-blue-700", JAX: "bg-teal-600", KC: "bg-red-700",
+  LAC: "bg-sky-600", LAR: "bg-blue-800", LV: "bg-zinc-800", MIA: "bg-teal-500",
+  MIN: "bg-purple-800", NE: "bg-blue-900", NO: "bg-amber-700", NYG: "bg-blue-800",
+  NYJ: "bg-green-700", PHI: "bg-emerald-700", PIT: "bg-yellow-600", SEA: "bg-green-800",
+  SF: "bg-red-800", TB: "bg-red-700", TEN: "bg-sky-700", WAS: "bg-red-800",
+};
+
+function PlayerAvatar({
+  imageUrl,
+  playerName,
+  nflTeam,
+  size = "md",
+}: {
+  imageUrl: string | null | undefined;
+  playerName: string;
+  nflTeam: string | null | undefined;
+  size?: "sm" | "md" | "lg";
+}) {
+  const [imgError, setImgError] = React.useState(false);
+  const sizeClasses = size === "sm" ? "size-10" : size === "lg" ? "size-20" : "size-14";
+  const textSizeClass = size === "sm" ? "text-xs" : size === "lg" ? "text-base" : "text-sm";
+  const teamColor = (nflTeam && NFL_TEAM_COLORS[nflTeam]) ?? "bg-zinc-500";
+
+  if (imageUrl && !imgError) {
+    return (
+      <img
+        alt={playerName}
+        className={cn(sizeClasses, "shrink-0 rounded-full object-cover object-top")}
+        onError={() => setImgError(true)}
+        src={imageUrl}
+      />
+    );
+  }
+
+  return (
+    <div
+      aria-hidden="true"
+      className={cn(
+        sizeClasses,
+        teamColor,
+        "shrink-0 rounded-full flex items-center justify-center",
+      )}
+    >
+      <span className={cn(textSizeClass, "font-bold text-white/90 select-none")}>
+        {nflTeam ?? "NFL"}
+      </span>
+    </div>
+  );
+}
+
 function MockDraftPlayerDialog({
   currentPick,
   disabled,
@@ -9089,17 +9143,24 @@ function MockDraftPlayerDialog({
     >
       <div className="w-full max-w-lg overflow-y-auto rounded-md bg-white shadow-xl" style={{ maxHeight: "90vh" }}>
         <div className="flex items-start justify-between gap-3 border-b border-zinc-200 p-4">
-          <div className="min-w-0">
-            <h3 className="truncate text-lg font-semibold text-zinc-950">{player.playerName}</h3>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <PositionBadge position={player.position} />
-              <Badge variant="info">{player.nflTeam || "FA"}</Badge>
-              <Badge variant={value !== null && value >= 0 ? "success" : "warning"}>{valueLabel}</Badge>
-              {summary && (
-                <Badge variant={DRAFT_REC_VARIANT[summary.draft_recommendation]}>
-                  {summary.draft_recommendation}
-                </Badge>
-              )}
+          <div className="flex min-w-0 items-start gap-3">
+            <PlayerAvatar
+              imageUrl={player.imageUrl}
+              playerName={player.playerName}
+              nflTeam={player.nflTeam}
+            />
+            <div className="min-w-0">
+              <h3 className="truncate text-lg font-semibold text-zinc-950">{player.playerName}</h3>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <PositionBadge position={player.position} />
+                <Badge variant="info">{player.nflTeam || "FA"}</Badge>
+                <Badge variant={value !== null && value >= 0 ? "success" : "warning"}>{valueLabel}</Badge>
+                {summary && (
+                  <Badge variant={DRAFT_REC_VARIANT[summary.draft_recommendation]}>
+                    {summary.draft_recommendation}
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
           <Button onClick={onClose} size="sm" variant="ghost">
@@ -10127,23 +10188,31 @@ function KeeperExplanationModal({
     >
       <div className="relative w-full max-w-md rounded-xl bg-white shadow-xl">
         <div className="flex items-start justify-between gap-3 border-b border-zinc-100 px-5 py-4">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase text-zinc-500">
-              {rec.team} · {rec.scenario}
-            </p>
-            <h2 className="truncate text-lg font-semibold text-zinc-950">{rec.player}</h2>
-            <div className="mt-1.5 flex items-center gap-2">
-              <PositionBadge position={rec.position} />
-              {explanation && decisionStyle && (
-                <span
-                  className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
-                    decisionStyle,
-                  )}
-                >
-                  {explanation.decision}
-                </span>
-              )}
+          <div className="flex min-w-0 items-start gap-3">
+            <PlayerAvatar
+              imageUrl={rec.imageUrl}
+              playerName={rec.player}
+              nflTeam={rec.nflTeam}
+              size="sm"
+            />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase text-zinc-500">
+                {rec.team} · {rec.scenario}
+              </p>
+              <h2 className="truncate text-lg font-semibold text-zinc-950">{rec.player}</h2>
+              <div className="mt-1.5 flex items-center gap-2">
+                <PositionBadge position={rec.position} />
+                {explanation && decisionStyle && (
+                  <span
+                    className={cn(
+                      "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+                      decisionStyle,
+                    )}
+                  >
+                    {explanation.decision}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           <button
