@@ -1,5 +1,6 @@
 "use client";
 
+import { toast } from "sonner";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   ArrowLeftRight,
@@ -18,8 +19,10 @@ import {
   GitCompare,
   History,
   KeyRound,
+  Lock,
   LogOut,
   ListChecks,
+  Moon,
   PanelLeft,
   Pencil,
   Play,
@@ -30,6 +33,7 @@ import {
   Share2,
   ShieldCheck,
   SlidersHorizontal,
+  Sun,
   Trash2,
   Trophy,
   Upload,
@@ -54,6 +58,7 @@ import {
   draftCsvPreview,
   finalRosterCsvPreview,
   type ADPEntry,
+  type AdpHistoryPoint,
   type DraftPick,
   type FinalRosterEntry,
   type KeeperExplanation,
@@ -162,6 +167,7 @@ import {
   type ManualOverrideType,
   type AiUsage,
   type MockDraftAvailablePlayer,
+  type MockDraftBoardSlot,
   type MockDraftCreateForm,
   type MockDraftHistoryRow,
   type MockDraftSession,
@@ -247,23 +253,50 @@ const navItems: NavItem[] = [
   { id: "trade-analyzer", label: "Trade Analyzer", icon: ArrowLeftRight },
   { id: "scenarios", label: "Scenario Comparison", icon: GitCompare },
   { id: "draft-impact", label: "Draft Impact", icon: ClipboardList },
+  { id: "outlooks", label: "Team Outlook", icon: ShieldCheck },
+  { id: "season-analysis", label: "Season Analysis", icon: BarChart2 },
   { id: "mock-draft", label: "Mock Draft", icon: Bot },
   { id: "keeper-history", label: "Keeper History", icon: History },
   { id: "final-keepers", label: "Final Keepers", icon: KeyRound },
   { id: "draft-board", label: "Final Draft Board", icon: ClipboardList },
-  { id: "season-analysis", label: "Season Analysis", icon: BarChart2 },
-  { id: "outlooks", label: "Team Outlook", icon: ShieldCheck },
-  { id: "commissioner-tools", label: "Commissioner Tools", icon: Wrench, adminOnly: true },
   { id: "teams", label: "Teams", icon: Users },
   { id: "draft", label: "Draft Results", icon: ClipboardList },
   { id: "rosters", label: "Final Rosters", icon: ListChecks },
   { id: "settings", label: "Optimizer Settings", icon: SlidersHorizontal },
+  { id: "commissioner-tools", label: "Commissioner Tools", icon: Wrench, adminOnly: true },
   { id: "admin", label: "Admin", icon: ShieldCheck, adminOnly: true },
+];
+
+const navGroups: { label: string | null; ids: ViewId[] }[] = [
+  { label: null, ids: ["guide", "dashboard"] },
+  { label: "Keeper Tools", ids: ["recommendations", "trade-analyzer", "scenarios", "draft-impact", "outlooks", "season-analysis"] },
+  { label: "Draft Room", ids: ["mock-draft", "keeper-history", "final-keepers", "draft-board"] },
+  { label: "League Data", ids: ["teams", "draft", "rosters"] },
+  { label: "Settings", ids: ["settings", "commissioner-tools", "admin"] },
 ];
 
 const formatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
+
+function useTheme() {
+  const [dark, setDark] = React.useState(false);
+
+  React.useEffect(() => {
+    setDark(document.documentElement.classList.contains("dark"));
+  }, []);
+
+  const toggle = React.useCallback(() => {
+    setDark((prev) => {
+      const next = !prev;
+      document.documentElement.classList.toggle("dark", next);
+      localStorage.setItem("theme", next ? "dark" : "light");
+      return next;
+    });
+  }, []);
+
+  return { dark, toggle };
+}
 
 const mockDraftPersonalities = [
   "Balanced",
@@ -729,6 +762,7 @@ function useDashboard() {
 }
 
 export function DashboardApp() {
+  const { dark: isDark, toggle: toggleTheme } = useTheme();
   const [activeView, setActiveView] = React.useState<ViewId>("dashboard");
   const [workspace, setWorkspace] = React.useState<WorkspaceData>(mockWorkspaceData);
   const [apiStatus, setApiStatus] = React.useState<ApiStatus>("loading");
@@ -857,7 +891,7 @@ export function DashboardApp() {
         setWorkspace(mockWorkspaceData);
         setSettings(mockWorkspaceData.settings);
         setApiStatus("mock");
-        setStatusMessage("No backend league yet; showing mock workspace data.");
+        toast.info("No backend league yet; showing mock workspace data.");
         return;
       }
       setWorkspace(loaded);
@@ -868,12 +902,12 @@ export function DashboardApp() {
         setSelectedScenarioByTeam(selections as TeamScenarioSelection);
       }
       setApiStatus("live");
-      setStatusMessage(`Connected to ${loaded.league?.name ?? "backend league"}.`);
+      toast.success(`Connected to ${loaded.league?.name ?? "backend league"}.`);
     } catch {
       setWorkspace(mockWorkspaceData);
       setSettings(mockWorkspaceData.settings);
       setApiStatus("error");
-      setStatusMessage("API unavailable; using mock workspace data.");
+      toast.warning("API unavailable; using mock workspace data.");
     }
   }, []);
 
@@ -894,7 +928,7 @@ export function DashboardApp() {
     setIsBusy(true);
     try {
       const newLeague = await createLeague(form);
-      setStatusMessage(`League "${newLeague.name}" created.`);
+      toast.success(`League "${newLeague.name}" created.`);
       await refreshData(newLeague.id);
     } finally {
       setIsBusy(false);
@@ -907,7 +941,7 @@ export function DashboardApp() {
       await deleteLeague(leagueId);
       const remaining = userLeagues.filter((l) => l.id !== leagueId);
       const next = remaining[0];
-      setStatusMessage("League deleted.");
+      toast.success("League deleted.");
       if (next) {
         await refreshData(next.id);
       } else {
@@ -916,7 +950,7 @@ export function DashboardApp() {
         setWorkspace(mockWorkspaceData);
         setSettings(mockWorkspaceData.settings);
         setApiStatus("mock");
-        setStatusMessage("League deleted. No leagues remaining.");
+        toast.info("League deleted. No leagues remaining.");
       }
     } finally {
       setIsBusy(false);
@@ -931,7 +965,7 @@ export function DashboardApp() {
         setCurrentUser(user);
         setAuthRequired(false);
         await refreshData();
-        setStatusMessage(`Signed in as ${user.email}.`);
+        toast.success(`Signed in as ${user.email}.`);
       } finally {
         setIsBusy(false);
       }
@@ -948,7 +982,7 @@ export function DashboardApp() {
       setWorkspace(mockWorkspaceData);
       setSettings(mockWorkspaceData.settings);
       setSelectedScenarioByTeam({});
-      setStatusMessage("Signed out.");
+      toast.success("Signed out.");
     } finally {
       setIsBusy(false);
     }
@@ -959,10 +993,10 @@ export function DashboardApp() {
     try {
       const user = await updateProfile({ avatarDataUrl });
       setCurrentUser(user);
-      setStatusMessage(avatarDataUrl ? "Profile image updated." : "Profile image removed.");
+      toast.success(avatarDataUrl ? "Profile image updated." : "Profile image removed.");
     } catch (error) {
       setApiStatus("error");
-      setStatusMessage(error instanceof Error ? error.message : "Updating profile image failed.");
+      toast.error(error instanceof Error ? error.message : "Updating profile image failed.");
       throw error;
     } finally {
       setIsBusy(false);
@@ -975,10 +1009,10 @@ export function DashboardApp() {
       await uploadLeagueAvatar(leagueId, avatarDataUrl);
       const leagues = await listMyLeagues().catch(() => userLeagues);
       setUserLeagues(leagues);
-      setStatusMessage(avatarDataUrl ? "League avatar updated." : "League avatar removed.");
+      toast.success(avatarDataUrl ? "League avatar updated." : "League avatar removed.");
     } catch (error) {
       setApiStatus("error");
-      setStatusMessage(error instanceof Error ? error.message : "Updating league avatar failed.");
+      toast.error(error instanceof Error ? error.message : "Updating league avatar failed.");
       throw error;
     } finally {
       setIsBusy(false);
@@ -992,10 +1026,10 @@ export function DashboardApp() {
       const user = await updateProfile({ alias: trimmedAlias });
       setCurrentUser(user);
       await refreshData();
-      setStatusMessage(trimmedAlias ? "Owner alias updated." : "Owner alias cleared.");
+      toast.success(trimmedAlias ? "Owner alias updated." : "Owner alias cleared.");
     } catch (error) {
       setApiStatus("error");
-      setStatusMessage(error instanceof Error ? error.message : "Updating owner alias failed.");
+      toast.error(error instanceof Error ? error.message : "Updating owner alias failed.");
       throw error;
     } finally {
       setIsBusy(false);
@@ -1006,10 +1040,10 @@ export function DashboardApp() {
     setIsBusy(true);
     try {
       await changeOwnPassword(currentPassword, newPassword);
-      setStatusMessage("Password updated.");
+      toast.success("Password updated.");
     } catch (error) {
       setApiStatus("error");
-      setStatusMessage(error instanceof Error ? error.message : "Updating password failed.");
+      toast.error(error instanceof Error ? error.message : "Updating password failed.");
       throw error;
     } finally {
       setIsBusy(false);
@@ -1032,7 +1066,7 @@ export function DashboardApp() {
           setAuthRequired(true);
           setAuthChecked(true);
           setApiStatus("error");
-          setStatusMessage("Sign in to continue.");
+          toast.info("Sign in to continue.");
         }
       }
     }
@@ -1060,7 +1094,7 @@ export function DashboardApp() {
 
   const requireLeagueId = React.useCallback(() => {
     if (workspaceData.source !== "api" || !workspaceData.league?.id) {
-      setStatusMessage("Start the API and seed or create a league before sending data.");
+      toast.warning("Start the API and seed or create a league before sending data.");
       return null;
     }
     return workspaceData.league.id;
@@ -1077,14 +1111,14 @@ export function DashboardApp() {
         const preview = await previewCsv(leagueId, kind, csvText);
         setCsvPreviews((current) => ({ ...current, [kind]: preview }));
         setApiStatus("live");
-        setStatusMessage(
-          preview.valid
-            ? `Preview ready: ${preview.validRows} row(s) can be imported.`
-            : `Preview found ${preview.errorCount} error(s).`,
-        );
+        if (preview.valid) {
+          toast.success(`Preview ready: ${preview.validRows} row(s) can be imported.`);
+        } else {
+          toast.warning(`Preview found ${preview.errorCount} error(s).`);
+        }
       } catch {
         setApiStatus("error");
-        setStatusMessage("Preview failed. Check the CSV header and API logs.");
+        toast.error("Preview failed. Check the CSV header and API logs.");
       } finally {
         setIsBusy(false);
       }
@@ -1103,10 +1137,10 @@ export function DashboardApp() {
         await importCsv(leagueId, kind, csvText);
         setCsvPreviews((current) => ({ ...current, [kind]: null }));
         await refreshData();
-        setStatusMessage("CSV imported and workspace refreshed.");
+        toast.success("CSV imported and workspace refreshed.");
       } catch {
         setApiStatus("error");
-        setStatusMessage("Import failed. Check the CSV columns and API logs.");
+        toast.error("Import failed. Check the CSV columns and API logs.");
       } finally {
         setIsBusy(false);
       }
@@ -1124,10 +1158,10 @@ export function DashboardApp() {
       await saveOptimizerSettings(leagueId, settings);
       await runOptimizer(leagueId);
       await refreshData();
-      setStatusMessage("Optimizer settings applied and optimizer run completed.");
+      toast.success("Optimizer settings applied and optimizer run completed.");
     } catch {
       setApiStatus("error");
-      setStatusMessage("Optimizer run failed. Confirm draft, roster, and ADP data are loaded.");
+      toast.error("Optimizer run failed. Confirm draft, roster, and ADP data are loaded.");
     } finally {
       setIsBusy(false);
     }
@@ -1142,10 +1176,10 @@ export function DashboardApp() {
     try {
       await downloadAdpTemplate(leagueId);
       setApiStatus("live");
-      setStatusMessage("Composite ADP CSV downloaded.");
+      toast.success("Composite ADP CSV downloaded.");
     } catch {
       setApiStatus("error");
-      setStatusMessage("Composite ADP build failed. Check the ADP source connection.");
+      toast.error("Composite ADP build failed. Check the ADP source connection.");
     } finally {
       setIsBusy(false);
     }
@@ -1160,10 +1194,10 @@ export function DashboardApp() {
     try {
       await downloadCurrentAdp(leagueId);
       setApiStatus("live");
-      setStatusMessage("ADP CSV downloaded.");
+      toast.success("ADP CSV downloaded.");
     } catch {
       setApiStatus("error");
-      setStatusMessage("ADP download failed. No ADP snapshot may be loaded yet.");
+      toast.error("ADP download failed. No ADP snapshot may be loaded yet.");
     } finally {
       setIsBusy(false);
     }
@@ -1179,10 +1213,10 @@ export function DashboardApp() {
       await importCompositeAdpSnapshot(leagueId);
       await refreshData();
       setApiStatus("live");
-      setStatusMessage("Composite ADP imported into the active snapshot.");
+      toast.success("Composite ADP imported into the active snapshot.");
     } catch (error) {
       setApiStatus("error");
-      setStatusMessage(error instanceof Error ? error.message : "Composite ADP import failed.");
+      toast.error(error instanceof Error ? error.message : "Composite ADP import failed.");
     } finally {
       setIsBusy(false);
     }
@@ -1194,10 +1228,10 @@ export function DashboardApp() {
       try {
         await createAdminUser(form);
         await refreshData();
-        setStatusMessage("User created.");
+        toast.success("User created.");
       } catch (error) {
         setApiStatus("error");
-        setStatusMessage(error instanceof Error ? error.message : "Creating user failed.");
+        toast.error(error instanceof Error ? error.message : "Creating user failed.");
       } finally {
         setIsBusy(false);
       }
@@ -1211,10 +1245,10 @@ export function DashboardApp() {
       try {
         await updateAdminUser(userId, form);
         await refreshData();
-        setStatusMessage("User updated.");
+        toast.success("User updated.");
       } catch (error) {
         setApiStatus("error");
-        setStatusMessage(error instanceof Error ? error.message : "Updating user failed.");
+        toast.error(error instanceof Error ? error.message : "Updating user failed.");
       } finally {
         setIsBusy(false);
       }
@@ -1227,10 +1261,10 @@ export function DashboardApp() {
       setIsBusy(true);
       try {
         await resetAdminUserPassword(userId, password);
-        setStatusMessage("User password reset.");
+        toast.success("User password reset.");
       } catch (error) {
         setApiStatus("error");
-        setStatusMessage(error instanceof Error ? error.message : "Resetting password failed.");
+        toast.error(error instanceof Error ? error.message : "Resetting password failed.");
       } finally {
         setIsBusy(false);
       }
@@ -1244,10 +1278,10 @@ export function DashboardApp() {
       try {
         await deleteAdminUser(userId);
         await refreshData();
-        setStatusMessage("User deleted.");
+        toast.success("User deleted.");
       } catch (error) {
         setApiStatus("error");
-        setStatusMessage(error instanceof Error ? error.message : "Deleting user failed.");
+        toast.error(error instanceof Error ? error.message : "Deleting user failed.");
       } finally {
         setIsBusy(false);
       }
@@ -1265,10 +1299,10 @@ export function DashboardApp() {
       try {
         await createTeam(leagueId, form);
         await refreshData();
-        setStatusMessage("Team created.");
+        toast.success("Team created.");
       } catch {
         setApiStatus("error");
-        setStatusMessage("Creating team failed.");
+        toast.error("Creating team failed.");
       } finally {
         setIsBusy(false);
       }
@@ -1282,10 +1316,10 @@ export function DashboardApp() {
       try {
         await updateTeam(teamId, form);
         await refreshData();
-        setStatusMessage("Team updated.");
+        toast.success("Team updated.");
       } catch {
         setApiStatus("error");
-        setStatusMessage("Updating team failed.");
+        toast.error("Updating team failed.");
       } finally {
         setIsBusy(false);
       }
@@ -1299,10 +1333,10 @@ export function DashboardApp() {
       try {
         await deleteTeam(teamId);
         await refreshData();
-        setStatusMessage("Team deleted.");
+        toast.success("Team deleted.");
       } catch {
         setApiStatus("error");
-        setStatusMessage("Deleting team failed.");
+        toast.error("Deleting team failed.");
       } finally {
         setIsBusy(false);
       }
@@ -1322,10 +1356,10 @@ export function DashboardApp() {
         await runScenarioComparison(leagueId);
       setWorkspace((current) => ({ ...current, scenarioComparisons, scenarioNarrative }));
       setApiStatus("live");
-      setStatusMessage("Optimizer settings applied and scenario comparison completed.");
+      toast.success("Optimizer settings applied and scenario comparison completed.");
     } catch {
       setApiStatus("error");
-      setStatusMessage("Scenario comparison failed. Run the optimizer inputs check first.");
+      toast.error("Scenario comparison failed. Run the optimizer inputs check first.");
     } finally {
       setIsBusy(false);
     }
@@ -1344,10 +1378,10 @@ export function DashboardApp() {
         await runOptimizer(leagueId);
         setSelectedScenarioByTeam({});
         await refreshData();
-        setStatusMessage("Optimizer settings saved and recommendations reset.");
+        toast.success("Optimizer settings saved and recommendations reset.");
       } catch {
         setApiStatus("error");
-        setStatusMessage("Saving settings failed.");
+        toast.error("Saving settings failed.");
       } finally {
         setIsBusy(false);
       }
@@ -1366,10 +1400,10 @@ export function DashboardApp() {
         const league = await updateLeagueCalendarSettings(leagueId, nextSettings);
         setWorkspace((current) => ({ ...current, league }));
         setApiStatus("live");
-        setStatusMessage("League countdown dates saved.");
+        toast.success("League countdown dates saved.");
       } catch (error) {
         setApiStatus("error");
-        setStatusMessage(error instanceof Error ? error.message : "Saving league dates failed.");
+        toast.error(error instanceof Error ? error.message : "Saving league dates failed.");
       } finally {
         setIsBusy(false);
       }
@@ -1387,10 +1421,10 @@ export function DashboardApp() {
       try {
         await saveLeagueRosterSettings(leagueId, nextSettings);
         await refreshData();
-        setStatusMessage("League roster settings saved.");
+        toast.success("League roster settings saved.");
       } catch {
         setApiStatus("error");
-        setStatusMessage("Saving league roster settings failed.");
+        toast.error("Saving league roster settings failed.");
       } finally {
         setIsBusy(false);
       }
@@ -1406,7 +1440,7 @@ export function DashboardApp() {
     ) => {
       const leagueId = requireLeagueId();
       if (!leagueId || !teamId || !playerId) {
-        setStatusMessage("Manual overrides need live API recommendation IDs.");
+        toast.warning("Manual overrides need live API recommendation IDs.");
         return;
       }
       setIsBusy(true);
@@ -1414,10 +1448,10 @@ export function DashboardApp() {
         await setManualOverride(leagueId, teamId, playerId, overrideType);
         await runOptimizer(leagueId);
         await refreshData();
-        setStatusMessage("Manual override saved; team plan is now Custom.");
+        toast.success("Manual override saved; team plan is now Custom.");
       } catch {
         setApiStatus("error");
-        setStatusMessage("Manual override failed.");
+        toast.error("Manual override failed.");
       } finally {
         setIsBusy(false);
       }
@@ -1569,48 +1603,72 @@ export function DashboardApp() {
 
   return (
     <DashboardContext.Provider value={contextValue}>
-      <main className="min-h-screen bg-[#f6f5f1] text-zinc-950">
+      <main className="min-h-screen bg-[#f6f5f1] text-zinc-950 dark:bg-[#0f0f12] dark:text-zinc-50">
       <div className="grid min-h-screen lg:grid-cols-[264px_minmax(0,1fr)]">
-        <aside className="border-b border-zinc-200 bg-white lg:border-b-0 lg:border-r">
+        <aside className="border-b border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900 lg:border-b-0 lg:border-r">
           <div className="flex h-full flex-col">
-            <div className="flex items-center gap-3 border-b border-zinc-200 px-5 py-4">
+            <div className="flex items-center gap-3 border-b border-zinc-200 dark:border-zinc-700 px-5 py-4">
               <div className="flex size-9 items-center justify-center rounded-md bg-emerald-700 text-white">
                 <Trophy className="size-5" aria-hidden="true" />
               </div>
               <div>
                 <p className="text-sm font-semibold leading-5">Mayhem</p>
-                <p className="text-xs text-zinc-500">Fantasy Football Tools</p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">Fantasy Football Tools</p>
               </div>
             </div>
 
-            <nav className="flex gap-2 overflow-x-auto p-3 lg:flex-1 lg:flex-col lg:overflow-visible">
-              {visibleNavItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeView === item.id;
+            <nav className="flex gap-1 overflow-x-auto p-2 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:overflow-x-visible">
+              {navGroups.map((group) => {
+                const groupItems = group.ids
+                  .map((id) => visibleNavItems.find((item) => item.id === id))
+                  .filter(Boolean) as NavItem[];
+                if (!groupItems.length) return null;
                 return (
-                  <button
-                    key={item.id}
-                    className={cn(
-                      "inline-flex h-10 shrink-0 items-center gap-3 rounded-md px-3 text-left text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-950",
-                      isActive && "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200",
+                  <div key={group.label ?? "top"} className="lg:mb-1">
+                    {group.label && (
+                      <p className="hidden px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 lg:block">
+                        {group.label}
+                      </p>
                     )}
-                    onClick={() => setActiveView(item.id)}
-                    type="button"
-                  >
-                    <Icon className="size-4" aria-hidden="true" />
-                    <span className="whitespace-nowrap">{item.label}</span>
-                  </button>
+                    {groupItems.map((item) => {
+                      const Icon = item.icon;
+                      const isActive = activeView === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          className={cn(
+                            "group flex h-9 w-full shrink-0 items-center gap-2.5 rounded-r-md border-l-2 pl-2.5 pr-3 text-left text-sm transition-colors lg:w-auto",
+                            isActive
+                              ? "border-emerald-600 bg-emerald-50 font-semibold text-emerald-900 dark:bg-emerald-900/20 dark:text-emerald-400"
+                              : "border-transparent font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-50",
+                          )}
+                          onClick={() => setActiveView(item.id)}
+                          title={item.label}
+                          type="button"
+                        >
+                          <Icon
+                            className={cn(
+                              "size-4 shrink-0 transition-colors",
+                              isActive ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-400 group-hover:text-zinc-600 dark:group-hover:text-zinc-300",
+                            )}
+                            aria-hidden="true"
+                          />
+                          <span className="whitespace-nowrap">{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 );
               })}
             </nav>
 
-            <div className="hidden border-t border-zinc-200 p-4 lg:block">
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-                <p className="text-xs font-semibold uppercase text-amber-900">Active snapshot</p>
-                <p className="mt-1 text-sm text-amber-950">
+            <div className="hidden border-t border-zinc-200 dark:border-zinc-700 p-4 lg:block">
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+                <p className="text-xs font-semibold uppercase text-amber-900 dark:text-amber-400">Active snapshot</p>
+                <p className="mt-1 text-sm text-amber-950 dark:text-amber-200">
                   {workspaceData.activeSnapshot?.name ?? "No ADP snapshot"}
                 </p>
-                <p className="text-xs text-amber-800">
+                <p className="text-xs text-amber-800 dark:text-amber-400">
                   {workspaceData.activeSnapshot?.snapshotDate ?? "Import ADP to begin"}
                 </p>
               </div>
@@ -1619,18 +1677,26 @@ export function DashboardApp() {
         </aside>
 
         <section className="min-w-0">
-          <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur md:px-6">
+          <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95 md:px-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
-                <PanelLeft className="size-5 text-zinc-400 lg:hidden" aria-hidden="true" />
+                <PanelLeft className="size-5 text-zinc-400 dark:text-zinc-500 lg:hidden" aria-hidden="true" />
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase text-zinc-500">League workspace</p>
-                  <h1 className="truncate text-xl font-semibold text-zinc-950">{activeLabel}</h1>
-                  <p className="mt-0.5 truncate text-xs text-zinc-500">{statusMessage}</p>
+                  <p className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">League workspace</p>
+                  <h1 className="truncate text-xl font-semibold text-zinc-950 dark:text-zinc-50">{activeLabel}</h1>
                 </div>
                 <CountdownClock league={workspaceData.league} />
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <button
+                  aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                  className="flex size-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  onClick={toggleTheme}
+                  title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                  type="button"
+                >
+                  {isDark ? <Sun className="size-4" aria-hidden="true" /> : <Moon className="size-4" aria-hidden="true" />}
+                </button>
                 <ConnectionBadge status={apiStatus} />
                 <Button
                   aria-label="Refresh displayed workspace data from the backend without rerunning the optimizer"
@@ -1657,7 +1723,7 @@ export function DashboardApp() {
                     <Play className="size-4" aria-hidden="true" />
                     Run Optimizer
                   </span>
-                  <span className="text-[11px] font-normal text-zinc-300">Recompute recommendations</span>
+                  <span className="text-[11px] font-normal text-zinc-300 dark:text-emerald-200">Recompute recommendations</span>
                 </Button>
                 {currentUser ? (
                   <div className="relative" ref={userMenuRef}>
@@ -1676,15 +1742,15 @@ export function DashboardApp() {
                       />
                     </button>
                     {userMenuOpen ? (
-                      <div className="absolute right-0 top-14 z-30 w-80 rounded-md border border-zinc-200 bg-white p-2 shadow-lg">
-                        <div className="flex items-center gap-3 border-b border-zinc-100 px-2 pb-3 pt-1">
+                      <div className="absolute right-0 top-14 z-30 w-80 rounded-md border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                        <div className="flex items-center gap-3 border-b border-zinc-100 px-2 pb-3 pt-1 dark:border-zinc-700">
                           <AvatarImage
                             avatarDataUrl={activeLeagueMembership?.avatarDataUrl ?? currentUser.avatarDataUrl}
                             className="size-10"
                             iconClassName="size-6"
                           />
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-zinc-950">{currentUser.email}</p>
+                            <p className="truncate text-sm font-medium text-zinc-950 dark:text-zinc-50">{currentUser.email}</p>
                             <div className="mt-1 flex flex-wrap items-center gap-1.5">
                               {isPlatformAdmin ? (
                                 <Badge variant="danger">Platform Admin</Badge>
@@ -1698,9 +1764,9 @@ export function DashboardApp() {
                           </div>
                         </div>
                         {userLeagues.length > 0 ? (
-                          <div className="border-b border-zinc-100 py-2">
+                          <div className="border-b border-zinc-100 py-2 dark:border-zinc-700">
                             <div className="mb-1 flex items-center justify-between px-2">
-                              <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Leagues</span>
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Leagues</span>
                               <button
                                 className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs text-emerald-700 hover:bg-emerald-50"
                                 onClick={() => {
@@ -1722,8 +1788,8 @@ export function DashboardApp() {
                                   className={cn(
                                     "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
                                     isActive
-                                      ? "bg-emerald-50 text-emerald-900"
-                                      : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950",
+                                      ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-900/20 dark:text-emerald-400"
+                                      : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50",
                                   )}
                                   onClick={() => {
                                     if (!isActive) {
@@ -1770,7 +1836,7 @@ export function DashboardApp() {
                           </div>
                         )}
                         <button
-                          className="mt-1 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
+                          className="mt-1 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
                           onClick={() => {
                             setActiveView("profile");
                             setUserMenuOpen(false);
@@ -1781,7 +1847,7 @@ export function DashboardApp() {
                           View Profile
                         </button>
                         <button
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50"
                           onClick={() => {
                             setUserMenuOpen(false);
                             void logoutNow();
@@ -1992,7 +2058,7 @@ function defaultRegularSeasonStartDate(seasonYear: number | undefined): string {
 
 function AuthShell({ status, title }: { status: string; title: string }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f6f5f1] px-4 text-zinc-950">
+    <main className="flex min-h-screen items-center justify-center bg-[#f6f5f1] px-4 text-zinc-950 dark:bg-[#0f0f12] dark:text-zinc-50">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>{title}</CardTitle>
@@ -2015,7 +2081,7 @@ function LoginScreen({
   const [error, setError] = React.useState("");
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f6f5f1] px-4 text-zinc-950">
+    <main className="flex min-h-screen items-center justify-center bg-[#f6f5f1] px-4 text-zinc-950 dark:bg-[#0f0f12] dark:text-zinc-50">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>Sign In</CardTitle>
@@ -2804,9 +2870,9 @@ function LeagueDashboard() {
               <MetricStrip label="Min Keeper Value" value={String(data.settings.minimumKeeperValue)} />
               <MetricStrip label="ADP Rows" value={data.adpEntries.length.toString()} />
             </div>
-            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
-              <p className="text-sm font-semibold text-zinc-950">What this means</p>
-              <p className="mt-2 text-sm leading-6 text-zinc-700">
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-800/50">
+              <p className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">What this means</p>
+              <p className="mt-2 text-sm leading-6 text-zinc-700 dark:text-zinc-300">
                 The dashboard is strongest when the ADP snapshot is current and the keeper floor
                 matches your league&apos;s appetite for risk. If the recommendations look too loose or
                 too strict, review the minimum keeper value and rerun the optimizer.
@@ -2878,18 +2944,18 @@ function LeagueDashboard() {
                 <div className="mb-1 flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <TeamNameMark
-                      className="text-sm font-medium text-zinc-900"
+                      className="text-sm font-medium text-zinc-900 dark:text-zinc-100"
                       name={team.name}
                       teamId={team.id}
                       user={currentUser}
                     />
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
                       {draftCapitalLabel(team.remainingTop100Picks)}
                     </p>
                   </div>
-                  <span className="text-sm text-zinc-500">{team.remainingTop100Picks} picks</span>
+                  <span className="text-sm text-zinc-500 dark:text-zinc-400">{team.remainingTop100Picks} picks</span>
                 </div>
-                <div className="h-2 overflow-hidden rounded-full bg-zinc-100">
+                <div className="h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-700">
                   <div
                     className="h-full rounded-full bg-emerald-600"
                     style={{ width: `${Math.min(team.remainingTop100Picks * 10, 100)}%` }}
@@ -3186,11 +3252,12 @@ function DraftResultsPage() {
       },
       { accessorKey: "round", header: "Round" },
       { accessorKey: "overallPick", header: "Pick" },
-      { accessorKey: "player", header: "Player" },
       {
-        accessorKey: "position",
-        header: "Pos",
-        cell: ({ getValue }) => <PositionBadge position={getValue<string>()} />,
+        accessorKey: "player",
+        header: "Player",
+        cell: ({ row }) => (
+          <PlayerCell name={row.original.player} position={row.original.position} />
+        ),
       },
       { accessorKey: "keeperCost", header: "Keeper Cost" },
     ],
@@ -3220,11 +3287,12 @@ function FinalRostersPage() {
         cell: ({ getValue }) => <TeamNameMark name={getValue<string>()} user={currentUser} />,
       },
       { accessorKey: "scenario", header: "Scenario" },
-      { accessorKey: "player", header: "Player" },
       {
-        accessorKey: "position",
-        header: "Pos",
-        cell: ({ getValue }) => <PositionBadge position={getValue<string>()} />,
+        accessorKey: "player",
+        header: "Player",
+        cell: ({ row }) => (
+          <PlayerCell name={row.original.player} position={row.original.position} />
+        ),
       },
       {
         accessorKey: "rosterStatus",
@@ -5383,19 +5451,22 @@ function ADPInputPage({
   } = useDashboard();
   const columns = React.useMemo<ColumnDef<ADPEntry>[]>(
     () => [
-      { accessorKey: "player", header: "Player" },
       {
-        accessorKey: "position",
-        header: "Pos",
-        cell: ({ getValue }) => <PositionBadge position={getValue<string>()} />,
+        accessorKey: "player",
+        header: "Player",
+        cell: ({ row }) => (
+          <PlayerCell name={row.original.player} position={row.original.position} />
+        ),
       },
       { accessorKey: "adpPick", header: "ADP Pick" },
       { accessorKey: "adpRound", header: "ADP Round" },
       { accessorKey: "source", header: "Source" },
       {
-        accessorKey: "trend",
-        header: "Trend",
-        cell: ({ getValue }) => <TrendBadge trend={getValue<string>()} />,
+        id: "trend",
+        header: "4-Wk Trend",
+        cell: ({ row }) => (
+          <AdpSparkline history={row.original.adpHistory ?? []} />
+        ),
       },
     ],
     [],
@@ -6703,10 +6774,13 @@ function DraftImpactPage() {
 }
 
 const POSITION_COLORS: Record<string, string> = {
-  QB: "bg-violet-100 text-violet-800",
+  QB: "bg-amber-100 text-amber-800",
   RB: "bg-emerald-100 text-emerald-800",
   WR: "bg-sky-100 text-sky-800",
-  TE: "bg-amber-100 text-amber-800",
+  TE: "bg-violet-100 text-violet-800",
+  K: "bg-zinc-100 text-zinc-600",
+  DST: "bg-zinc-100 text-zinc-600",
+  DEF: "bg-zinc-100 text-zinc-600",
 };
 
 // ── Final Keepers Page ────────────────────────────────────────────────────────
@@ -8114,19 +8188,8 @@ function MockDraftPage() {
                 <div>
                   <div className="flex flex-wrap items-center gap-3">
                     <h2 className="text-base font-semibold text-zinc-950">Mock Draft Room</h2>
-                    {isUserTurn && activeSession.pickTimerSeconds ? (
-                      <div
-                        aria-live="polite"
-                        className={cn(
-                          "rounded-md border px-3 py-1.5 text-sm font-semibold tabular-nums",
-                          isTimerCritical
-                            ? "border-red-300 bg-red-50 text-red-700"
-                            : "border-emerald-200 bg-emerald-50 text-emerald-800",
-                        )}
-                        role="timer"
-                      >
-                        {timerLabel}
-                      </div>
+                    {activeSession.pickTimerSeconds && timeRemaining !== null ? (
+                      <DraftCountdownRing max={activeSession.pickTimerSeconds} value={timeRemaining} />
                     ) : null}
                   </div>
                   <p className="text-sm text-zinc-500">
@@ -8233,6 +8296,15 @@ function MockDraftPage() {
                   </div>
 
                   <div className="space-y-5">
+                    {isUserPickSlot && activeSession.status === "in_progress" && (
+                      <div className="flex items-center gap-3 rounded-md bg-emerald-600 px-4 py-3">
+                        <span className="size-2 shrink-0 animate-pulse rounded-full bg-white" aria-hidden="true" />
+                        <span className="text-sm font-bold tracking-wide text-white">
+                          ON THE CLOCK — {currentSlot?.teamName ?? activeSession.userTeamName ?? "Your Team"}
+                        </span>
+                      </div>
+                    )}
+
                     <section className="rounded-md border border-zinc-200 bg-white p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
@@ -8242,7 +8314,7 @@ function MockDraftPage() {
                           </p>
                         </div>
                         <Badge variant={isUserPickSlot ? "success" : "default"}>
-                          {isUserPickSlot ? "User pick" : "Locked"}
+                          {isUserPickSlot ? "Your pick" : "Locked"}
                         </Badge>
                       </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px]">
@@ -8268,9 +8340,7 @@ function MockDraftPage() {
                 <table className="w-full min-w-[560px] text-left text-xs">
                   <thead className="sticky top-0 border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500">
                     <tr>
-                      <th className="py-1.5 pl-2 pr-2">Player</th>
-                      <th className="py-1.5 pr-2">Pos</th>
-                      <th className="py-1.5 pr-2">NFL</th>
+                      <th className="py-1.5 pl-2 pr-4">Player</th>
                       <th className="py-1.5 pr-2">ADP</th>
                       <th className="py-1.5 pr-2">Proj</th>
                       <th className="py-1.5 pr-2">Value</th>
@@ -8284,7 +8354,7 @@ function MockDraftPage() {
                           : null;
                       return (
                         <tr key={player.playerId}>
-                          <td className="py-1.5 pl-2 pr-2">
+                          <td className="py-1.5 pl-2 pr-4">
                             <div className="flex items-center gap-2">
                               <Button
                                 disabled={isBusy || isLoading || !isUserPickSlot || positionsAtLimit.has(player.position)}
@@ -8294,20 +8364,15 @@ function MockDraftPage() {
                               >
                                 Draft
                               </Button>
-                              <button
-                                className="min-w-0 truncate text-left font-medium text-zinc-950 underline-offset-2 hover:text-emerald-800 hover:underline"
+                              <PlayerCell
+                                imageUrl={player.imageUrl}
+                                name={player.playerName}
+                                nflTeam={player.nflTeam}
+                                position={player.position}
                                 onClick={() => setSelectedPlayer(player)}
-                                type="button"
-                              >
-                                <span className="mr-1 text-zinc-400">{index + 1}.</span>
-                                {player.playerName}
-                              </button>
+                              />
                             </div>
                           </td>
-                          <td className="py-1.5 pr-2">
-                            <PositionBadge position={player.position} />
-                          </td>
-                          <td className="py-1.5 pr-2 text-zinc-600">{player.nflTeam || "-"}</td>
                           <td className="py-1.5 pr-2 text-zinc-600">
                             {player.adpPick === null ? "-" : formatter.format(player.adpPick)}
                           </td>
@@ -8322,7 +8387,7 @@ function MockDraftPage() {
                     })}
                     {!filteredPlayers.length ? (
                       <tr>
-                        <td className="py-5 pl-3 text-zinc-500" colSpan={6}>
+                        <td className="py-5 pl-3 text-zinc-500" colSpan={4}>
                           No available players match the current filters.
                         </td>
                       </tr>
@@ -8714,6 +8779,62 @@ function MockDraftStrategyPanel({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Mock Draft Board — Sleeper-style grid (columns = rounds, rows = teams)
+// ---------------------------------------------------------------------------
+
+const MockPickCell = React.forwardRef<
+  HTMLTableCellElement,
+  { slot: MockDraftBoardSlot | undefined; isCurrentPick: boolean }
+>(function MockPickCell({ slot, isCurrentPick }, ref) {
+  if (!slot) {
+    return (
+      <td className="min-w-[116px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-300 last:border-r-0">
+        —
+      </td>
+    );
+  }
+
+  const isKeeper = slot.status === "Keeper";
+  const isDrafted = slot.status === "Drafted";
+
+  return (
+    <td
+      ref={ref}
+      className={cn(
+        "min-w-[116px] border-r border-zinc-100 px-2 py-2 align-top last:border-r-0",
+        isKeeper ? "bg-rose-50" : isDrafted ? "bg-white" : "bg-zinc-50/30",
+        isCurrentPick && "bg-amber-50 outline outline-2 -outline-offset-2 outline-amber-400",
+      )}
+    >
+      <div className="space-y-0.5">
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-[10px] tabular-nums font-medium text-zinc-400">
+            #{slot.overallPick}
+          </span>
+          {isKeeper && <Lock className="h-2.5 w-2.5 shrink-0 text-rose-400" aria-label="Keeper" />}
+        </div>
+        {slot.pick ? (
+          <>
+            <p
+              className={cn(
+                "truncate text-[11px] font-semibold leading-tight",
+                isKeeper ? "text-rose-800" : "text-zinc-900",
+              )}
+              title={slot.pick.playerName}
+            >
+              {slot.pick.playerName}
+            </p>
+            <PositionBadge position={slot.pick.position} />
+          </>
+        ) : (
+          <p className="text-[10px] italic text-zinc-400">Open</p>
+        )}
+      </div>
+    </td>
+  );
+});
+
 function MockDraftBoardPreview({
   autoScroll,
   session,
@@ -8723,96 +8844,118 @@ function MockDraftBoardPreview({
   session: MockDraftSession;
   currentUser: AuthUser | null;
 }) {
-  const currentPickRef = React.useRef<HTMLDivElement | null>(null);
+  const currentPickRef = React.useRef<HTMLTableCellElement | null>(null);
   const boardScrollRef = React.useRef<HTMLDivElement | null>(null);
-  const rounds = React.useMemo(() => {
-    const grouped = new Map<number, MockDraftSession["board"]>();
+
+  const { teams, rounds, grid } = React.useMemo(() => {
+    const roundSet = new Set(session.board.map((s) => s.round));
+    const rounds = Array.from(roundSet).sort((a, b) => a - b);
+
+    // Order teams by their round-1 draft position (pick slot 1..N)
+    const teamsInOrder: { key: string; teamId: string | null; teamName: string }[] = [];
+    const seenKeys = new Set<string>();
+    const round1Slots = session.board
+      .filter((s) => s.round === 1)
+      .sort((a, b) => a.pickInRound - b.pickInRound);
+    for (const slot of round1Slots) {
+      const key = slot.teamId ?? slot.teamName;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        teamsInOrder.push({ key, teamId: slot.teamId, teamName: slot.teamName });
+      }
+    }
+
+    // grid: team key → round → slot
+    const grid = new Map<string, Map<number, MockDraftBoardSlot>>();
     for (const slot of session.board) {
-      grouped.set(slot.round, [...(grouped.get(slot.round) ?? []), slot]);
+      const key = slot.teamId ?? slot.teamName;
+      if (!grid.has(key)) grid.set(key, new Map());
+      grid.get(key)!.set(slot.round, slot);
     }
-    return Array.from(grouped.entries())
-      .sort(([left], [right]) => left - right)
-      .map(([round, slots]) => ({
-        round,
-        slots: slots.slice().sort((left, right) => left.pickInRound - right.pickInRound),
-      }));
+
+    return { teams: teamsInOrder, rounds, grid };
   }, [session.board]);
+
   React.useEffect(() => {
-    if (!autoScroll || !session.currentPick) {
-      return;
-    }
+    if (!autoScroll || !session.currentPick) return;
     const container = boardScrollRef.current;
-    const currentPick = currentPickRef.current;
-    if (!container || !currentPick) {
-      return;
-    }
+    const cell = currentPickRef.current;
+    if (!container || !cell) return;
     const containerRect = container.getBoundingClientRect();
-    const pickRect = currentPick.getBoundingClientRect();
-    const left =
-      container.scrollLeft +
-      pickRect.left -
-      containerRect.left -
-      container.clientWidth / 2 +
-      currentPick.clientWidth / 2;
-    const top =
-      container.scrollTop +
-      pickRect.top -
-      containerRect.top -
-      container.clientHeight / 2 +
-      currentPick.clientHeight / 2;
+    const cellRect = cell.getBoundingClientRect();
     container.scrollTo({
       behavior: "smooth",
-      left: Math.max(0, left),
-      top: Math.max(0, top),
+      left: Math.max(
+        0,
+        container.scrollLeft + cellRect.left - containerRect.left - container.clientWidth / 2 + cell.clientWidth / 2,
+      ),
+      top: Math.max(
+        0,
+        container.scrollTop + cellRect.top - containerRect.top - container.clientHeight / 2 + cell.clientHeight / 2,
+      ),
     });
   }, [autoScroll, session.currentPick]);
 
   return (
-    <div ref={boardScrollRef} className="max-h-[560px] space-y-3 overflow-auto pb-2 pr-2">
-      {rounds.map(({ round, slots }) => (
-        <div className="min-w-[1420px]" key={round}>
-          <div className="mb-1 flex items-center gap-2">
-            <span className="rounded-md bg-zinc-900 px-2 py-1 text-xs font-semibold text-white">
-              Round {round}
-            </span>
-          </div>
-          <div
-            className="grid gap-2"
-            style={{ gridTemplateColumns: `repeat(${slots.length}, minmax(156px, 1fr))` }}
-          >
-            {slots.map((slot) => {
-              const isUserTeam =
-                slot.teamId === currentUser?.teamId || slot.teamName === currentUser?.teamName;
-              const isCurrentPick = slot.overallPick === session.currentPick;
-              return (
-                <div
+    <div ref={boardScrollRef} className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 bg-white">
+      <table className="border-collapse text-xs">
+        <thead className="sticky top-0 z-20">
+          <tr className="border-b border-zinc-200 bg-zinc-50">
+            <th className="sticky left-0 z-30 min-w-[112px] border-r border-zinc-200 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600">
+              Team
+            </th>
+            {rounds.map((round) => (
+              <th
+                key={round}
+                className="min-w-[116px] border-r border-zinc-100 px-2 py-2 text-center last:border-r-0"
+              >
+                <span className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  R{round}
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-100">
+          {teams.map((team) => {
+            const isUserTeam =
+              team.teamId === currentUser?.teamId ||
+              team.teamName === currentUser?.teamName ||
+              team.teamName === session.userTeamName;
+            return (
+              <tr key={team.key} className={isUserTeam ? "bg-emerald-50/40" : "bg-white"}>
+                <td
                   className={cn(
-                    "min-h-28 rounded-md border p-3 text-xs",
-                    slot.status === "Keeper"
-                      ? "border-rose-200 bg-rose-50 text-rose-950"
-                      : slot.status === "Drafted"
-                        ? "border-sky-200 bg-sky-50 text-sky-950"
-                        : "border-zinc-200 bg-zinc-50 text-zinc-800",
-                    isUserTeam && "border-emerald-300 bg-emerald-50 ring-1 ring-emerald-200",
-                    isCurrentPick && "border-amber-400 bg-amber-50 ring-2 ring-amber-300",
+                    "sticky left-0 z-10 min-w-[112px] border-r border-zinc-200 px-3 py-2 align-middle",
+                    isUserTeam ? "bg-emerald-50 text-emerald-900" : "bg-white text-zinc-800",
                   )}
-                  key={slot.overallPick}
-                  ref={isCurrentPick ? currentPickRef : undefined}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold">{slot.overallPick}</span>
-                    <span className="text-[10px] uppercase text-zinc-500">{slot.status}</span>
+                  <div className="flex items-center gap-1.5">
+                    {isUserTeam && (
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                    )}
+                    <span className="max-w-[92px] truncate text-[11px] font-medium">
+                      {team.teamName}
+                    </span>
                   </div>
-                  <p className="mt-1 truncate font-medium">{slot.teamName}</p>
-                  <p className="mt-1 line-clamp-2 text-zinc-600">
-                    {slot.pick ? `${slot.pick.playerName} ${slot.pick.position ? `(${slot.pick.position})` : ""}` : "Open"}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
+                </td>
+                {rounds.map((round) => {
+                  const slot = grid.get(team.key)?.get(round);
+                  const isCurrentPick = slot?.overallPick === session.currentPick;
+                  return (
+                    <MockPickCell
+                      key={round}
+                      slot={slot}
+                      isCurrentPick={isCurrentPick}
+                      ref={isCurrentPick ? currentPickRef : null}
+                    />
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -9043,11 +9186,11 @@ function PlayerAvatar({
   imageUrl: string | null | undefined;
   playerName: string;
   nflTeam: string | null | undefined;
-  size?: "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg";
 }) {
   const [imgError, setImgError] = React.useState(false);
-  const sizeClasses = size === "sm" ? "size-10" : size === "lg" ? "size-20" : "size-14";
-  const textSizeClass = size === "sm" ? "text-xs" : size === "lg" ? "text-base" : "text-sm";
+  const sizeClasses = size === "xs" ? "size-8" : size === "sm" ? "size-10" : size === "lg" ? "size-20" : "size-14";
+  const textSizeClass = size === "xs" ? "text-[10px]" : size === "sm" ? "text-xs" : size === "lg" ? "text-base" : "text-sm";
   const teamColor = (nflTeam && NFL_TEAM_COLORS[nflTeam]) ?? "bg-zinc-500";
 
   if (imageUrl && !imgError) {
@@ -9193,11 +9336,17 @@ function MockDraftPlayerDialog({
         </div>
 
         {summaryLoading ? (
-          <div className="border-t border-zinc-200 px-4 pb-3 pt-3">
-            <p className="flex items-center gap-2 text-sm text-zinc-500">
-              <Bot className="size-4 shrink-0 animate-pulse" aria-hidden="true" />
-              Generating AI analysis…
-            </p>
+          <div className="border-t border-zinc-200 px-4 pb-4 pt-3" aria-hidden="true">
+            <div className="space-y-2">
+              <div className="h-3.5 w-full animate-pulse rounded bg-zinc-200" />
+              <div className="h-3.5 w-5/6 animate-pulse rounded bg-zinc-200" />
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="h-3.5 w-3/4 animate-pulse rounded bg-zinc-200" />
+                <div className="h-3.5 w-3/4 animate-pulse rounded bg-zinc-200" />
+                <div className="h-3.5 w-4/5 animate-pulse rounded bg-zinc-200" />
+                <div className="h-3.5 w-2/3 animate-pulse rounded bg-zinc-200" />
+              </div>
+            </div>
           </div>
         ) : summary ? (
           <div className="border-t border-zinc-200 space-y-3 p-4">
@@ -9844,12 +9993,13 @@ function ScenarioTeamCell({ teamResult }: { teamResult: ScenarioTeamResult }) {
         <span className="font-semibold text-zinc-950">{teamResult.selectedKeepers.length}</span>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-2">
         {teamResult.selectedKeepers.length ? (
           teamResult.selectedKeepers.map((keeper) => (
-            <Badge key={`${keeper.player}-${keeper.position}`} variant="success">
-              {keeper.player} ({keeper.position})
-            </Badge>
+            <div key={`${keeper.player}-${keeper.position}`} className="flex items-center gap-1.5 text-sm">
+              <PositionBadge position={keeper.position} />
+              <span className="font-medium text-zinc-900">{keeper.player}</span>
+            </div>
           ))
         ) : (
           <Badge>No keepers</Badge>
@@ -9977,8 +10127,11 @@ function KeeperRecommendationsTable({
         cell: ({ row }) => {
           const rec = row.original;
           return (
-            <button
-              className="text-left font-medium text-zinc-900 hover:text-emerald-700 hover:underline focus-visible:underline focus:outline-none"
+            <PlayerCell
+              imageUrl={rec.imageUrl}
+              name={rec.player}
+              nflTeam={rec.nflTeam}
+              position={rec.position}
               onClick={() => {
                 setSelectedRec(rec);
                 const hasExplanation = rec.id
@@ -9991,17 +10144,9 @@ function KeeperRecommendationsTable({
                   handleFetchValueWindow(rec);
                 }
               }}
-              type="button"
-            >
-              {rec.player}
-            </button>
+            />
           );
         },
-      },
-      {
-        accessorKey: "position",
-        header: "Pos",
-        cell: ({ getValue }) => <PositionBadge position={getValue<string>()} />,
       },
       {
         accessorKey: "keeperCostPick",
@@ -10226,9 +10371,13 @@ function KeeperExplanationModal({
         </div>
         <div className="px-5 py-4">
           {isLoading && (
-            <div className="flex items-center gap-2 text-sm text-zinc-500">
-              <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
-              Generating explanation…
+            <div className="space-y-2.5" aria-hidden="true">
+              <div className="h-3.5 w-full animate-pulse rounded bg-zinc-200" />
+              <div className="h-3.5 w-5/6 animate-pulse rounded bg-zinc-200" />
+              <div className="h-3.5 w-4/5 animate-pulse rounded bg-zinc-200" />
+              <div className="mt-4 h-3.5 w-1/3 animate-pulse rounded bg-zinc-200" />
+              <div className="h-3.5 w-full animate-pulse rounded bg-zinc-200" />
+              <div className="h-3.5 w-2/3 animate-pulse rounded bg-zinc-200" />
             </div>
           )}
           {hasError && !isLoading && (
@@ -10315,9 +10464,10 @@ function ValueWindowSection({
       {open && (
         <div className="px-5 pb-4 pt-1">
           {isLoading && (
-            <div className="flex items-center gap-2 text-sm text-zinc-500">
-              <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
-              Loading projection…
+            <div className="space-y-2" aria-hidden="true">
+              <div className="h-3.5 w-full animate-pulse rounded bg-zinc-200" />
+              <div className="h-3.5 w-5/6 animate-pulse rounded bg-zinc-200" />
+              <div className="h-3.5 w-4/5 animate-pulse rounded bg-zinc-200" />
             </div>
           )}
           {hasError && !isLoading && (
@@ -10654,9 +10804,9 @@ function MetricTile({
     <Card>
       <CardContent className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <p className="text-sm text-zinc-500">{label}</p>
-          <p className="mt-1 text-base font-semibold leading-6 text-zinc-950">{value}</p>
-          {detail ? <p className="mt-2 text-sm leading-6 text-zinc-600">{detail}</p> : null}
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">{label}</p>
+          <p className="mt-1 text-base font-semibold leading-6 text-zinc-950 dark:text-zinc-50">{value}</p>
+          {detail ? <p className="mt-2 text-sm leading-6 text-zinc-600 dark:text-zinc-400">{detail}</p> : null}
         </div>
         <div className={cn("mt-1 size-2 shrink-0 rounded-full", accentClass)} />
       </CardContent>
@@ -10666,9 +10816,9 @@ function MetricTile({
 
 function MetricStrip({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-      <p className="text-xs font-semibold uppercase text-zinc-500">{label}</p>
-      <p className="mt-1 text-xl font-semibold text-zinc-950">{value}</p>
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800">
+      <p className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">{label}</p>
+      <p className="mt-1 text-xl font-semibold text-zinc-950 dark:text-zinc-50">{value}</p>
     </div>
   );
 }
@@ -10683,23 +10833,23 @@ function DashboardDecisionList({
   title: string;
 }) {
   return (
-    <div className="space-y-3 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-      <p className="text-sm font-semibold text-zinc-950">{title}</p>
+    <div className="space-y-3 rounded-md border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-800/50">
+      <p className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">{title}</p>
       {items.length ? (
         items.map((item, index) => (
-          <div className="rounded-md border border-zinc-200 bg-white p-3" key={`${item.team}-${item.title}-${index}`}>
+          <div className="rounded-md border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-800" key={`${item.team}-${item.title}-${index}`}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-zinc-950">{item.title}</p>
-                <p className="text-xs text-zinc-500">{item.team}</p>
+                <p className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">{item.title}</p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">{item.team}</p>
               </div>
               <Badge variant={item.variant}>{item.note}</Badge>
             </div>
-            <p className="mt-2 text-sm leading-6 text-zinc-700">{item.detail}</p>
+            <p className="mt-2 text-sm leading-6 text-zinc-700 dark:text-zinc-300">{item.detail}</p>
           </div>
         ))
       ) : (
-        <p className="text-sm text-zinc-600">{emptyText}</p>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">{emptyText}</p>
       )}
     </div>
   );
@@ -10714,7 +10864,7 @@ function DashboardNewsList({ items }: { items: NewsHeadline[] }) {
     <div className="grid gap-2.5 sm:grid-cols-2">
       {items.map((item) => (
         <a
-          className="block rounded-md border border-zinc-200 bg-zinc-50 p-3 transition hover:border-emerald-300 hover:bg-emerald-50"
+          className="block rounded-md border border-zinc-200 bg-zinc-50 p-3 transition hover:border-emerald-300 hover:bg-emerald-50 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:border-emerald-700 dark:hover:bg-emerald-900/20"
           href={item.link}
           key={`${item.link}-${item.publishedAt}`}
           rel="noreferrer"
@@ -10722,9 +10872,9 @@ function DashboardNewsList({ items }: { items: NewsHeadline[] }) {
         >
           <div className="flex items-center justify-between gap-2">
             <Badge variant="info">{item.source}</Badge>
-            <span className="text-xs text-zinc-500">{formatNewsDate(item.publishedAt)}</span>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">{formatNewsDate(item.publishedAt)}</span>
           </div>
-          <p className="mt-2 text-sm font-semibold leading-5 text-zinc-950">{item.headline}</p>
+          <p className="mt-2 text-sm font-semibold leading-5 text-zinc-950 dark:text-zinc-50">{item.headline}</p>
         </a>
       ))}
     </div>
@@ -10748,19 +10898,19 @@ function DashboardTeamSnapshotCard({
   return (
     <div
       className={cn(
-        "rounded-md border border-zinc-200 bg-white p-4",
-        isCurrentTeam && "border-emerald-300 bg-emerald-50/40 ring-1 ring-emerald-100",
+        "rounded-md border border-zinc-200 bg-white p-4 transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md dark:border-zinc-700 dark:bg-zinc-900",
+        isCurrentTeam && "border-emerald-300 bg-emerald-50/40 ring-1 ring-emerald-100 dark:border-emerald-700 dark:bg-emerald-900/10 dark:ring-emerald-900/50",
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <TeamNameMark
-            className="text-sm font-semibold text-zinc-950"
+            className="text-sm font-semibold text-zinc-950 dark:text-zinc-50"
             name={team.name}
             teamId={team.id}
             user={currentUser}
           />
-          <p className="text-xs text-zinc-500">{team.owner || "Owner not assigned"}</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">{team.owner || "Owner not assigned"}</p>
         </div>
         <Badge variant={review ? "warning" : "success"}>
           {review ? "Review" : outlook?.stance ?? "Stable"}
@@ -11144,7 +11294,7 @@ function OutlookCard({
   }
 
   return (
-    <Card className={cn(isCurrentTeam && "border-emerald-300 bg-emerald-50/40 ring-1 ring-emerald-100")}>
+    <Card className={cn("transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md", isCurrentTeam && "border-emerald-300 bg-emerald-50/40 ring-1 ring-emerald-100")}>
       <CardHeader>
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="min-w-0">
@@ -11247,15 +11397,94 @@ function isCurrentUserTeam({
 function InfoLine({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-xs font-semibold uppercase text-zinc-500">{label}</p>
-      <p className="mt-1 text-sm text-zinc-900">{value}</p>
+      <p className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">{label}</p>
+      <p className="mt-1 text-sm text-zinc-900 dark:text-zinc-200">{value}</p>
     </div>
   );
 }
 
 function PositionBadge({ position }: { position: string }) {
-  const variant = position === "QB" ? "warning" : position === "RB" ? "success" : "default";
-  return <Badge variant={variant}>{position}</Badge>;
+  const variantMap: Record<string, "qb" | "rb" | "wr" | "te" | "k" | "dst"> = {
+    QB: "qb",
+    RB: "rb",
+    WR: "wr",
+    TE: "te",
+    K: "k",
+    DST: "dst",
+    DEF: "dst",
+  };
+  const variant = variantMap[position] ?? "default";
+  return <Badge variant={variant as Parameters<typeof Badge>[0]["variant"]}>{position}</Badge>;
+}
+
+function DraftCountdownRing({ max, value }: { max: number; value: number }) {
+  const radius = 20;
+  const circumference = 2 * Math.PI * radius;
+  const progress = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+  const offset = circumference * (1 - progress);
+  const color = progress > 0.5 ? "#10b981" : progress > 0.25 ? "#f59e0b" : "#ef4444";
+  return (
+    <div
+      aria-label={`${value} seconds remaining`}
+      aria-live="polite"
+      className="relative flex shrink-0 items-center justify-center"
+      role="timer"
+    >
+      <svg className="size-12 -rotate-90" viewBox="0 0 48 48">
+        <circle cx="24" cy="24" r={radius} fill="none" stroke="currentColor" strokeWidth="3" className="text-zinc-200" />
+        <circle
+          cx="24" cy="24" r={radius}
+          fill="none"
+          stroke={color}
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          style={{ transition: "stroke-dashoffset 0.9s linear, stroke 0.4s" }}
+        />
+      </svg>
+      <span className="absolute text-sm font-bold tabular-nums" style={{ color }}>{value}</span>
+    </div>
+  );
+}
+
+function PlayerCell({
+  imageUrl,
+  name,
+  nflTeam,
+  onClick,
+  position,
+}: {
+  imageUrl?: string | null;
+  name: string;
+  nflTeam?: string | null;
+  onClick?: () => void;
+  position: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2.5">
+      {(imageUrl || nflTeam) && (
+        <PlayerAvatar imageUrl={imageUrl} nflTeam={nflTeam} playerName={name} size="xs" />
+      )}
+      <div className="min-w-0 leading-tight">
+        {onClick ? (
+          <button
+            className="block truncate text-left text-sm font-semibold text-zinc-950 underline-offset-2 hover:text-emerald-700 hover:underline focus:outline-none"
+            onClick={onClick}
+            type="button"
+          >
+            {name}
+          </button>
+        ) : (
+          <span className="block truncate text-sm font-semibold text-zinc-950">{name}</span>
+        )}
+        <div className="mt-0.5 flex items-center gap-1.5">
+          <PositionBadge position={position} />
+          {nflTeam && <span className="text-xs text-zinc-400">{nflTeam}</span>}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -11427,21 +11656,29 @@ function DraftBoardPage() {
 function DraftPickCell({ pick }: { pick: DraftBoardPick }) {
   if (pick.isForfeited) {
     return (
-      <td className="px-2 py-1.5 text-center bg-red-50">
-        <div className="text-zinc-500 tabular-nums">#{pick.overallPick}</div>
-        <div className="font-medium text-red-700 truncate max-w-[84px]" title={pick.forfeitedPlayerName ?? ""}>
-          {pick.forfeitedPlayerName ?? "—"}
+      <td className="px-2 py-2 align-top bg-rose-50">
+        <div className="space-y-0.5">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[10px] tabular-nums font-medium text-rose-400">
+              #{pick.overallPick}
+            </span>
+            <Lock className="h-2.5 w-2.5 shrink-0 text-rose-400" aria-label="Keeper" />
+          </div>
+          <p
+            className="truncate text-[11px] font-semibold leading-tight text-rose-800"
+            title={pick.forfeitedPlayerName ?? ""}
+          >
+            {pick.forfeitedPlayerName ?? "—"}
+          </p>
+          {pick.forfeitedPlayerPosition && (
+            <PositionBadge position={pick.forfeitedPlayerPosition} />
+          )}
         </div>
-        {pick.forfeitedPlayerPosition && (
-          <span className={cn("rounded px-1 py-0.5 text-[10px] font-medium", POSITION_COLORS[pick.forfeitedPlayerPosition] ?? "bg-zinc-100 text-zinc-700")}>
-            {pick.forfeitedPlayerPosition}
-          </span>
-        )}
       </td>
     );
   }
   return (
-    <td className="px-2 py-1.5 text-center text-zinc-400 tabular-nums">
+    <td className="px-2 py-2 text-center text-zinc-400 tabular-nums text-[10px]">
       #{pick.overallPick}
     </td>
   );
@@ -11720,6 +11957,61 @@ function TrendBadge({ trend }: { trend: string }) {
   return <Badge variant={variant}>{trend}</Badge>;
 }
 
+// ---------------------------------------------------------------------------
+// ADP Sparkline (item 10 — ADP Trend Mini-Charts)
+// ---------------------------------------------------------------------------
+
+function AdpSparkline({ history }: { history: AdpHistoryPoint[] }) {
+  if (history.length < 2) {
+    return <span className="text-xs text-zinc-400">—</span>;
+  }
+
+  const W = 56;
+  const H = 20;
+  const pad = 2;
+  const picks = history.map((h) => h.pick);
+  const minPick = Math.min(...picks);
+  const maxPick = Math.max(...picks);
+  const range = maxPick - minPick || 1;
+
+  // Lower ADP pick number = higher on screen (better = visually up)
+  const coords = history.map((h, i) => {
+    const x = pad + (i / (history.length - 1)) * (W - 2 * pad);
+    const y = H - pad - ((maxPick - h.pick) / range) * (H - 2 * pad);
+    return { x, y };
+  });
+  const pointsStr = coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+
+  const first = picks[0];
+  const last = picks[picks.length - 1];
+  const delta = last - first; // negative = ADP improved (earlier pick), positive = declined
+
+  const isRising = delta < -0.5;
+  const isFalling = delta > 0.5;
+  const strokeColor = isRising ? "#16a34a" : isFalling ? "#dc2626" : "#a1a1aa";
+  const textColor = isRising ? "text-emerald-600" : isFalling ? "text-red-600" : "text-zinc-400";
+  const sign = delta <= 0 ? "" : "+";
+  const deltaLabel = Math.abs(delta) < 0.1 ? "=" : `${sign}${delta.toFixed(1)}`;
+  const lastCoord = coords[coords.length - 1];
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="shrink-0 overflow-visible">
+        <polyline
+          points={pointsStr}
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        <circle cx={lastCoord.x.toFixed(1)} cy={lastCoord.y.toFixed(1)} r="2" fill={strokeColor} />
+      </svg>
+      <span className={cn("text-xs font-medium tabular-nums", textColor)}>{deltaLabel}</span>
+    </div>
+  );
+}
+
 function RecommendationBadge({ status }: { status: KeeperRecommendation["status"] }) {
   const variant =
     status === "Recommended" ? "success" : status === "Eligible" ? "info" : "danger";
@@ -11756,9 +12048,9 @@ function NewsImpactSummary({ leagueId }: { leagueId: string | null }) {
   );
 
   return (
-    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
-      <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-900">
-        <Zap className="size-3.5 shrink-0" aria-hidden="true" />
+    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 dark:border-zinc-600 dark:bg-zinc-800">
+      <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-900 dark:text-zinc-100">
+        <Zap className="size-3.5 shrink-0 dark:text-amber-400" aria-hidden="true" />
         {uniquePlayers.length} keeper candidate{uniquePlayers.length !== 1 ? "s" : ""} in today&apos;s news
       </div>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -11768,7 +12060,7 @@ function NewsImpactSummary({ leagueId }: { leagueId: string | null }) {
             className={cn(
               "inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium",
               a.isRecommended
-                ? "bg-emerald-100 text-emerald-800"
+                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
                 : "bg-zinc-100 text-zinc-600",
             )}
           >
@@ -11777,7 +12069,7 @@ function NewsImpactSummary({ leagueId }: { leagueId: string | null }) {
           </span>
         ))}
       </div>
-      <p className="mt-1.5 text-xs text-amber-700">
+      <p className="mt-1.5 text-xs text-amber-700 dark:text-zinc-400">
         Open Recommendations to see keeper value impact and flip rounds.
       </p>
     </div>
@@ -11808,24 +12100,24 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
   if (loading || alerts.length === 0) return null;
 
   return (
-    <div className="rounded-md border border-amber-200 bg-amber-50">
+    <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-zinc-600 dark:bg-zinc-800">
       <button
         className="flex w-full items-center gap-2 px-4 py-3 text-left"
         onClick={() => setExpanded((v) => !v)}
         type="button"
       >
-        <Zap className="size-4 shrink-0 text-amber-600" aria-hidden="true" />
-        <span className="text-sm font-semibold text-amber-900">
+        <Zap className="size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+        <span className="text-sm font-semibold text-amber-900 dark:text-zinc-100">
           {alerts.length} keeper candidate{alerts.length !== 1 ? "s" : ""} in today&apos;s news
         </span>
-        <span className="ml-auto text-xs text-amber-600">{expanded ? "Hide" : "Show"}</span>
+        <span className="ml-auto text-xs text-amber-600 dark:text-zinc-400">{expanded ? "Hide" : "Show"}</span>
       </button>
 
       {expanded && (
-        <div className="border-t border-amber-200 px-4 pb-4 pt-2">
-          <div className="overflow-x-auto rounded border border-amber-200">
+        <div className="border-t border-amber-200 px-4 pb-4 pt-2 dark:border-zinc-700">
+          <div className="overflow-x-auto rounded border border-amber-200 dark:border-zinc-700">
             <table className="w-full text-sm">
-              <thead className="bg-amber-100 text-xs font-semibold uppercase text-amber-700">
+              <thead className="bg-amber-100 text-xs font-semibold uppercase text-amber-700 dark:bg-zinc-700 dark:text-zinc-300">
                 <tr>
                   <th className="px-3 py-2 text-left">Player</th>
                   <th className="px-3 py-2 text-left">Team</th>
@@ -11835,7 +12127,7 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
                   <th className="px-3 py-2 text-left">Headline</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-amber-100 bg-white">
+              <tbody className="divide-y divide-amber-100 bg-white dark:divide-zinc-700 dark:bg-zinc-800">
                 {alerts.map((alert, i) => (
                   <tr key={i}>
                     <td className="px-3 py-2 font-medium text-zinc-900">
@@ -11850,7 +12142,7 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
                         className={cn(
                           "inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium",
                           alert.isRecommended
-                            ? "bg-emerald-100 text-emerald-800"
+                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
                             : "bg-zinc-100 text-zinc-600",
                         )}
                       >
@@ -11862,7 +12154,7 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
                         <span
                           className={cn(
                             "font-medium",
-                            alert.currentKeeperValue > 0 ? "text-emerald-700" : "text-zinc-500",
+                            alert.currentKeeperValue > 0 ? "text-emerald-700 dark:text-emerald-400" : "text-zinc-500",
                           )}
                         >
                           {alert.currentKeeperValue > 0 ? "+" : ""}
@@ -11886,7 +12178,7 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
                         href={alert.headlineLink}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-amber-800 hover:underline"
+                        className="text-amber-800 hover:underline dark:text-emerald-400"
                       >
                         {alert.headline}
                       </a>
@@ -11896,7 +12188,7 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
               </tbody>
             </table>
           </div>
-          <p className="mt-2 text-xs text-amber-700">
+          <p className="mt-2 text-xs text-amber-700 dark:text-zinc-400">
             &quot;Flips at Rd&quot; is the ADP round at which a player crosses the keeper value threshold — news shifting ADP beyond that point would change their recommendation.
           </p>
         </div>

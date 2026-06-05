@@ -953,6 +953,54 @@ def preview_adp(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+@router.get("/leagues/{league_id}/adp-trend")
+def get_adp_trend(
+    league_id: uuid.UUID,
+    snapshot_limit: int = Query(default=4, ge=2, le=8),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Return per-player ADP pick history across the most recent N snapshots."""
+    _require_league(session, league_id)
+    snapshots = session.exec(
+        select(ADPSnapshot)
+        .where(ADPSnapshot.league_id == league_id)
+        .order_by(ADPSnapshot.snapshot_date.desc(), ADPSnapshot.created_at.desc())
+        .limit(snapshot_limit)
+    ).all()
+    if not snapshots:
+        return {"rows": []}
+
+    # Oldest first for chronological sparkline display.
+    snapshots = list(reversed(snapshots))
+
+    all_entries = session.exec(
+        select(ADPEntry).where(ADPEntry.snapshot_id.in_([s.id for s in snapshots]))
+    ).all()
+
+    # Build (snapshot_id, player_id) → adp_pick lookup.
+    entry_map: dict[tuple[uuid.UUID, uuid.UUID], float] = {
+        (e.snapshot_id, e.player_id): e.adp_pick for e in all_entries
+    }
+
+    # Produce history rows for every player in the most recent snapshot.
+    latest_snapshot = snapshots[-1]
+    latest_entries = [e for e in all_entries if e.snapshot_id == latest_snapshot.id]
+
+    rows = []
+    for entry in latest_entries:
+        history = [
+            {
+                "snapshot_date": snapshot.snapshot_date.isoformat(),
+                "adp_pick": entry_map[(snapshot.id, entry.player_id)],
+            }
+            for snapshot in snapshots
+            if (snapshot.id, entry.player_id) in entry_map
+        ]
+        rows.append({"player_id": str(entry.player_id), "history": history})
+
+    return {"rows": rows}
+
+
 @router.get("/adp-snapshots/{snapshot_id}")
 def read_adp_snapshot(
     snapshot_id: uuid.UUID,

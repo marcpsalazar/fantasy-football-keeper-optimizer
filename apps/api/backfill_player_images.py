@@ -36,8 +36,22 @@ def _fetch_sleeper_players() -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+_SUFFIX_RE = __import__("re").compile(
+    r"\s+(jr\.?|sr\.?|ii|iii|iv|v|vi)$", __import__("re").IGNORECASE
+)
+
+
+def _strip_suffix(name: str) -> str:
+    """Remove generational suffixes so 'James Cook III' matches 'James Cook'."""
+    return _SUFFIX_RE.sub("", name).strip()
+
+
 def _build_name_lookup(players_db: dict) -> dict[str, list[tuple[str, str]]]:
-    """Build (normalized_name, position) → [(sleeper_id, image_url)] lookup."""
+    """Build (normalized_name, position) → [(sleeper_id, image_url)] lookup.
+
+    Indexes each player under both their full name and their suffix-stripped
+    name so that DB entries like 'James Cook III' match Sleeper's 'James Cook'.
+    """
     lookup: dict[str, list[tuple[str, str]]] = {}
     for pid, p in players_db.items():
         if not isinstance(p, dict):
@@ -51,8 +65,10 @@ def _build_name_lookup(players_db: dict) -> dict[str, list[tuple[str, str]]]:
         pos = _POSITION_MAP.get(raw_pos.upper())
         if pos not in _VALID:
             continue
-        key = f"{full.lower()}|{pos}"
-        lookup.setdefault(key, []).append((str(pid), SLEEPER_THUMB_URL.format(pid)))
+        entry = (str(pid), SLEEPER_THUMB_URL.format(pid))
+        for name_variant in {full.lower(), _strip_suffix(full).lower()}:
+            key = f"{name_variant}|{pos}"
+            lookup.setdefault(key, []).append(entry)
     return lookup
 
 
@@ -74,7 +90,10 @@ def main(dry_run: bool = False) -> None:
         print(f"  {len(db_players)} players in DB with no image_url.")
 
         for player in db_players:
+            # Try exact name first, then suffix-stripped fallback
             key = f"{player.full_name.lower()}|{player.position}"
+            if key not in lookup:
+                key = f"{_strip_suffix(player.full_name).lower()}|{player.position}"
             matches = lookup.get(key, [])
             if not matches:
                 skipped_no_match += 1

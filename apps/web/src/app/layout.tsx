@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SonnerToaster } from "@/components/sonner-toaster";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,8 +16,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){var t=localStorage.getItem("theme");if(t==="dark"||(t==null&&window.matchMedia("(prefers-color-scheme: dark)").matches)){document.documentElement.classList.add("dark")}})()`,
+          }}
+        />
+      </head>
+      <body>
+        {children}
+        <SonnerToaster />
+      </body>
     </html>
   );
 }

@@ -7,6 +7,7 @@ import {
   scenarioComparisons as mockScenarioComparisons,
   teams as mockTeams,
   type ADPEntry,
+  type AdpHistoryPoint,
   type DraftPick,
   type FinalRosterEntry,
   type KeeperExplanation,
@@ -478,6 +479,27 @@ export async function loadWorkspaceData(leagueId?: string): Promise<WorkspaceDat
   const adpEntries = activeSnapshot
     ? (await fetchTable(`/api/adp-snapshots/${activeSnapshot.id}`)).rows.map(mapAdpEntry)
     : [];
+
+  if (adpEntries.length > 0) {
+    try {
+      const trendPayload = await fetchJson<{
+        rows: { player_id: string; history: { snapshot_date: string; adp_pick: number }[] }[];
+      }>(`/api/leagues/${league.id}/adp-trend`);
+      const historyMap = new Map<string, AdpHistoryPoint[]>(
+        trendPayload.rows.map((r) => [
+          r.player_id,
+          r.history.map((h) => ({ date: h.snapshot_date, pick: h.adp_pick })),
+        ]),
+      );
+      for (const entry of adpEntries) {
+        if (entry.playerId) {
+          entry.adpHistory = historyMap.get(entry.playerId);
+        }
+      }
+    } catch {
+      // Non-critical — sparklines simply won't render without history
+    }
+  }
 
   const { comparisons: scenarioComparisons, narrative: scenarioNarrative } =
     await loadScenarios(league.id);
@@ -2771,6 +2793,7 @@ function mapFinalRosterEntry(row: ApiRow): FinalRosterEntry {
 function mapAdpEntry(row: ApiRow): ADPEntry {
   return {
     player: text(row.player_name),
+    playerId: text(row.player_id) || undefined,
     position: text(row.position),
     adpPick: number(row.adp_pick),
     adpRound: number(row.adp_round),

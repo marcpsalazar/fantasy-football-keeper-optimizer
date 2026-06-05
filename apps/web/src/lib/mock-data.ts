@@ -29,13 +29,17 @@ export type FinalRosterEntry = {
   keeperSalary?: number | null;
 };
 
+export type AdpHistoryPoint = { date: string; pick: number };
+
 export type ADPEntry = {
   player: string;
+  playerId?: string;
   position: string;
   adpPick: number;
   adpRound: number;
   source: string;
   trend: string;
+  adpHistory?: AdpHistoryPoint[];
 };
 
 export type KeeperExplanation = {

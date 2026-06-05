@@ -1,9 +1,15 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   color-scheme: light;
   background: #f6f5f1;
   color: #18181b;
+}
+
+.dark {
+  color-scheme: dark;
 }
 
 * {
@@ -27,3 +33,36 @@ input,
 textarea {
   font: inherit;
 }
+
+/* ── Dark mode: global color overrides ─────────────────────────────────────
+   Unlayered CSS (no @layer) wins over Tailwind's @layer utilities, so these
+   rules catch every element with these classes — all 150+ inline usages in
+   the dashboard and all shared UI components — without touching each one.
+   Explicit dark: variants on the same element produce the same values, so
+   there is no visual conflict.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Backgrounds */
+.dark .bg-white { background-color: var(--color-zinc-900); }
+.dark .bg-zinc-50 { background-color: var(--color-zinc-800); }
+.dark .bg-zinc-100 { background-color: var(--color-zinc-700); }
+
+/* Hover backgrounds */
+.dark .hover\:bg-zinc-50:hover  { background-color: var(--color-zinc-800); }
+.dark .hover\:bg-zinc-100:hover { background-color: var(--color-zinc-700); }
+
+/* Borders */
+.dark .border-zinc-100 { border-color: var(--color-zinc-700); }
+.dark .border-zinc-200 { border-color: var(--color-zinc-700); }
+.dark .border-zinc-300 { border-color: var(--color-zinc-600); }
+
+/* Text */
+.dark .text-zinc-950 { color: var(--color-zinc-50);  }
+.dark .text-zinc-900 { color: var(--color-zinc-100); }
+.dark .text-zinc-800 { color: var(--color-zinc-200); }
+.dark .text-zinc-700 { color: var(--color-zinc-300); }
+.dark .text-zinc-600 { color: var(--color-zinc-400); }
+.dark .text-zinc-500 { color: var(--color-zinc-400); }
+
+/* Hover text */
+.dark .hover\:text-zinc-950:hover { color: var(--color-zinc-50); }

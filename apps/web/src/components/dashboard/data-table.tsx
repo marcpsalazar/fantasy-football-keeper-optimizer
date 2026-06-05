@@ -172,9 +172,9 @@ export function DataTable<TData>({
   }, [isTeamFilterOpen]);
 
   return (
-    <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
+    <div className="overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-zinc-700">
       {teamFilter ? (
-        <div className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3">
+        <div className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-800/60">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs font-semibold uppercase text-zinc-500">
@@ -198,7 +198,7 @@ export function DataTable<TData>({
                 <ChevronDown className="size-3.5" aria-hidden="true" />
               </Button>
               {isTeamFilterOpen ? (
-                <div className="absolute right-0 top-10 z-20 w-[320px] rounded-md border border-zinc-200 bg-white p-3 shadow-lg">
+                <div className="absolute right-0 top-10 z-20 w-[320px] rounded-md border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-semibold text-zinc-900">Filter teams</p>
                     <Button
@@ -277,12 +277,12 @@ export function DataTable<TData>({
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id} className="hover:bg-zinc-50">
+              <TableRow key={headerGroup.id} className="hover:bg-transparent dark:hover:bg-transparent">
                 {headerGroup.headers.map((header) => (
                   <TableHead
                     className={cn(
                       scrollBody &&
-                        "sticky top-0 z-10 bg-zinc-50 shadow-[inset_0_-1px_0_#e4e4e7]",
+                        "sticky top-0 z-10 bg-zinc-50 shadow-[inset_0_-1px_0_#e4e4e7] dark:bg-zinc-800 dark:shadow-[inset_0_-1px_0_#3f3f46]",
                     )}
                     key={header.id}
                   >
