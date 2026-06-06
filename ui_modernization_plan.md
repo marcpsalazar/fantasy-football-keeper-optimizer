@@ -21,6 +21,7 @@ Reference platforms studied:
 **Files changed:**
 - `apps/web/src/app/layout.tsx` — added `<Toaster />`
 - `apps/web/src/components/dashboard/dashboard-app.tsx` — replaced all status message calls; removed status `<p>` from header
+- `apps/web/src/components/sonner-toaster.tsx` — wrapper component
 - `apps/web/package.json` — added `sonner ^2.0.7`
 
 ---
@@ -133,7 +134,103 @@ Uses `stroke-dasharray` / `stroke-dashoffset` with CSS transitions (`stroke-dash
 
 ---
 
-### Bug Fixes (found during this work)
+#### 8. Dashboard Homepage as a Real Dashboard ✅
+**Was already done** — the `LeagueDashboard` component had been built out with MetricTile cards, League Briefing + Model Status, Top Keeper Decisions (3-column), Team Snapshot grid, and Draft Capital overview bars. Plan document was not updated when the code was written.
+
+---
+
+### Tier 3 — Larger Investment
+
+#### 9. Dark Mode ✅
+Added class-based dark mode infrastructure and applied it broadly across structural, dashboard, and shared UI components.
+
+**What was done:**
+- `globals.css` — `@custom-variant dark (&:where(.dark, .dark *))` + `color-scheme: dark` on `.dark`
+- `layout.tsx` — inline FOUC-prevention script reads `localStorage("theme")` and adds `class="dark"` to `<html>` before paint; `suppressHydrationWarning` on `<html>`
+- `useTheme()` hook in `dashboard-app.tsx` — reads `.dark` class state, toggles and persists to localStorage
+- Moon/Sun toggle button added to the sticky header (right side, before ConnectionBadge)
+- Structural layout: `<main>`, `<aside>`, `<header>`, nav items, sidebar footer card, user menu dropdown
+- Dashboard components: MetricTile, MetricStrip, DashboardDecisionList, DashboardTeamSnapshotCard, DashboardNewsList, InfoLine, Draft Capital bars
+- Auth/login screens
+
+**Shared UI components dark-moded:**
+- `card.tsx` — dark variants on Card, CardHeader, CardTitle, CardDescription
+- `button.tsx` — dark variants on all variants (default, secondary, outline, ghost)
+- `input.tsx` — dark border, bg, text, placeholder, focus ring, disabled state
+- `textarea.tsx` — same dark treatment as Input
+- `table.tsx` — dark variants on TableHeader, TableRow, TableHead, TableCell
+- `data-table.tsx` — dark border, filter panel bg, sticky header bg, dropdown bg
+
+**Not yet dark-moded** (view-specific pages — lower priority follow-up):
+- Inner view pages: Recommendations, Trade Analyzer, Scenarios, Mock Draft, ADP, Admin, etc.
+- Inner table rows within those views, modals, and form sections
+
+---
+
+#### 10. ADP Trend Mini-Charts ✅
+Replaced the plain ADP number column with a sparkline showing multi-snapshot ADP movement. Rising (lower pick #) = green line + green delta, falling = red.
+
+**What was done:**
+- New backend endpoint `GET /api/leagues/{league_id}/adp-trend` queries the last N (default 4) `adp_snapshots` for the league and returns per-player `adp_pick` history in chronological order.
+- `ADPEntry` type extended with `playerId?: string` and `adpHistory?: AdpHistoryPoint[]`.
+- `mapAdpEntry` now captures `player_id`; `loadWorkspaceData` fetches trend data in a follow-up request and merges it into entries by `player_id`. Failure is silently swallowed so the table still renders without history.
+- `AdpSparkline` component: 56×20 SVG polyline + endpoint dot + delta label. Green when ADP improved (pick number fell), red when declined, gray when flat. Falls back to "—" when fewer than 2 snapshots exist.
+- ADP table column header changed from "Trend" → "4-Wk Trend"; cell uses `AdpSparkline` instead of the old text-only `TrendBadge`.
+
+**Files changed:**
+- `apps/api/app/api/routes/leagues.py` — `get_adp_trend` endpoint
+- `apps/web/src/lib/mock-data.ts` — `AdpHistoryPoint` type; `ADPEntry.playerId` + `adpHistory` fields
+- `apps/web/src/lib/api.ts` — `mapAdpEntry` captures `playerId`; `loadWorkspaceData` merges trend history
+- `apps/web/src/components/dashboard/dashboard-app.tsx` — `AdpSparkline` component; ADP table column
+
+---
+
+#### 11. Draft Board Visual Grid ✅
+Replaced both draft board views with a Sleeper-style grid (columns = rounds, rows = teams).
+
+**Mock Draft Board (`MockDraftBoardPreview`):**
+- Transposed from "rows = rounds, cells = teams" to "columns = rounds, rows = teams" — each team has a single row showing their entire draft from R1 → R{N}
+- Sticky left column shows team name; user's row has an emerald dot + emerald tint
+- Added `MockPickCell` (`React.forwardRef<HTMLTableCellElement>`) — each cell shows: pick #, player name (truncated + tooltip), `PositionBadge`, lock icon for Keeper slots
+- Keeper cells: rose background + `Lock` icon
+- Current-pick cell (live draft): amber outline highlight; auto-scroll centers it in view
+- Open cells: zinc-tinted background, "Open" italic placeholder
+
+**Final Draft Board (`DraftPickCell`):**
+- Forfeited cells upgraded: rose bg + `Lock` icon + `PositionBadge` replacing the old `POSITION_COLORS` inline span
+- Open cells kept minimal (pick # only, dimmer text)
+
+**`POSITION_COLORS` constant (bug fix):**
+- QB and TE colors were swapped (QB was violet, TE was amber — opposite of the established palette). Fixed.
+- Added K, DST, DEF entries (zinc)
+
+**Files changed:**
+- `apps/web/src/components/dashboard/dashboard-app.tsx` — `Lock` import; `POSITION_COLORS` fix; `MockPickCell` forwardRef component; `MockDraftBoardPreview` full rewrite; `DraftPickCell` upgraded
+
+---
+
+#### 12. Draft Board Grid Unification ✅
+Extended the Sleeper-style team-row × round-column grid from Mock Draft to **Draft Impact** and **Final Draft Board** so all three boards share the same visual language and orientation.
+
+**Draft Impact (`DraftBoardPreview`):**
+- Replaced the round-row div-card layout with the same `border-collapse` table structure used by `MockDraftBoardPreview`
+- Teams as rows ordered by round-1 draft position; rounds as columns with `R{n}` dark pills
+- Sticky left team-name column; user's team row highlighted in emerald (dot + tint)
+- Cells: pick number, `Lock` icon + player name + `PositionBadge` for forfeited picks; italic "Open" for available slots
+
+**Final Draft Board (`DraftBoardPage` / `DraftPickCell`):**
+- Grid orientation flipped from round-rows × team-columns to **team-rows × round-columns** — same as Mock Draft and Draft Impact
+- Added `currentUser` from `useDashboard()` so the signed-in user's team row highlights in emerald
+- Added 4-metric strip: Forfeited Picks / Open Picks / Teams / Rounds
+- Forfeited Picks Summary below the grid redesigned from a `<table>` to styled rose card rows with `PositionBadge`
+- `DraftPickCell` updated with `min-w-[116px] border-r border-zinc-100` classes matching the new layout
+
+**Files changed:**
+- `apps/web/src/components/dashboard/dashboard-app.tsx` — `DraftBoardPreview` full rewrite; `DraftBoardPage` grid + metrics overhaul; `DraftPickCell` border classes updated
+
+---
+
+### Bug Fixes (found during modernization work)
 
 #### Mock Draft PlayerCell missing imageUrl ✅
 The `MockAvailablePlayer` type has `imageUrl: string | null` but `PlayerCell` in the mock draft table wasn't passing it — so players always showed the team-color fallback circle instead of their headshot. Fixed by adding `imageUrl={player.imageUrl}` to the call.
@@ -148,74 +245,15 @@ The `MockAvailablePlayer` type has `imageUrl: string | null` but `PlayerCell` in
 
 ---
 
-## Remaining
+## What to Build Next
 
-### Tier 2
+These were not in the original plan but emerged as natural follow-ons during this work:
 
-#### 8. Dashboard Homepage as a Real Dashboard ✅
-**Was already done** — the `LeagueDashboard` component had been built out with MetricTile cards, League Briefing + Model Status, Top Keeper Decisions (3-column), Team Snapshot grid, and Draft Capital overview bars. Plan document was not updated when the code was written.
-
----
-
-### Tier 3 — Larger Investment
-
-#### 9. Dark Mode ✅
-Added class-based dark mode infrastructure and applied it to all structural + dashboard-level elements.
-
-**What was done:**
-- `globals.css` — `@custom-variant dark (&:where(.dark, .dark *))` + `color-scheme: dark` on `.dark`
-- `layout.tsx` — inline FOUC-prevention script reads `localStorage("theme")` and adds `class="dark"` to `<html>` before paint; `suppressHydrationWarning` on `<html>`
-- `useTheme()` hook in `dashboard-app.tsx` — reads `.dark` class state, toggles and persists to localStorage
-- Moon/Sun toggle button added to the sticky header (right side, before ConnectionBadge)
-- `card.tsx` — dark variants on Card, CardHeader, CardTitle, CardDescription
-- `button.tsx` — dark variants on all button variants (default, secondary, outline, ghost)
-- Structural layout: `<main>`, `<aside>`, `<header>`, nav items, sidebar footer card, user menu dropdown
-- Dashboard components: MetricTile, MetricStrip, DashboardDecisionList, DashboardTeamSnapshotCard, DashboardNewsList, InfoLine, Draft Capital bars
-- Auth/login screens
-
-**Not yet dark-moded** (inner view pages — Tiers 2+3 follow-up):
-- View-specific pages: Recommendations, Trade Analyzer, Scenarios, Mock Draft, ADP, Admin, etc.
-- Inner table rows, form inputs, modals (they still use light colors in dark mode)
-
-#### 10. ADP Trend Mini-Charts ✅
-Replace the plain ADP number column with a sparkline showing 4-week ADP movement. Rising (lower pick #) = green line + green delta, falling = red. History fetched from backend.
-
-**What was done:**
-- New backend endpoint `GET /api/leagues/{league_id}/adp-trend` queries the last N (default 4) `adp_snapshots` for the league and returns per-player `adp_pick` history in chronological order.
-- `ADPEntry` type extended with `playerId?: string` and `adpHistory?: AdpHistoryPoint[]`.
-- `mapAdpEntry` now captures `player_id`; `loadWorkspaceData` fetches trend data in a follow-up request and merges it into entries by `player_id`.
-- `AdpSparkline` component: 56×20 SVG polyline + endpoint dot + delta label. Green when ADP improved (pick number fell), red when declined, gray when flat. Falls back to "—" when only 1 snapshot exists.
-- ADP table column header changed from "Trend" → "4-Wk Trend"; cell uses `AdpSparkline` instead of the old `TrendBadge`.
-
-**Files changed:**
-- `apps/api/app/api/routes/leagues.py` — `get_adp_trend` endpoint
-- `apps/web/src/lib/mock-data.ts` — `AdpHistoryPoint` type; `ADPEntry.playerId` + `adpHistory` fields
-- `apps/web/src/lib/api.ts` — `mapAdpEntry` captures `playerId`; `loadWorkspaceData` merges trend history
-- `apps/web/src/components/dashboard/dashboard-app.tsx` — `AdpSparkline` component; ADP table column
-
-#### 11. Draft Board Visual Grid ✅
-Replaced both draft board views with a Sleeper-style grid.
-
-**What was done:**
-
-**Mock Draft Board (`MockDraftBoardPreview`):**
-- Transposed from "rows = rounds, cells = teams" to "columns = rounds, rows = teams" — each team has a single row showing their entire draft from R1 → R{N}
-- New sticky left column shows team name with an emerald dot for the user's team; entire user row has a subtle emerald tint
-- Added `MockPickCell` (`React.forwardRef`) — each cell shows: pick #, player name (truncated with tooltip), `PositionBadge`, lock icon for Keeper slots
-- Keeper cells: rose background + `Lock` icon
-- Current-pick cell (live draft): amber outline highlight; auto-scroll centers it
-- Open cells: zinc-tinted background, "Open" italic placeholder
-
-**Final Draft Board (`DraftPickCell`):**
-- Forfeited cells upgraded: rose bg + `Lock` icon + `PositionBadge` replacing the old `POSITION_COLORS` inline span
-- Open cells kept minimal (pick # only, dimmer text)
-
-**`POSITION_COLORS` constant:**
-- Fixed QB↔TE color swap (QB was violet/should be amber; TE was amber/should be violet)
-- Added K, DST, DEF entries (zinc)
-
-**Files changed:**
-- `apps/web/src/components/dashboard/dashboard-app.tsx` — `Lock` import; `POSITION_COLORS` fix; `MockPickCell` forwardRef component; `MockDraftBoardPreview` full rewrite; `DraftPickCell` upgraded
+- **Dark mode — inner view pages**: Recommendations, Trade Analyzer, Scenarios, Mock Draft, ADP, Admin pages still use light-only colors in dark mode. Tables, modals, and form sections within those views need dark variants.
+- **Mobile layout**: The sidebar nav collapses poorly on small screens. A bottom tab bar or slide-in drawer would make the app usable on mobile.
+- **Live draft pick animation**: When a bot makes a pick during mock draft, the pick cell could animate in (fade + slide) rather than snapping in on re-render.
+- **Position filter chips on ADP table**: Quick-filter buttons (All / QB / RB / WR / TE) above the ADP table to narrow the board by position.
+- **Draft board color density**: Consider using position colors (not just rose/white) as subtle cell backgrounds in the mock draft grid — each drafted pick's cell tinted by position — for faster visual scanning.
 
 ---
 
@@ -223,13 +261,15 @@ Replaced both draft board views with a Sleeper-style grid.
 
 ### Position Color Palette
 ```
-QB  →  amber-300 border / amber-100 bg / amber-900 text
-RB  →  emerald-300 border / emerald-100 bg / emerald-900 text
-WR  →  sky-300 border / sky-100 bg / sky-900 text
-TE  →  violet-300 border / violet-100 bg / violet-900 text
-K   →  zinc-300 border / zinc-100 bg / zinc-600 text
-DST →  zinc-300 border / zinc-100 bg / zinc-600 text
+QB  →  amber-300 border / amber-100 bg / amber-800 text    (Badge variant: qb)
+RB  →  emerald-300 border / emerald-100 bg / emerald-800 text  (Badge variant: rb)
+WR  →  sky-300 border / sky-100 bg / sky-800 text          (Badge variant: wr)
+TE  →  violet-300 border / violet-100 bg / violet-800 text  (Badge variant: te)
+K   →  zinc-300 border / zinc-100 bg / zinc-600 text        (Badge variant: k)
+DST →  zinc-300 border / zinc-100 bg / zinc-600 text        (Badge variant: dst)
 ```
+
+Also expressed in `POSITION_COLORS` (Tailwind class strings) for inline `<span>` use in Draft Board and Season Analysis pages.
 
 ### Toast Variants Used
 | Situation | Toast type |
@@ -242,10 +282,13 @@ DST →  zinc-300 border / zinc-100 bg / zinc-600 text
 ### Key Component Locations (dashboard-app.tsx)
 | Component | Purpose |
 |-----------|---------|
-| `PositionBadge` | Color-coded position label using Badge variants |
-| `PlayerCell` | Compound table cell: avatar + name + position + team |
-| `PlayerAvatar` | Headshot or team-color fallback circle (xs/sm/md/lg) |
-| `DraftCountdownRing` | SVG arc timer with color shift |
-| `DraftCountdownRing` usage | Draft room header, renders when timer is active |
+| `PositionBadge` | Color-coded position label using Badge CVA variants |
+| `PlayerCell` | Compound table cell: avatar + name + position badge + NFL team |
+| `PlayerAvatar` | Headshot or team-color fallback circle (xs/sm/md/lg sizes) |
+| `AdpSparkline` | 56×20 SVG sparkline with delta label for ADP trend column |
+| `DraftCountdownRing` | SVG arc timer with emerald/amber/red color shift |
+| `MockPickCell` | forwardRef `<td>` for mock draft board grid cells |
+| `DraftBoardPreview` | team-row × round-column grid for Draft Impact (matches MockDraftBoardPreview) |
+| `DraftPickCell` | `<td>` for Final Draft Board grid cells |
 | `navGroups` | Section grouping constant for sidebar nav |
-| `ScenarioTeamCell` | Keeper list in scenario comparison (fixed position colors) |
+| `ScenarioTeamCell` | Keeper list in scenario comparison (uses PositionBadge) |

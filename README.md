@@ -740,6 +740,15 @@ reflect a specific strategy.
 Use `Draft Impact` after recommendations or scenario selections are set. It projects the draft board
 after selected keeper picks are forfeited, counts forfeited picks, and shows open top-100 picks.
 
+The grid uses a Sleeper-style layout matching Mock Draft and Final Draft Board:
+
+- **Rows are teams**, ordered by round-1 draft position. Your assigned team's row is highlighted in emerald.
+- **Columns are rounds** (R1, R2 …).
+- **Rose cells** are forfeited picks showing the kept player and position badge.
+- **White cells** with a pick number are open picks.
+
+A filterable data table below the grid lists every pick with status, team, keeper, and score.
+
 This view is downstream of keeper selections. If a keeper, manual override, optimizer setting, ADP
 snapshot, or scenario selection changes, rerun the optimizer or scenario comparison as appropriate
 before using this as a draft planning source.
@@ -793,11 +802,15 @@ Non-admin members see a read-only display; no save or finalize buttons are shown
 
 Use `Final Draft Board` to see the full snake draft pick grid after keepers are finalized.
 
-- Columns are fixed by draft slot (one column per team, ordered by slot number).
-- Rows are draft rounds.
-- **Red cells** are forfeited picks, showing the kept player's name and position badge.
-- **Gray pick numbers** are available picks.
-- A **Forfeited Picks Summary** table below the grid lists every forfeited pick with overall pick number, round, team, kept player, and position.
+A metric strip at the top shows forfeited pick count, open pick count, team count, and round count.
+
+The grid uses the same Sleeper-style layout as Mock Draft and Draft Impact:
+
+- **Rows are teams**, ordered by draft slot. Your assigned team's row is highlighted in emerald.
+- **Columns are rounds** (R1, R2 …).
+- **Rose cells** are forfeited picks, showing the kept player's name and position badge.
+- **White cells** with a dimmed pick number are available picks.
+- A **Forfeited Picks Summary** below the grid lists every forfeited pick — overall pick number, round, team, kept player, and position.
 
 The round count is derived from Roster Settings under Admin (`slots` total). If rounds look wrong, check the roster slot configuration. The board reflects whatever `cost_round` and `cost_pick` were recorded on each keeper selection in Final Keepers.
 

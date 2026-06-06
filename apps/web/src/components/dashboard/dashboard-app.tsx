@@ -9786,64 +9786,124 @@ function DraftBoardPreview({
   currentUser: AuthUser | null;
   picks: DraftImpactPick[];
 }) {
-  const rounds = React.useMemo(() => {
-    return Array.from(new Set(picks.map((pick) => pick.round))).sort((a, b) => a - b);
+  const { teams, rounds, grid } = React.useMemo(() => {
+    const roundSet = new Set(picks.map((p) => p.round));
+    const rounds = Array.from(roundSet).sort((a, b) => a - b);
+
+    // Order teams by their round-1 draft position
+    const teamsInOrder: string[] = [];
+    const seenTeams = new Set<string>();
+    const round1Picks = picks
+      .filter((p) => p.round === 1)
+      .sort((a, b) => a.overallPick - b.overallPick);
+    for (const pick of round1Picks) {
+      if (!seenTeams.has(pick.team)) {
+        seenTeams.add(pick.team);
+        teamsInOrder.push(pick.team);
+      }
+    }
+    for (const pick of picks) {
+      if (!seenTeams.has(pick.team)) {
+        seenTeams.add(pick.team);
+        teamsInOrder.push(pick.team);
+      }
+    }
+
+    // grid: team name → round → pick
+    const grid = new Map<string, Map<number, DraftImpactPick>>();
+    for (const pick of picks) {
+      if (!grid.has(pick.team)) grid.set(pick.team, new Map());
+      grid.get(pick.team)!.set(pick.round, pick);
+    }
+
+    return { teams: teamsInOrder, rounds, grid };
   }, [picks]);
-  const picksByRound = new Map<number, DraftImpactPick[]>();
-  for (const round of rounds) {
-    picksByRound.set(
-      round,
-      picks.filter((pick) => pick.round === round),
-    );
-  }
 
   return (
-    <div className="overflow-x-auto rounded-md border border-zinc-200 bg-white">
-      <div className="min-w-[920px] divide-y divide-zinc-100">
-        {rounds.map((round) => (
-          <div key={round} className="grid grid-cols-[72px_minmax(0,1fr)]">
-            <div className="flex items-center justify-center bg-zinc-50 px-3 py-3 text-sm font-semibold text-zinc-700">
-              R{round}
-            </div>
-            <div
-              className="grid gap-2 p-2"
-              style={{
-                gridTemplateColumns: `repeat(${Math.max(picksByRound.get(round)?.length ?? 1, 1)}, minmax(88px, 1fr))`,
-              }}
-            >
-              {(picksByRound.get(round) ?? []).map((pick) => (
-                <div
+    <div className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 bg-white">
+      <table className="border-collapse text-xs">
+        <thead className="sticky top-0 z-20">
+          <tr className="border-b border-zinc-200 bg-zinc-50">
+            <th className="sticky left-0 z-30 min-w-[112px] border-r border-zinc-200 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600">
+              Team
+            </th>
+            {rounds.map((round) => (
+              <th
+                key={round}
+                className="min-w-[116px] border-r border-zinc-100 px-2 py-2 text-center last:border-r-0"
+              >
+                <span className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  R{round}
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-100">
+          {teams.map((team) => {
+            const isUserTeam = isCurrentUserTeam({ name: team, user: currentUser });
+            return (
+              <tr key={team} className={isUserTeam ? "bg-emerald-50/40" : "bg-white"}>
+                <td
                   className={cn(
-                    "min-h-20 rounded-md border p-2 text-xs",
-                    pick.status === "Forfeited"
-                      ? "border-rose-200 bg-rose-50 text-rose-950"
-                      : "border-zinc-200 bg-zinc-50 text-zinc-800",
-                    isCurrentUserTeam({ name: pick.team, user: currentUser }) &&
-                      "border-emerald-300 bg-emerald-50 text-emerald-950 ring-1 ring-emerald-200",
+                    "sticky left-0 z-10 min-w-[112px] border-r border-zinc-200 px-3 py-2 align-middle",
+                    isUserTeam ? "bg-emerald-50 text-emerald-900" : "bg-white text-zinc-800",
                   )}
-                  key={pick.overallPick}
-                  title={
-                    pick.status === "Forfeited"
-                      ? `${pick.team}: ${pick.keeperPlayer}`
-                      : `${pick.team}: open pick`
-                  }
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold">{pick.overallPick}</span>
-                    <span className="text-[10px] uppercase text-zinc-500">{pick.status}</span>
+                  <div className="flex items-center gap-1.5">
+                    {isUserTeam && (
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                    )}
+                    <span className="max-w-[92px] truncate text-[11px] font-medium">{team}</span>
                   </div>
-                  <p className="mt-1 truncate font-medium">{pick.team}</p>
-                  <p className="mt-1 truncate text-zinc-600">
-                    {pick.status === "Forfeited"
-                      ? `${pick.keeperPlayer} ${pick.keeperPosition ? `(${pick.keeperPosition})` : ""}`
-                      : "Open pick"}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
+                </td>
+                {rounds.map((round) => {
+                  const pick = grid.get(team)?.get(round);
+                  if (!pick) {
+                    return (
+                      <td key={round} className="min-w-[116px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-300 last:border-r-0">
+                        —
+                      </td>
+                    );
+                  }
+                  const isForfeited = pick.status === "Forfeited";
+                  return (
+                    <td
+                      key={round}
+                      className={cn(
+                        "min-w-[116px] border-r border-zinc-100 px-2 py-2 align-top last:border-r-0",
+                        isForfeited ? "bg-rose-50" : "bg-white",
+                      )}
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[10px] tabular-nums font-medium text-zinc-400">
+                            #{pick.overallPick}
+                          </span>
+                          {isForfeited && <Lock className="h-2.5 w-2.5 shrink-0 text-rose-400" aria-label="Keeper" />}
+                        </div>
+                        {isForfeited ? (
+                          <>
+                            <p
+                              className="truncate text-[11px] font-semibold leading-tight text-rose-800"
+                              title={pick.keeperPlayer}
+                            >
+                              {pick.keeperPlayer}
+                            </p>
+                            {pick.keeperPosition && <PositionBadge position={pick.keeperPosition} />}
+                          </>
+                        ) : (
+                          <p className="text-[10px] italic text-zinc-400">Open</p>
+                        )}
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -11495,7 +11555,7 @@ function StatusBadge({ status }: { status: string }) {
 // ── Draft Board Page ──────────────────────────────────────────────────────────
 
 function DraftBoardPage() {
-  const { activeLeagueId } = useDashboard();
+  const { activeLeagueId, currentUser } = useDashboard();
   const [board, setBoard] = React.useState<DraftBoardResult | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -11534,74 +11594,114 @@ function DraftBoardPage() {
     );
   }
 
-  // Build slot → team label map for column headers
-  const slotToTeam = new Map(board.teams.map((t) => [t.draftSlot ?? 0, t]));
+  const allPicks = board.rounds.flatMap((r) => r.picks);
+  const forfeitedPicks = allPicks.filter((p) => p.isForfeited);
+  const openPicks = allPicks.filter((p) => !p.isForfeited);
+
+  // Teams ordered by draft slot; rounds in order
+  const teamsInOrder = [...board.teams].sort((a, b) => (a.draftSlot ?? 0) - (b.draftSlot ?? 0));
+  const rounds = board.rounds.map((r) => r.round).sort((a, b) => a - b);
+
+  // grid: draftSlot → round → pick
+  const grid = new Map<number, Map<number, DraftBoardPick>>();
+  for (const round of board.rounds) {
+    for (const pick of round.picks) {
+      if (!grid.has(pick.draftSlot)) grid.set(pick.draftSlot, new Map());
+      grid.get(pick.draftSlot)!.set(round.round, pick);
+    }
+  }
 
   return (
     <PagePanel title="Final Draft Board" description="Full snake-draft pick grid with forfeited keeper picks highlighted.">
-      <div className="space-y-4">
-        {/* Legend */}
-        <div className="flex items-center gap-4 text-xs">
+      <div className="space-y-5">
+        <div className="grid gap-3 sm:grid-cols-4">
+          <MetricStrip label="Forfeited Picks" value={forfeitedPicks.length.toString()} />
+          <MetricStrip label="Open Picks" value={openPicks.length.toString()} />
+          <MetricStrip label="Teams" value={board.teamCount.toString()} />
+          <MetricStrip label="Rounds" value={board.roundCount.toString()} />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 text-xs text-zinc-500">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-3 w-3 rounded bg-red-200" />
+            <span className="inline-block h-3 w-3 rounded bg-rose-200" />
             Forfeited (keeper)
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-3 w-3 rounded bg-white border border-zinc-200" />
-            Available
+            <span className="inline-block h-3 w-3 rounded border border-zinc-200 bg-white" />
+            Open
           </span>
-          <span className="text-zinc-400">
-            {board.draftType === "snake" ? "Snake draft" : board.draftType} · {board.teamCount} teams · {board.roundCount} rounds
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded bg-emerald-100" />
+            Your team
           </span>
-          {board.isFinalized && (
-            <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-700 font-medium">
-              Keepers finalized
-            </span>
-          )}
+          <span className="ml-auto flex items-center gap-2">
+            <span>{board.draftType === "snake" ? "Snake draft" : board.draftType}</span>
+            {board.isFinalized && (
+              <span className="rounded bg-emerald-100 px-2 py-0.5 font-medium text-emerald-700">
+                Keepers finalized
+              </span>
+            )}
+          </span>
         </div>
 
-        {/* Scrollable grid */}
-        <div className="overflow-x-auto rounded-lg border border-zinc-200">
-          <table className="min-w-full text-xs">
-            <thead>
-              <tr className="bg-zinc-50 border-b border-zinc-200">
-                <th className="sticky left-0 z-10 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600 w-14">
-                  Rd
+        {/* Grid: rows = teams (by draft slot), columns = rounds */}
+        <div className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 bg-white">
+          <table className="border-collapse text-xs">
+            <thead className="sticky top-0 z-20">
+              <tr className="border-b border-zinc-200 bg-zinc-50">
+                <th className="sticky left-0 z-30 min-w-[128px] border-r border-zinc-200 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600">
+                  Team
                 </th>
-                {Array.from({ length: board.teamCount }, (_, i) => i + 1).map((slot) => {
-                  const team = slotToTeam.get(slot);
-                  return (
-                    <th key={slot} className="px-2 py-2 text-center font-medium text-zinc-600 min-w-[90px]">
-                      <div className="truncate max-w-[88px]" title={team?.teamName ?? `Slot ${slot}`}>
-                        {team?.teamName ?? `Slot ${slot}`}
-                      </div>
-                      {team?.ownerName && (
-                        <div className="font-normal text-zinc-400 truncate max-w-[88px]" title={team.ownerName}>
-                          {team.ownerName}
-                        </div>
-                      )}
-                    </th>
-                  );
-                })}
+                {rounds.map((round) => (
+                  <th
+                    key={round}
+                    className="min-w-[116px] border-r border-zinc-100 px-2 py-2 text-center last:border-r-0"
+                  >
+                    <span className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                      R{round}
+                    </span>
+                  </th>
+                ))}
               </tr>
             </thead>
-            <tbody>
-              {board.rounds.map((round) => {
-                // Map draft_slot → pick for this round
-                const slotToPick = new Map(round.picks.map((p) => [p.draftSlot, p]));
+            <tbody className="divide-y divide-zinc-100">
+              {teamsInOrder.map((team) => {
+                const isUserTeam = isCurrentUserTeam({
+                  name: team.teamName,
+                  teamId: team.teamId,
+                  user: currentUser,
+                });
+                const slot = team.draftSlot ?? 0;
                 return (
-                  <tr key={round.round} className="border-b border-zinc-100 hover:bg-zinc-50/50">
-                    <td className="sticky left-0 z-10 bg-white px-3 py-1.5 font-semibold text-zinc-500 text-center border-r border-zinc-100">
-                      {round.round}
+                  <tr key={team.teamId ?? team.teamName} className={isUserTeam ? "bg-emerald-50/40" : "bg-white"}>
+                    <td
+                      className={cn(
+                        "sticky left-0 z-10 min-w-[128px] border-r border-zinc-200 px-3 py-2 align-middle",
+                        isUserTeam ? "bg-emerald-50 text-emerald-900" : "bg-white text-zinc-800",
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        {isUserTeam && (
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                        )}
+                        <div className="min-w-0">
+                          <p className="max-w-[100px] truncate text-[11px] font-medium">{team.teamName}</p>
+                          {team.ownerName && (
+                            <p className="max-w-[100px] truncate text-[10px] text-zinc-400">{team.ownerName}</p>
+                          )}
+                        </div>
+                      </div>
                     </td>
-                    {Array.from({ length: board.teamCount }, (_, i) => i + 1).map((slot) => {
-                      const pick = slotToPick.get(slot);
+                    {rounds.map((round) => {
+                      const pick = grid.get(slot)?.get(round);
                       if (!pick) {
-                        return <td key={slot} className="px-2 py-1.5 text-center text-zinc-300">—</td>;
+                        return (
+                          <td key={round} className="min-w-[116px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-300 last:border-r-0">
+                            —
+                          </td>
+                        );
                       }
-                      return (
-                        <DraftPickCell key={slot} pick={pick} />
-                      );
+                      return <DraftPickCell key={round} pick={pick} />;
                     })}
                   </tr>
                 );
@@ -11611,41 +11711,27 @@ function DraftBoardPage() {
         </div>
 
         {/* Forfeited picks summary */}
-        {board.rounds.some((r) => r.picks.some((p) => p.isForfeited)) && (
+        {forfeitedPicks.length > 0 && (
           <div className="rounded-lg border border-zinc-200 bg-white p-4">
-            <h3 className="mb-2 text-sm font-semibold text-zinc-700">Forfeited Picks Summary</h3>
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-zinc-400 border-b border-zinc-100">
-                  <th className="py-1.5 text-left font-medium">Pick #</th>
-                  <th className="py-1.5 text-left font-medium">Round</th>
-                  <th className="py-1.5 text-left font-medium">Team</th>
-                  <th className="py-1.5 text-left font-medium">Kept Player</th>
-                  <th className="py-1.5 text-left font-medium">Pos</th>
-                </tr>
-              </thead>
-              <tbody>
-                {board.rounds
-                  .flatMap((r) => r.picks)
-                  .filter((p) => p.isForfeited)
-                  .sort((a, b) => a.overallPick - b.overallPick)
-                  .map((p) => (
-                    <tr key={p.overallPick} className="border-b border-zinc-50">
-                      <td className="py-1.5 font-medium text-zinc-800">#{p.overallPick}</td>
-                      <td className="py-1.5 text-zinc-600">Rd {p.round}</td>
-                      <td className="py-1.5 text-zinc-700">{p.teamName ?? "—"}</td>
-                      <td className="py-1.5 text-zinc-700">{p.forfeitedPlayerName ?? "—"}</td>
-                      <td className="py-1.5">
-                        {p.forfeitedPlayerPosition && (
-                          <span className={cn("rounded px-1 py-0.5 font-medium", POSITION_COLORS[p.forfeitedPlayerPosition] ?? "bg-zinc-100 text-zinc-700")}>
-                            {p.forfeitedPlayerPosition}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
+            <h3 className="mb-3 text-sm font-semibold text-zinc-700">Forfeited Picks Summary</h3>
+            <div className="space-y-1.5">
+              {forfeitedPicks
+                .sort((a, b) => a.overallPick - b.overallPick)
+                .map((p) => (
+                  <div
+                    key={p.overallPick}
+                    className="flex items-center gap-3 rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-xs"
+                  >
+                    <span className="font-semibold text-rose-700">#{p.overallPick}</span>
+                    <span className="text-zinc-500">Rd {p.round}</span>
+                    <span className="font-medium text-zinc-800">{p.teamName ?? "—"}</span>
+                    <span className="flex-1 text-zinc-700">{p.forfeitedPlayerName ?? "—"}</span>
+                    {p.forfeitedPlayerPosition && (
+                      <PositionBadge position={p.forfeitedPlayerPosition} />
+                    )}
+                  </div>
+                ))}
+            </div>
           </div>
         )}
       </div>
@@ -11656,7 +11742,7 @@ function DraftBoardPage() {
 function DraftPickCell({ pick }: { pick: DraftBoardPick }) {
   if (pick.isForfeited) {
     return (
-      <td className="px-2 py-2 align-top bg-rose-50">
+      <td className="min-w-[116px] border-r border-zinc-100 px-2 py-2 align-top bg-rose-50 last:border-r-0">
         <div className="space-y-0.5">
           <div className="flex items-center justify-between gap-1">
             <span className="text-[10px] tabular-nums font-medium text-rose-400">
@@ -11678,7 +11764,7 @@ function DraftPickCell({ pick }: { pick: DraftBoardPick }) {
     );
   }
   return (
-    <td className="px-2 py-2 text-center text-zinc-400 tabular-nums text-[10px]">
+    <td className="min-w-[116px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-400 tabular-nums text-[10px] last:border-r-0">
       #{pick.overallPick}
     </td>
   );
