@@ -703,9 +703,10 @@ manual override controls.
 
 A collapsible **Value vs. Cost** scatter chart sits above the table. The X-axis is the keeper cost
 (round forfeited); the Y-axis is the value (rounds saved vs. ADP). Player headshots fill each dot
-with a position-color border. The green-shaded region above the dashed zero line is the "keep zone"
-— positive value regardless of cost. Use the team selector panel on the right to focus on specific
-teams. Collapse the chart with the chevron in the card header when you want more table space.
+with a position-color border. The green-shaded region above the dashed zero line marks positive
+keeper value — any player in that zone is worth keeping. Top-left is the best position: low cost
+and high value. Use the team selector panel on the right to focus on specific teams. Collapse the
+chart with the chevron in the card header when you want more table space.
 
 A **What Changed** banner appears at the top of the page after an optimizer re-run whenever the
 Recommended set shifts — it lists exactly which players entered and which were dropped, and

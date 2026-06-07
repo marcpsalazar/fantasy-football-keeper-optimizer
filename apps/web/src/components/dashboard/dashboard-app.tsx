@@ -5819,7 +5819,7 @@ function KeeperRecommendationsPage() {
               <CardTitle>Value vs. Cost</CardTitle>
               {!chartCollapsed && (
                 <CardDescription>
-                  X = keeper cost (round forfeited), Y = value (rounds saved vs. ADP). Top-left is the sweet zone — cheap and high-value. Filled = Recommended, ring = Eligible.
+                  X = keeper cost (round forfeited), Y = value (rounds saved vs. ADP). Above the dashed line = positive keeper value (worth keeping). Top-left is best: cheap cost and high value. Filled = Recommended, ring = Eligible.
                 </CardDescription>
               )}
             </div>
