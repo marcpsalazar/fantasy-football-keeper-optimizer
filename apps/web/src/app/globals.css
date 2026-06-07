@@ -66,3 +66,12 @@ textarea {
 
 /* Hover text */
 .dark .hover\:text-zinc-950:hover { color: var(--color-zinc-50); }
+
+/* Draft board pick-in animation */
+@keyframes pick-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-pick-in {
+  animation: pick-in 0.3s ease-out forwards;
+}

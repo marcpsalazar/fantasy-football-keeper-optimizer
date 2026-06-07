@@ -606,8 +606,11 @@ Use `Import Composite ADP` to build and import the configured composite ADP dire
 active snapshot. Use `Build Composite ADP CSV` to download the generated composite CSV for review
 or offline editing. You can also paste ADP CSV manually, click `Preview`, and then `Import`.
 
-`ADP Preview` shows the active parsed ADP rows used by optimizer runs. Check this table when a
-player has an unexpected score, missing value, or strange keeper cost.
+`ADP Preview` shows the active parsed ADP rows used by optimizer runs. Use the position filter
+chips (ALL / QB / RB / WR / TE / K / DST) above the table to narrow the board by position. The
+4-week trend column shows a sparkline; players whose ADP has moved ≥ 10 picks show a colored
+**▲ Hot** or **▼ Cold** badge instead of the raw delta. Check this table when a player has an
+unexpected score, missing value, or strange keeper cost.
 
 ### Optimizer Settings
 
@@ -697,6 +700,16 @@ Use `Run Optimizer`, not `Refresh`, when input changes should produce new keeper
 Use `Keeper Recommendations` as the primary decision screen. It shows each candidate's team, player,
 position, keeper cost, ADP, keeper value, score, eligibility or recommendation state, reason, and
 manual override controls.
+
+A collapsible **Value vs. Cost** scatter chart sits above the table. The X-axis is the keeper cost
+(round forfeited); the Y-axis is the value (rounds saved vs. ADP). Player headshots fill each dot
+with a position-color border. The green-shaded region above the dashed zero line is the "keep zone"
+— positive value regardless of cost. Use the team selector panel on the right to focus on specific
+teams. Collapse the chart with the chevron in the card header when you want more table space.
+
+A **What Changed** banner appears at the top of the page after an optimizer re-run whenever the
+Recommended set shifts — it lists exactly which players entered and which were dropped, and
+auto-dismisses after 25 seconds.
 
 Recommendation states:
 
@@ -864,8 +877,10 @@ the current ADP snapshot.
 **During the draft:**
 
 - Keeper forfeits are pre-placed on the draft board. They do not count as picks and cannot be changed.
-- When it is your pick, use `Available Players` to browse by position or scroll by ADP. Click a player row to open the player detail dialog, which shows the player's headshot, stats, and ADP edge. If `PLAYER_SUMMARY_AI_ENABLED=true`, an AI scouting note is also shown.
-- Click `Draft` to select a player.
+- When it is your pick, a **Best Available** card appears above the player list highlighting the top available player by ADP value, with a direct Draft button. The card disappears once you pick or the turn moves to a bot.
+- Use the position **chip filters** below the search box to narrow the available player list by position. Each chip shows how many of that position you have already drafted. Chips for positions at the roster cap are tinted rose.
+- Click a player row to open the player detail dialog, which shows the player's headshot, stats, and ADP edge. If `PLAYER_SUMMARY_AI_ENABLED=true`, an AI scouting note is also shown.
+- Click `Draft` to select a player. A short confetti burst confirms the pick.
 - If a position's draft limit is reached, the `Draft` button for players of that position is grayed out and the corresponding roster tile turns red.
 - Bots pick automatically. AI bot picks are used when `MOCK_DRAFT_AI_ENABLED=true`; otherwise bots fall back to deterministic scoring. Set `MOCK_DRAFT_AI_MAX_AI_ROUND` to limit AI picks to early rounds (0 = unlimited).
 - `Pause` and `Resume` are available if you need to step away.

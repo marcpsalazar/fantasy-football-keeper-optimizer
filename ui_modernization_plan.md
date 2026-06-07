@@ -247,13 +247,107 @@ The `MockAvailablePlayer` type has `imageUrl: string | null` but `PlayerCell` in
 
 ## What to Build Next
 
-These were not in the original plan but emerged as natural follow-ons during this work:
-
-- **Dark mode — inner view pages**: Recommendations, Trade Analyzer, Scenarios, Mock Draft, ADP, Admin pages still use light-only colors in dark mode. Tables, modals, and form sections within those views need dark variants.
 - **Mobile layout**: The sidebar nav collapses poorly on small screens. A bottom tab bar or slide-in drawer would make the app usable on mobile.
-- **Live draft pick animation**: When a bot makes a pick during mock draft, the pick cell could animate in (fade + slide) rather than snapping in on re-render.
-- **Position filter chips on ADP table**: Quick-filter buttons (All / QB / RB / WR / TE) above the ADP table to narrow the board by position.
-- **Draft board color density**: Consider using position colors (not just rose/white) as subtle cell backgrounds in the mock draft grid — each drafted pick's cell tinted by position — for faster visual scanning.
+
+---
+
+## Completed — Round 3 (June 2026)
+
+#### 17. ADP Hot/Cold Badges ✅
+`AdpSparkline` now shows a colored pill badge instead of the plain delta number when a player's ADP has moved ≥ 10 picks over the tracked period. `▲ Hot` in emerald when rising (ADP improved), `▼ Cold` in rose when declining. Smaller deltas still show the numeric label.
+
+**Files changed:** `apps/web/src/components/dashboard/dashboard-app.tsx` — `AdpSparkline` isTrending branch
+
+---
+
+#### 18. Keeper Optimizer "What Changed" Banner ✅
+`KeeperRecommendationsPage` now tracks recommendation changes across optimizer runs. When `data.keeperRecommendations` reference changes (i.e., after a re-run), it diffs the previous Recommended set against the new one and surfaces a dismissible sky-colored banner: "↑ New: [names]" and "↓ Dropped: [names]". Auto-dismisses after 25 seconds. Only fires when `prev.length > 0` (not on initial load).
+
+**Files changed:** `apps/web/src/components/dashboard/dashboard-app.tsx` — `KeeperRecommendationsPage` prev-ref + delta state + banner
+
+---
+
+#### 19. Smart Pick Suggestion Card ✅
+During mock draft on the user's turn, a featured "Best Available" card appears between the on-the-clock banner and the Available Players table. Shows the top available player by ADP-vs-current-pick value (highest `currentPick - adpPick`), with name, position badge, NFL team, ADP context, and a direct Draft button. Disappears when it's not the user's turn.
+
+**Files changed:** `apps/web/src/components/dashboard/dashboard-app.tsx` — `suggestedPick` memo; suggestion card JSX above Available Players section
+
+---
+
+#### 20. Draft Room Position Chip Filters with Roster Counts ✅
+Replaced the `<select>` dropdown in the mock draft Available Players section with pill-chip filters matching the ADP table style. Each chip shows the position label and how many of that position you've already drafted (e.g. `RB ·3`). Chips at the roster limit are tinted rose. Active chip uses a high-contrast inverse style.
+
+**Files changed:** `apps/web/src/components/dashboard/dashboard-app.tsx` — Available Players filter row
+
+---
+
+#### 21. Draft Pick Confetti ✅
+When the user successfully drafts a player via `draftPlayer`, a short emerald-tinted confetti burst fires (`canvas-confetti`, 60 particles, 0.9 scalar, 180 ticks). Added `canvas-confetti` + `@types/canvas-confetti` as dependencies.
+
+**Files changed:** `apps/web/package.json`; `apps/web/src/components/dashboard/dashboard-app.tsx` — import + confetti call in `draftPlayer`
+
+---
+
+#### 22. Keeper Value Scatter Plot ✅
+Pure SVG chart on the Keeper Recommendations page. X-axis = ADP pick, Y-axis = keeper value (surplus rounds). Each player is a dot colored by position (amber=QB, emerald=RB, sky=WR, violet=TE, zinc=K/DST). Recommended players are filled circles; Eligible are hollow rings; Excluded are faint small rings. A dashed zero-value guideline separates positive-value from negative-value keepers. Hover shows a tooltip with name, team, ADP, and value. Position legend below the chart. Chart is hidden when recommendations list is empty.
+
+**Component:** `KeeperScatterPlot` (with `SCATTER_POS_COLORS` constant)  
+**Files changed:** `apps/web/src/components/dashboard/dashboard-app.tsx` — `KeeperScatterPlot` component; wired into `KeeperRecommendationsPage` above the table
+
+---
+
+## Completed — Round 2 (June 2026)
+
+#### 13. Position Filter Chips on ADP Table ✅
+Quick-filter pill buttons (ALL / QB / RB / WR / TE / K / DST) above the ADP Preview DataTable. Active chip uses the position's canonical color (amber for QB, emerald for RB, sky for WR, violet for TE, zinc for K/DST). Filters `adpEntries` client-side via `filteredAdpEntries` memo; DataTable reset signal is preserved. Full dark mode support on chips.
+
+**Files changed:**
+- `apps/web/src/components/dashboard/dashboard-app.tsx` — `adpPositionFilter` state + `ADP_POSITIONS` constant + `filteredAdpEntries` memo + chip button row inside `ADPInputPage`
+
+---
+
+#### 14. Draft Board Color Density ✅
+Each drafted pick cell in the Mock Draft board is now tinted by the player's position rather than plain white. QB = amber-50, RB = emerald-50, WR = sky-50, TE = violet-50, K/DST = zinc-50.
+
+Added `POSITION_CELL_BG` record constant (adjacent to `POSITION_COLORS`). `MockPickCell` resolves `draftedBg` from `slot.pick?.position` and applies it. Keeper cells remain rose; open cells remain zinc; current-pick cell retains its amber outline.
+
+**Files changed:**
+- `apps/web/src/components/dashboard/dashboard-app.tsx` — `POSITION_CELL_BG` constant; `MockPickCell` background logic
+
+---
+
+#### 15. Live Draft Pick Animation ✅
+When a bot (or user) makes a pick in the mock draft, the new pick cell's content fades and slides in rather than snapping.
+
+**CSS:** `@keyframes pick-in` (opacity 0→1, translateY 3px→0, 0.3s ease-out) added to `globals.css` with `.animate-pick-in` utility class.
+
+**Tracking:** `MockDraftBoardPreview` holds `prevBoardRef` (previous board snapshot) and `newPickNums` state (Set of `overallPick` numbers). On each `session.board` change, it diffs against the previous snapshot to find newly-Drafted picks, then clears the set after 600 ms. The `isNew` flag is forwarded to `MockPickCell`, which applies `animate-pick-in` to the inner content `div`.
+
+**Files changed:**
+- `apps/web/src/app/globals.css` — `@keyframes pick-in` + `.animate-pick-in`
+- `apps/web/src/components/dashboard/dashboard-app.tsx` — `MockPickCell` `isNew` prop; `MockDraftBoardPreview` tracking effect + `isNew` passthrough
+
+---
+
+#### 16. Dark Mode — Inner View Pages ✅
+Applied explicit `dark:` variants to the view-specific components that weren't covered by the global CSS overrides (which only target zinc/white). Position-specific and semantic color panels now have proper dark equivalents.
+
+**Trade Analyzer:**
+- Team A panel (`bg-rose-50 border-rose-100`) → `dark:bg-rose-950/20 dark:border-rose-900/50`
+- Team B panel (`bg-emerald-50 border-emerald-100`) → `dark:bg-emerald-950/20 dark:border-emerald-900/50`
+- Player selection items (rose/emerald selected state + hover) → dark variants
+- Keeper cost `input`, team `select` → `dark:bg-zinc-800`
+- Draft pick pill badges (rose/emerald) → `dark:bg-rose-900/50` / `dark:bg-emerald-900/50`
+- AI narrative verdict panel (good/bad/neutral) → `dark:bg-emerald-950/20` / `dark:bg-rose-950/20`
+
+**TradeKeeperTable:** `bg-emerald-50` header → `dark:bg-emerald-950/30 dark:text-emerald-400`; incoming row `bg-emerald-50` → `dark:bg-emerald-950/30`
+
+**Scenario Comparison table:** Hardcoded shadow hex `#e4e4e7` → `dark:shadow-[inset_0_-1px_0_rgb(63,63,70)]` on both sticky header cells and sticky team column cells; user-team sticky cell `bg-emerald-50` → `dark:bg-emerald-950/30`; scenario select → `dark:bg-zinc-800`
+
+**Mock Draft workspace:** Modal container `bg-white` → `dark:bg-zinc-900`; Strategy Coach amber/sky/emerald panels → dark variants
+
+**Files changed:**
+- `apps/web/src/components/dashboard/dashboard-app.tsx` — targeted `dark:` class additions across Trade Analyzer, TradeKeeperTable, ScenarioComparisonPage, MockDraftStrategyPanel, mock draft modal
 
 ---
 
