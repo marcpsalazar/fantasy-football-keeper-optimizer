@@ -12352,17 +12352,19 @@ function scatterNiceStep(range: number): number {
 }
 
 function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
+  // All hooks must be called unconditionally — early returns come after.
   const { currentUser } = useDashboard();
   const [tooltip, setTooltip] = React.useState<{
     x: number; y: number; rec: KeeperRecommendation;
   } | null>(null);
 
-  const allVisible = recs.filter((r) => r.status !== "Excluded" && r.keeperCostRound > 0);
-  if (allVisible.length === 0) return null;
+  const allVisible = React.useMemo(
+    () => recs.filter((r) => r.status !== "Excluded" && r.keeperCostRound > 0),
+    [recs],
+  );
 
-  // Unique teams derived from visible recs, sorted alphabetically
   const allTeams = React.useMemo(() => {
-    const seen = new Map<string, string>(); // key → display name
+    const seen = new Map<string, string>();
     for (const rec of allVisible) {
       const key = rec.teamId ?? rec.team;
       if (!seen.has(key)) seen.set(key, rec.team);
@@ -12370,29 +12372,34 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
     return Array.from(seen.entries())
       .map(([key, name]) => ({ key, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recs]);
+  }, [allVisible]);
 
   const userTeamKey = currentUser?.teamId ?? currentUser?.teamName ?? null;
   const [selectedTeamKeys, setSelectedTeamKeys] = React.useState<Set<string>>(
     () => userTeamKey ? new Set([userTeamKey]) : new Set(allTeams.map((t) => t.key)),
   );
 
-  const toggleTeam = (key: string) =>
-    setSelectedTeamKeys((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
-
   const visible = React.useMemo(
     () =>
       selectedTeamKeys.size === 0
         ? allVisible
         : allVisible.filter((r) => selectedTeamKeys.has(r.teamId ?? r.team)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [recs, selectedTeamKeys],
+    [allVisible, selectedTeamKeys],
   );
+
+  // Early return only after all hooks have been called.
+  if (allVisible.length === 0) return null;
+
+  const toggleTeam = (key: string) =>
+    setSelectedTeamKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
 
   const W = 560;
   const H = 300;
