@@ -283,6 +283,7 @@ export function DataTable<TData>({
                     className={cn(
                       scrollBody &&
                         "sticky top-0 z-10 bg-zinc-50 shadow-[inset_0_-1px_0_#e4e4e7] dark:bg-zinc-800 dark:shadow-[inset_0_-1px_0_#3f3f46]",
+                      (header.column.columnDef.meta as { className?: string } | undefined)?.className,
                     )}
                     key={header.id}
                   >
@@ -308,9 +309,12 @@ export function DataTable<TData>({
               table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id}>
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
+                    <TableCell
+                    className={(cell.column.columnDef.meta as { className?: string } | undefined)?.className}
+                    key={cell.id}
+                  >
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </TableCell>
                   ))}
                 </TableRow>
               ))

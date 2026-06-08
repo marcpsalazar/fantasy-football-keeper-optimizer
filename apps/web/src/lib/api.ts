@@ -100,6 +100,7 @@ export type LeagueSummary = {
   draftType: string;
   draftFormat: string;
   keeperPickDeadline: string | null;
+  adpLockDate: string | null;
   regularSeasonStartDate: string | null;
   draftDate: string | null;
   keeperRevealDate: string | null;
@@ -130,6 +131,7 @@ export type LeagueMembership = {
 
 export type LeagueCalendarSettings = {
   keeperPickDeadline: string;
+  adpLockDate: string;
   regularSeasonStartDate: string;
 };
 
@@ -383,6 +385,7 @@ export const mockWorkspaceData: WorkspaceData = {
     draftType: "snake",
     draftFormat: "snake",
     keeperPickDeadline: null,
+    adpLockDate: null,
     regularSeasonStartDate: "2026-09-10",
     draftDate: null,
     keeperRevealDate: null,
@@ -1104,6 +1107,7 @@ export async function updateLeagueCalendarSettings(
   const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}`, {
     body: JSON.stringify({
       keeper_pick_deadline: settings.keeperPickDeadline || null,
+      adp_lock_date: settings.adpLockDate || null,
       regular_season_start_date: settings.regularSeasonStartDate || null,
     }),
     headers: { "content-type": "application/json" },
@@ -2673,6 +2677,7 @@ function mapLeague(row: ApiRow): LeagueSummary {
     draftType: text(row.draft_type, "snake"),
     draftFormat: text(row.draft_format, "snake"),
     keeperPickDeadline: text(row.keeper_pick_deadline) || null,
+    adpLockDate: text(row.adp_lock_date) || null,
     regularSeasonStartDate: text(row.regular_season_start_date) || null,
     draftDate: text(row.draft_date) || null,
     keeperRevealDate: text(row.keeper_reveal_date) || null,

@@ -40,6 +40,7 @@ class League(TimestampMixin, table=True):
     max_keepers_per_position: int = Field(default=2)
     max_qb_keepers: int = Field(default=1)
     keeper_pick_deadline: date | None = Field(default=None)
+    adp_lock_date: date | None = Field(default=None)
     regular_season_start_date: date | None = Field(default=None)
     draft_date: date | None = Field(default=None)
     keeper_reveal_date: date | None = Field(default=None)

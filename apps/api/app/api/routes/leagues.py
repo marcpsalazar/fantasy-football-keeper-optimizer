@@ -786,7 +786,14 @@ def refresh_adp(
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     assert_league_admin(session, user, league_id)
-    _require_league(session, league_id)
+    league = _require_league(session, league_id)
+    if league.adp_lock_date is not None:
+        from datetime import date as _date
+        if _date.today() >= league.adp_lock_date:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"ADP is locked as of {league.adp_lock_date.isoformat()}. No further refreshes are allowed.",
+            )
     try:
         result = refresh_adp_from_api(session, league_id, get_settings())
     except ADPRefreshError as exc:
@@ -809,6 +816,13 @@ def create_ai_adp_refresh_candidate(
 ) -> dict[str, Any]:
     assert_league_admin(session, user, league_id)
     league = _require_league(session, league_id)
+    if league.adp_lock_date is not None:
+        from datetime import date as _date
+        if _date.today() >= league.adp_lock_date:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"ADP is locked as of {league.adp_lock_date.isoformat()}. No further refreshes are allowed.",
+            )
     try:
         candidate = create_ai_adp_refresh_candidate_service(session, league, get_settings())
     except AIADPError as exc:

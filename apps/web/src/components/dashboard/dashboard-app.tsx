@@ -1926,20 +1926,54 @@ function CountdownClock({ league }: { league: WorkspaceData["league"] }) {
 
   const countdown = React.useMemo(() => buildCountdownState(now, league), [league, now]);
 
+  const adpLockDisplay = React.useMemo(() => {
+    if (!league?.adpLockDate) return null;
+    const lockDate = parseLocalDate(league.adpLockDate);
+    if (!lockDate) return null;
+    const today = localDateStart(now);
+    const isLocked = today.getTime() >= lockDate.getTime();
+    return { date: formatDisplayDate(lockDate), isLocked };
+  }, [league, now]);
+
   return (
-    <div
-      className={cn(
-        "shrink-0 border-l border-zinc-200 pl-3 text-zinc-950",
-        countdown.isDeadlineDay && "text-rose-700",
+    <div className="flex items-center gap-3">
+      <div
+        className={cn(
+          "shrink-0 border-l border-zinc-200 pl-3 text-zinc-950 dark:border-zinc-700 dark:text-zinc-50",
+          countdown.isDeadlineDay && "text-rose-700 dark:text-rose-400",
+        )}
+      >
+        <p className="text-[11px] font-semibold uppercase text-current">
+          {countdown.label}
+          {countdown.targetDate ? <span className="ml-2">{countdown.targetDate}</span> : null}
+        </p>
+        <p className="mt-0.5 font-mono text-xl font-semibold tabular-nums tracking-normal">
+          {countdown.value}
+        </p>
+      </div>
+      {adpLockDisplay && (
+        <div
+          className={cn(
+            "shrink-0 border-l border-zinc-200 pl-3 dark:border-zinc-700",
+            adpLockDisplay.isLocked
+              ? "text-amber-700 dark:text-amber-400"
+              : "text-zinc-500 dark:text-zinc-400",
+          )}
+          title={
+            adpLockDisplay.isLocked
+              ? `ADP is locked as of ${adpLockDisplay.date}. Player values are frozen so teams can evaluate keeper costs with certainty. No further ADP refreshes are allowed.`
+              : `ADP will freeze on ${adpLockDisplay.date}. After this date no further ADP refreshes are allowed, giving teams a stable view of player values before the keeper deadline.`
+          }
+        >
+          <p className="text-[11px] font-semibold uppercase">
+            ADP Lock
+            <span className="ml-2">{adpLockDisplay.date}</span>
+          </p>
+          <p className="mt-0.5 text-sm font-semibold">
+            {adpLockDisplay.isLocked ? "Locked" : "Active"}
+          </p>
+        </div>
       )}
-    >
-      <p className="text-[11px] font-semibold uppercase text-current">
-        {countdown.label}
-        {countdown.targetDate ? <span className="ml-2">{countdown.targetDate}</span> : null}
-      </p>
-      <p className="mt-0.5 font-mono text-xl font-semibold tabular-nums tracking-normal">
-        {countdown.value}
-      </p>
     </div>
   );
 }
@@ -2633,7 +2667,38 @@ function ProfilePage() {
 }
 
 function LeagueDashboard() {
-  const { activeLeagueId, currentUser, data, downloadCurrentAdpNow, isBusy, isLeagueAdmin } = useDashboard();
+  const { activeLeagueId, currentUser, data, downloadCurrentAdpNow, isBusy, isLeagueAdmin, tableDisplayResetSignal } = useDashboard();
+  const [adpPositionFilter, setAdpPositionFilter] = React.useState("ALL");
+  const ADP_POSITIONS = ["ALL", "QB", "RB", "WR", "TE", "K", "DST"] as const;
+  const filteredAdpEntries = React.useMemo(
+    () =>
+      adpPositionFilter === "ALL"
+        ? data.adpEntries
+        : data.adpEntries.filter((e) => e.position === adpPositionFilter),
+    [data.adpEntries, adpPositionFilter],
+  );
+  const adpColumns = React.useMemo<ColumnDef<ADPEntry>[]>(
+    () => [
+      {
+        accessorKey: "player",
+        header: "Player",
+        cell: ({ row }) => (
+          <PlayerCell name={row.original.player} position={row.original.position} />
+        ),
+      },
+      { accessorKey: "adpPick", header: "Pick", meta: { className: "w-14 px-2" } },
+      { accessorKey: "adpRound", header: "Round", meta: { className: "w-14 px-2" } },
+      {
+        id: "trend",
+        header: "Trend",
+        meta: { className: "w-24 px-2" },
+        cell: ({ row }) => (
+          <AdpSparkline history={row.original.adpHistory ?? []} />
+        ),
+      },
+    ],
+    [],
+  );
   const recommendedKeepers = data.keeperRecommendations.filter(
     (recommendation) => recommendation.status === "Recommended",
   );
@@ -2848,10 +2913,10 @@ function LeagueDashboard() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
+        <Card className="flex flex-col overflow-hidden">
+          <CardHeader className="shrink-0">
             <div className="flex items-center justify-between gap-3">
-              <CardTitle>Model Status</CardTitle>
+              <CardTitle>ADP Status</CardTitle>
               <Button
                 disabled={isBusy || !data.adpEntries.length || !data.league?.id}
                 onClick={downloadCurrentAdpNow}
@@ -2862,9 +2927,45 @@ function LeagueDashboard() {
                 Download ADP
               </Button>
             </div>
-            <CardDescription>Input freshness and the settings currently driving the answer.</CardDescription>
+            <CardDescription>Current ADP snapshot and market data driving the optimizer.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="flex-1 space-y-5 overflow-y-auto">
+            <div>
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {ADP_POSITIONS.map((pos) => {
+                  const isActive = adpPositionFilter === pos;
+                  const posColorMap: Record<string, string> = {
+                    QB: isActive ? "bg-amber-100 border-amber-300 text-amber-800 dark:bg-amber-900/40 dark:border-amber-700 dark:text-amber-300" : "border-zinc-200 text-zinc-600 hover:bg-amber-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-amber-950/30",
+                    RB: isActive ? "bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-900/40 dark:border-emerald-700 dark:text-emerald-300" : "border-zinc-200 text-zinc-600 hover:bg-emerald-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-emerald-950/30",
+                    WR: isActive ? "bg-sky-100 border-sky-300 text-sky-800 dark:bg-sky-900/40 dark:border-sky-700 dark:text-sky-300" : "border-zinc-200 text-zinc-600 hover:bg-sky-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-sky-950/30",
+                    TE: isActive ? "bg-violet-100 border-violet-300 text-violet-800 dark:bg-violet-900/40 dark:border-violet-700 dark:text-violet-300" : "border-zinc-200 text-zinc-600 hover:bg-violet-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-violet-950/30",
+                    K:  isActive ? "bg-zinc-200 border-zinc-400 text-zinc-800 dark:bg-zinc-700 dark:border-zinc-500 dark:text-zinc-200" : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-700",
+                    DST: isActive ? "bg-zinc-200 border-zinc-400 text-zinc-800 dark:bg-zinc-700 dark:border-zinc-500 dark:text-zinc-200" : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-700",
+                    ALL: isActive ? "bg-zinc-900 border-zinc-900 text-white dark:bg-zinc-100 dark:border-zinc-100 dark:text-zinc-900" : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800",
+                  };
+                  return (
+                    <button
+                      key={pos}
+                      onClick={() => setAdpPositionFilter(pos)}
+                      className={cn(
+                        "rounded-full border px-3 py-0.5 text-xs font-semibold transition-colors",
+                        posColorMap[pos],
+                      )}
+                    >
+                      {pos}
+                    </button>
+                  );
+                })}
+              </div>
+              <DataTable
+                columns={adpColumns}
+                data={filteredAdpEntries}
+                resetSignal={tableDisplayResetSignal}
+                scrollBody
+                scrollBodyClassName="max-h-[360px]"
+                tableId="adp-preview-dashboard"
+              />
+            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <MetricStrip label="ADP Source" value={data.activeSnapshot?.source ?? "Not loaded"} />
               <MetricStrip label="Snapshot Date" value={data.activeSnapshot?.snapshotDate ?? "Not loaded"} />
@@ -5450,41 +5551,8 @@ function ADPInputPage({
     previewCsvText,
     tableDisplayResetSignal,
   } = useDashboard();
-  const [adpPositionFilter, setAdpPositionFilter] = React.useState("ALL");
-  const ADP_POSITIONS = ["ALL", "QB", "RB", "WR", "TE", "K", "DST"] as const;
-  const filteredAdpEntries = React.useMemo(
-    () =>
-      adpPositionFilter === "ALL"
-        ? data.adpEntries
-        : data.adpEntries.filter((e) => e.position === adpPositionFilter),
-    [data.adpEntries, adpPositionFilter],
-  );
-
-  const columns = React.useMemo<ColumnDef<ADPEntry>[]>(
-    () => [
-      {
-        accessorKey: "player",
-        header: "Player",
-        cell: ({ row }) => (
-          <PlayerCell name={row.original.player} position={row.original.position} />
-        ),
-      },
-      { accessorKey: "adpPick", header: "ADP Pick" },
-      { accessorKey: "adpRound", header: "ADP Round" },
-      { accessorKey: "source", header: "Source" },
-      {
-        id: "trend",
-        header: "4-Wk Trend",
-        cell: ({ row }) => (
-          <AdpSparkline history={row.original.adpHistory ?? []} />
-        ),
-      },
-    ],
-    [],
-  );
-
   return (
-    <div className={cn("grid gap-5", isAdmin && "xl:grid-cols-[minmax(340px,0.7fr)_minmax(0,1.3fr)]")}>
+    <div className="grid gap-5">
       {isAdmin ? <Card>
         <CardHeader>
           <CardTitle>ADP</CardTitle>
@@ -5544,48 +5612,6 @@ function ADPInputPage({
         </CardContent>
       </Card> : null}
 
-      <Card className="h-full min-h-0">
-        <CardHeader>
-          <CardTitle>ADP Preview</CardTitle>
-          <CardDescription>Parsed player market data ready for optimizer runs.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-3 flex flex-wrap gap-1.5">
-            {ADP_POSITIONS.map((pos) => {
-              const isActive = adpPositionFilter === pos;
-              const posColorMap: Record<string, string> = {
-                QB: isActive ? "bg-amber-100 border-amber-300 text-amber-800 dark:bg-amber-900/40 dark:border-amber-700 dark:text-amber-300" : "border-zinc-200 text-zinc-600 hover:bg-amber-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-amber-950/30",
-                RB: isActive ? "bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-900/40 dark:border-emerald-700 dark:text-emerald-300" : "border-zinc-200 text-zinc-600 hover:bg-emerald-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-emerald-950/30",
-                WR: isActive ? "bg-sky-100 border-sky-300 text-sky-800 dark:bg-sky-900/40 dark:border-sky-700 dark:text-sky-300" : "border-zinc-200 text-zinc-600 hover:bg-sky-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-sky-950/30",
-                TE: isActive ? "bg-violet-100 border-violet-300 text-violet-800 dark:bg-violet-900/40 dark:border-violet-700 dark:text-violet-300" : "border-zinc-200 text-zinc-600 hover:bg-violet-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-violet-950/30",
-                K:  isActive ? "bg-zinc-200 border-zinc-400 text-zinc-800 dark:bg-zinc-700 dark:border-zinc-500 dark:text-zinc-200" : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-700",
-                DST: isActive ? "bg-zinc-200 border-zinc-400 text-zinc-800 dark:bg-zinc-700 dark:border-zinc-500 dark:text-zinc-200" : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-700",
-                ALL: isActive ? "bg-zinc-900 border-zinc-900 text-white dark:bg-zinc-100 dark:border-zinc-100 dark:text-zinc-900" : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800",
-              };
-              return (
-                <button
-                  key={pos}
-                  onClick={() => setAdpPositionFilter(pos)}
-                  className={cn(
-                    "rounded-full border px-3 py-0.5 text-xs font-semibold transition-colors",
-                    posColorMap[pos],
-                  )}
-                >
-                  {pos}
-                </button>
-              );
-            })}
-          </div>
-          <DataTable
-            columns={columns}
-            data={filteredAdpEntries}
-            resetSignal={tableDisplayResetSignal}
-            scrollBody
-            scrollBodyClassName="max-h-[420px]"
-            tableId="adp-preview"
-          />
-        </CardContent>
-      </Card>
     </div>
   );
 }
@@ -8325,357 +8351,363 @@ function MockDraftPage() {
           <div
             aria-label="Mock Draft Room"
             aria-modal="true"
-            className="fixed inset-0 z-50 bg-zinc-950/60 p-3 sm:p-5"
+            className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-zinc-900"
             role="dialog"
           >
-            <div className="flex h-full flex-col overflow-hidden rounded-md bg-white shadow-xl dark:bg-zinc-900">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
+            {/* ── Header ── */}
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-zinc-200 bg-white px-4 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="flex flex-wrap items-center gap-3">
                 <div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <h2 className="text-base font-semibold text-zinc-950">Mock Draft Room</h2>
-                    {activeSession.pickTimerSeconds && timeRemaining !== null ? (
-                      <DraftCountdownRing max={activeSession.pickTimerSeconds} value={timeRemaining} />
-                    ) : null}
-                  </div>
-                  <p className="text-sm text-zinc-500">
+                  <h2 className="text-base font-semibold text-zinc-950 dark:text-white">Mock Draft Room</h2>
+                  <p className="text-xs text-zinc-500">
                     {activeSession.currentPick
                       ? `Pick ${activeSession.currentPick}: ${currentSlot?.teamName ?? "Current team"}`
                       : "Draft complete"}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={activeSession.status === "in_progress" ? "success" : "default"}>
-                    {activeSession.status.replace("_", " ")}
-                  </Badge>
-                  <Button onClick={() => setIsDraftWorkspaceOpen(false)} size="sm" variant="ghost">
-                    <X className="mr-2 size-4" aria-hidden="true" />
-                    Close
-                  </Button>
+                {activeSession.pickTimerSeconds && timeRemaining !== null ? (
+                  <DraftCountdownRing max={activeSession.pickTimerSeconds} value={timeRemaining} />
+                ) : null}
+                <Badge variant={activeSession.status === "in_progress" ? "success" : "default"}>
+                  {activeSession.status.replace("_", " ")}
+                </Badge>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Button
+                  disabled={isBusy || isLoading || activeSession.status !== "setup"}
+                  onClick={startActiveSession}
+                  size="sm"
+                >
+                  <Play className="mr-1 size-3.5" aria-hidden="true" />
+                  Start
+                </Button>
+                <Button
+                  disabled={isBusy || isLoading || isAutoAdvancingBots || !isBotTurn}
+                  onClick={advanceBotPick}
+                  size="sm"
+                  variant="outline"
+                >
+                  <Bot className="mr-1 size-3.5" aria-hidden="true" />
+                  Bot
+                </Button>
+                <Button
+                  disabled={isBusy || isLoading || activeSession.status !== "in_progress"}
+                  onClick={pauseSession}
+                  size="sm"
+                  variant="outline"
+                >
+                  Pause
+                </Button>
+                <Button
+                  disabled={isBusy || isLoading || activeSession.status !== "paused"}
+                  onClick={resumeSession}
+                  size="sm"
+                  variant="outline"
+                >
+                  Resume
+                </Button>
+                <Button
+                  disabled={
+                    isBusy ||
+                    isLoading ||
+                    activeSession.status === "complete" ||
+                    activeSession.status === "abandoned"
+                  }
+                  onClick={endSession}
+                  size="sm"
+                  variant="outline"
+                >
+                  End
+                </Button>
+                <select
+                  className="h-8 rounded-md border border-zinc-300 bg-white px-2 text-xs dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                  value={draftSpeed}
+                  onChange={(event) => setDraftSpeed(event.target.value as MockDraftSpeed)}
+                >
+                  {mockDraftSpeeds.map((speed) => (
+                    <option key={speed} value={speed}>{speed}</option>
+                  ))}
+                </select>
+                <Button onClick={() => setIsDraftWorkspaceOpen(false)} size="sm" variant="ghost">
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+
+            {/* ── Status strip ── */}
+            {activeSession.status !== "setup" && (
+              <div className="shrink-0 border-b border-zinc-100 bg-zinc-50 px-4 py-1 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+                {activeSession.status === "paused"
+                  ? "Draft paused."
+                  : activeSession.status === "complete"
+                    ? (activeSession.analysis?.summary ?? "Draft complete.")
+                    : isUserTurn
+                    ? "Your team is on the clock."
+                    : isAutoAdvancingBots
+                      ? "Bot pick is being generated."
+                      : isBotTurn
+                        ? `${currentSlot?.teamName ?? "A bot team"} is on the clock — bot pick running automatically.`
+                        : "Draft is ready."}
+                {lastBotPick?.reasoningSummary ? (
+                  <span className="ml-2 text-zinc-400">{lastBotPick.reasoningSummary}</span>
+                ) : null}
+                {timerNotice ? (
+                  <span className="ml-2 font-medium text-amber-700">{timerNotice}</span>
+                ) : null}
+              </div>
+            )}
+
+            {/* ── Upper scrollable zone: Draft Board + Strategy below ── */}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="p-4">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">Draft Board</h2>
+                    <p className="text-xs text-zinc-500">Scroll down for strategy coach, targets, and round-by-round advice.</p>
+                  </div>
+                  <label className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                    <input
+                      checked={autoScrollBoard}
+                      className="size-3.5 accent-emerald-700"
+                      onChange={(event) => setAutoScrollBoard(event.target.checked)}
+                      type="checkbox"
+                    />
+                    Auto-scroll
+                  </label>
+                </div>
+                <MockDraftBoardPreview
+                  autoScroll={autoScrollBoard}
+                  className="h-[280px]"
+                  session={activeSession}
+                  currentUser={currentUser}
+                />
+              </div>
+
+              <div className="space-y-5 px-4 pb-4">
+                <MockDraftStrategyPanel
+                  disabled={isBusy || isLoading}
+                  onGenerate={generateStrategyPlan}
+                  onStart={startActiveSession}
+                  session={activeSession}
+                />
+                {activeSession.status === "complete" ? (
+                  <MockDraftRecap
+                    session={activeSession}
+                    currentUser={currentUser}
+                    onRerun={() => prepareRerun(activeSession)}
+                  />
+                ) : null}
+              </div>
+            </div>
+
+            {/* ── Fixed bottom panel: Player list + Roster ── */}
+            <div className="flex shrink-0 border-t border-zinc-200 dark:border-zinc-800" style={{ height: "340px" }}>
+
+              {/* Left: Available Players */}
+              <div className="flex min-w-0 flex-1 flex-col overflow-hidden border-r border-zinc-200 dark:border-zinc-800">
+
+                {/* On the clock banner */}
+                {isUserPickSlot && activeSession.status === "in_progress" && (
+                  <div className="flex shrink-0 items-center gap-2 bg-emerald-600 px-4 py-2">
+                    <span className="size-2 shrink-0 animate-pulse rounded-full bg-white" aria-hidden="true" />
+                    <span className="text-xs font-bold tracking-wide text-white">
+                      ON THE CLOCK — {currentSlot?.teamName ?? activeSession.userTeamName ?? "Your Team"}
+                    </span>
+                  </div>
+                )}
+
+                {/* Player panel header */}
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-zinc-950 dark:text-white">Available Players</span>
+                    <Badge variant={isUserPickSlot ? "success" : "default"}>
+                      {isUserPickSlot ? "Your pick" : "Locked"}
+                    </Badge>
+                  </div>
+                  <span className="text-xs text-zinc-500">Timer: {timerLabel}</span>
+                </div>
+
+                {/* Best Available suggestion */}
+                {suggestedPick && activeSession.status === "in_progress" && (
+                  <div className="flex shrink-0 items-center justify-between gap-3 border-b border-emerald-100 bg-emerald-50 px-3 py-1.5 dark:border-emerald-900/30 dark:bg-emerald-950/20">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <p className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Best</p>
+                      <p className="truncate text-sm font-bold text-emerald-950 dark:text-emerald-100">{suggestedPick.playerName}</p>
+                      <PositionBadge position={suggestedPick.position} />
+                      {suggestedPick.nflTeam && <span className="text-xs text-emerald-700 dark:text-emerald-400">{suggestedPick.nflTeam}</span>}
+                      {suggestedPick.adpPick !== null && (
+                        <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400">
+                          ADP {Math.round(suggestedPick.adpPick)}
+                          {activeSession.currentPick && suggestedPick.adpPick < activeSession.currentPick
+                            ? ` · +${Math.round(activeSession.currentPick - suggestedPick.adpPick)}`
+                            : ""}
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      disabled={isBusy || isLoading || !isUserPickSlot || positionsAtLimit.has(suggestedPick.position)}
+                      onClick={() => void draftPlayer(suggestedPick.playerId)}
+                      size="sm"
+                      className="shrink-0"
+                    >
+                      Draft
+                    </Button>
+                  </div>
+                )}
+
+                {/* Search + position filters */}
+                <div className="shrink-0 space-y-1 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+                  <Input
+                    className="h-7 text-xs"
+                    placeholder="Search players"
+                    value={playerSearch}
+                    onChange={(event) => setPlayerSearch(event.target.value)}
+                  />
+                  <div className="flex flex-wrap gap-1">
+                    {["ALL", ...positionOptions].map((pos) => {
+                      const isActive = positionFilter === pos;
+                      const drafted = pos === "ALL" ? 0 : (rosterCounts[pos] ?? 0);
+                      const atLimit = pos !== "ALL" && positionsAtLimit.has(pos);
+                      return (
+                        <button
+                          key={pos}
+                          onClick={() => setPositionFilter(pos)}
+                          className={cn(
+                            "rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors",
+                            isActive
+                              ? "border-zinc-700 bg-zinc-900 text-white dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900"
+                              : atLimit
+                                ? "border-rose-200 bg-rose-50 text-rose-500 dark:border-rose-900/50 dark:bg-rose-950/20 dark:text-rose-400"
+                                : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800",
+                          )}
+                        >
+                          {pos}{pos !== "ALL" && drafted > 0 ? ` ·${drafted}` : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Player table */}
+                <div className="min-h-0 flex-1 overflow-auto">
+                  <table className="w-full min-w-[480px] text-left text-xs">
+                    <thead className="sticky top-0 border-b border-zinc-200 bg-zinc-50 text-[10px] uppercase text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900">
+                      <tr>
+                        <th className="py-1.5 pl-2 pr-3">Player</th>
+                        <th className="py-1.5 pr-2">ADP</th>
+                        <th className="py-1.5 pr-2">Proj</th>
+                        <th className="py-1.5 pr-2">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                      {filteredPlayers.map((player) => {
+                        const value =
+                          activeSession.currentPick && player.adpPick !== null
+                            ? player.adpPick - activeSession.currentPick
+                            : null;
+                        return (
+                          <tr key={player.playerId}>
+                            <td className="py-1 pl-2 pr-3">
+                              <div className="flex items-center gap-1.5">
+                                <Button
+                                  disabled={isBusy || isLoading || !isUserPickSlot || positionsAtLimit.has(player.position)}
+                                  onClick={() => void draftPlayer(player.playerId)}
+                                  size="sm"
+                                  className="h-6 px-2 text-[10px]"
+                                  title={positionsAtLimit.has(player.position) ? `${player.position} draft limit reached` : undefined}
+                                >
+                                  Draft
+                                </Button>
+                                <PlayerCell
+                                  imageUrl={player.imageUrl}
+                                  name={player.playerName}
+                                  nflTeam={player.nflTeam}
+                                  position={player.position}
+                                  onClick={() => setSelectedPlayer(player)}
+                                />
+                              </div>
+                            </td>
+                            <td className="py-1 pr-2 text-zinc-600">
+                              {player.adpPick === null ? "-" : formatter.format(player.adpPick)}
+                            </td>
+                            <td className="py-1 pr-2 text-zinc-600">
+                              {player.projection === null ? "-" : formatter.format(player.projection)}
+                            </td>
+                            <td className="py-1 pr-2 text-zinc-600">
+                              {value === null ? "-" : formatter.format(value)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {!filteredPlayers.length ? (
+                        <tr>
+                          <td className="py-4 pl-3 text-zinc-500" colSpan={4}>
+                            No available players match the current filters.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-              <div className="min-h-0 flex-1 overflow-auto p-4">
-                <div className="space-y-5">
-                  <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.75fr)]">
-                    <div className="space-y-5">
-                    <MockDraftStrategyPanel
-                      disabled={isBusy || isLoading}
-                      onGenerate={generateStrategyPlan}
-                      onStart={startActiveSession}
-                      session={activeSession}
-                    />
 
-                    <section className="rounded-md border border-zinc-200 bg-white p-4">
-                      <div className="grid gap-3 sm:grid-cols-4">
-                        <MetricStrip label="Board Picks" value={activeSession.board.length.toString()} />
-                        <MetricStrip label="Drafted" value={activeSession.picks.length.toString()} />
-                        <MetricStrip label="Available" value={activeSession.availablePlayers.length.toString()} />
-                        <MetricStrip label="Timer" value={timerLabel} />
-                      </div>
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <Button
-                          disabled={isBusy || isLoading || activeSession.status !== "setup"}
-                          onClick={startActiveSession}
-                          variant="default"
-                        >
-                          <Play className="mr-2 size-4" aria-hidden="true" />
-                          Start Draft
-                        </Button>
-                        <Button
-                          disabled={isBusy || isLoading || isAutoAdvancingBots || !isBotTurn}
-                          onClick={advanceBotPick}
-                          variant="outline"
-                        >
-                          <Bot className="mr-2 size-4" aria-hidden="true" />
-                          Bot Pick
-                        </Button>
-                        <Button
-                          disabled={isBusy || isLoading || activeSession.status !== "in_progress"}
-                          onClick={pauseSession}
-                          variant="outline"
-                        >
-                          Pause
-                        </Button>
-                        <Button
-                          disabled={isBusy || isLoading || activeSession.status !== "paused"}
-                          onClick={resumeSession}
-                          variant="outline"
-                        >
-                          Resume
-                        </Button>
-                        <Button
-                          disabled={
-                            isBusy ||
-                            isLoading ||
-                            activeSession.status === "complete" ||
-                            activeSession.status === "abandoned"
-                          }
-                          onClick={endSession}
-                          variant="outline"
-                        >
-                          End
-                        </Button>
-                      </div>
-                      <div className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
-                        {activeSession.status === "paused"
-                          ? "Draft paused."
-                          : activeSession.status === "setup"
-                            ? "Review the strategy plan, then start the draft."
-                            : isUserTurn
-                            ? "Your team is on the clock."
-                            : isAutoAdvancingBots
-                              ? "Bot pick is being generated."
-                              : isBotTurn
-                                ? `${currentSlot?.teamName ?? "A bot team"} is on the clock; bot pick will run automatically.`
-                                : activeSession.status === "complete"
-                                  ? activeSession.analysis?.summary ?? "Draft complete."
-                                  : "Draft is ready."}
-                        {lastBotPick?.reasoningSummary ? (
-                          <p className="mt-2 text-xs text-zinc-500">{lastBotPick.reasoningSummary}</p>
-                        ) : null}
-                        {timerNotice ? (
-                          <p className="mt-2 text-xs font-medium text-amber-700">{timerNotice}</p>
-                        ) : null}
-                      </div>
-                    </section>
-
-                  </div>
-
-                  <div className="space-y-5">
-                    {isUserPickSlot && activeSession.status === "in_progress" && (
-                      <div className="flex items-center gap-3 rounded-md bg-emerald-600 px-4 py-3">
-                        <span className="size-2 shrink-0 animate-pulse rounded-full bg-white" aria-hidden="true" />
-                        <span className="text-sm font-bold tracking-wide text-white">
-                          ON THE CLOCK — {currentSlot?.teamName ?? activeSession.userTeamName ?? "Your Team"}
-                        </span>
-                      </div>
-                    )}
-
-                    {suggestedPick && activeSession.status === "in_progress" && (
-                      <div className="flex items-center justify-between gap-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900/50 dark:bg-emerald-950/20">
-                        <div className="flex min-w-0 items-center gap-3">
-                          <div className="shrink-0">
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Best Available</p>
-                            <p className="truncate text-base font-bold text-emerald-950 dark:text-emerald-100">{suggestedPick.playerName}</p>
-                            <div className="mt-0.5 flex items-center gap-1.5">
-                              <PositionBadge position={suggestedPick.position} />
-                              {suggestedPick.nflTeam && <span className="text-xs text-emerald-700 dark:text-emerald-400">{suggestedPick.nflTeam}</span>}
-                              {suggestedPick.adpPick !== null && (
-                                <span className="text-xs text-emerald-600 dark:text-emerald-400">
-                                  ADP {Math.round(suggestedPick.adpPick)}
-                                  {activeSession.currentPick && suggestedPick.adpPick < activeSession.currentPick
-                                    ? ` · ${Math.round(activeSession.currentPick - suggestedPick.adpPick)} picks of value`
-                                    : ""}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <Button
-                          disabled={isBusy || isLoading || !isUserPickSlot || positionsAtLimit.has(suggestedPick.position)}
-                          onClick={() => void draftPlayer(suggestedPick.playerId)}
-                          size="sm"
-                          className="shrink-0"
-                        >
-                          Draft
-                        </Button>
-                      </div>
-                    )}
-
-                    <section className="rounded-md border border-zinc-200 bg-white p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <h2 className="text-base font-semibold text-zinc-950">Available Players</h2>
-                          <p className="text-sm text-zinc-500">
-                            {isUserPickSlot ? "Select a player for your pick." : "Visible player pool from current ADP."}
-                          </p>
-                        </div>
-                        <Badge variant={isUserPickSlot ? "success" : "default"}>
-                          {isUserPickSlot ? "Your pick" : "Locked"}
-                        </Badge>
-                      </div>
-              <div className="mt-3 space-y-2">
-                <Input
-                  placeholder="Search players"
-                  value={playerSearch}
-                  onChange={(event) => setPlayerSearch(event.target.value)}
-                />
-                <div className="flex flex-wrap gap-1.5">
-                  {["ALL", ...positionOptions].map((pos) => {
-                    const isActive = positionFilter === pos;
-                    const drafted = pos === "ALL" ? 0 : (rosterCounts[pos] ?? 0);
-                    const atLimit = pos !== "ALL" && positionsAtLimit.has(pos);
+              {/* Right: Your Roster */}
+              <div className="flex w-64 shrink-0 flex-col overflow-hidden">
+                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+                  <span className="truncate text-sm font-semibold text-zinc-950 dark:text-white">{activeSession.userTeamName}</span>
+                  <span className="shrink-0 text-[10px] text-zinc-500">
+                    {Object.entries(rosterCounts)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([pos, count]) => `${pos}:${count}`)
+                      .join(" ") || "—"}
+                  </span>
+                </div>
+                <div className="shrink-0 grid grid-cols-3 gap-1 px-3 py-2">
+                  {activeSession.rosterNeeds.map((need) => {
+                    const isCapHit = need.remaining > 0 && positionsAtLimit.has(need.slot);
                     return (
-                      <button
-                        key={pos}
-                        onClick={() => setPositionFilter(pos)}
+                      <div
                         className={cn(
-                          "rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors",
-                          isActive
-                            ? "border-zinc-700 bg-zinc-900 text-white dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900"
-                            : atLimit
-                              ? "border-rose-200 bg-rose-50 text-rose-500 dark:border-rose-900/50 dark:bg-rose-950/20 dark:text-rose-400"
-                              : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800",
+                          "rounded border px-1.5 py-1",
+                          isCapHit
+                            ? "border-rose-200 bg-rose-50"
+                            : need.remaining > 0
+                            ? "border-amber-200 bg-amber-50"
+                            : "border-emerald-200 bg-emerald-50",
                         )}
+                        key={need.slot}
+                        title={isCapHit ? `${need.slot} draft limit reached` : undefined}
                       >
-                        {pos}{pos !== "ALL" && drafted > 0 ? ` ·${drafted}` : ""}
-                      </button>
+                        <p className="truncate text-[9px] font-semibold uppercase text-zinc-500">{need.slot}</p>
+                        <p className={cn("text-xs font-semibold", isCapHit ? "text-rose-700" : "text-zinc-950")}>
+                          {need.filled}/{need.target}
+                        </p>
+                      </div>
                     );
                   })}
                 </div>
-              </div>
-              <div className="mt-3 max-h-[390px] overflow-auto rounded-md border border-zinc-200">
-                <table className="w-full min-w-[560px] text-left text-xs">
-                  <thead className="sticky top-0 border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500">
-                    <tr>
-                      <th className="py-1.5 pl-2 pr-4">Player</th>
-                      <th className="py-1.5 pr-2">ADP</th>
-                      <th className="py-1.5 pr-2">Proj</th>
-                      <th className="py-1.5 pr-2">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100">
-                    {filteredPlayers.map((player, index) => {
-                      const value =
-                        activeSession.currentPick && player.adpPick !== null
-                          ? player.adpPick - activeSession.currentPick
-                          : null;
-                      return (
-                        <tr key={player.playerId}>
-                          <td className="py-1.5 pl-2 pr-4">
-                            <div className="flex items-center gap-2">
-                              <Button
-                                disabled={isBusy || isLoading || !isUserPickSlot || positionsAtLimit.has(player.position)}
-                                onClick={() => void draftPlayer(player.playerId)}
-                                size="sm"
-                                title={positionsAtLimit.has(player.position) ? `${player.position} draft limit reached` : undefined}
-                              >
-                                Draft
-                              </Button>
-                              <PlayerCell
-                                imageUrl={player.imageUrl}
-                                name={player.playerName}
-                                nflTeam={player.nflTeam}
-                                position={player.position}
-                                onClick={() => setSelectedPlayer(player)}
-                              />
-                            </div>
-                          </td>
-                          <td className="py-1.5 pr-2 text-zinc-600">
-                            {player.adpPick === null ? "-" : formatter.format(player.adpPick)}
-                          </td>
-                          <td className="py-1.5 pr-2 text-zinc-600">
-                            {player.projection === null ? "-" : formatter.format(player.projection)}
-                          </td>
-                          <td className="py-1.5 pr-2 text-zinc-600">
-                            {value === null ? "-" : formatter.format(value)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {!filteredPlayers.length ? (
-                      <tr>
-                        <td className="py-5 pl-3 text-zinc-500" colSpan={4}>
-                          No available players match the current filters.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-                    </section>
-
-                    <section className="rounded-md border border-zinc-200 bg-white p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <h2 className="text-base font-semibold text-zinc-950">{activeSession.userTeamName}</h2>
-                          <p className="text-sm text-zinc-500">Drafted roster</p>
-                        </div>
-                        <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
-                          {Object.entries(rosterCounts)
-                            .sort(([left], [right]) => left.localeCompare(right))
-                            .map(([position, count]) => `${position}: ${count}`)
-                            .join("  ") || "No drafted positions yet."}
-                        </div>
+                <div className="min-h-0 flex-1 space-y-1 overflow-auto px-3 py-1">
+                  {userRoster.map((pick) => (
+                    <div
+                      className="flex items-center justify-between gap-2 rounded border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs dark:border-zinc-800 dark:bg-zinc-900"
+                      key={pick.id}
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-zinc-950 dark:text-white">{pick.playerName}</p>
+                        <p className="text-zinc-500">Pick {pick.overallPick}</p>
                       </div>
-                      <div className="mt-3 grid grid-cols-3 gap-2">
-                        {activeSession.rosterNeeds.map((need) => {
-                          const isCapHit = need.remaining > 0 && positionsAtLimit.has(need.slot);
-                          return (
-                            <div
-                              className={cn(
-                                "rounded-md border px-2 py-1.5",
-                                isCapHit
-                                  ? "border-rose-200 bg-rose-50"
-                                  : need.remaining > 0
-                                  ? "border-amber-200 bg-amber-50"
-                                  : "border-emerald-200 bg-emerald-50",
-                              )}
-                              key={need.slot}
-                              title={isCapHit ? `${need.slot} draft limit reached` : undefined}
-                            >
-                              <p className="truncate text-[10px] font-semibold uppercase text-zinc-500">{need.slot}</p>
-                              <p className={cn("mt-0.5 text-sm font-semibold", isCapHit ? "text-rose-700" : "text-zinc-950")}>
-                                {need.filled}/{need.target}
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div className="mt-3 max-h-64 space-y-2 overflow-auto">
-                        {userRoster.map((pick) => (
-                          <div
-                            className="flex items-center justify-between gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs"
-                            key={pick.id}
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate font-medium text-zinc-950">{pick.playerName}</p>
-                              <p className="text-zinc-500">Pick {pick.overallPick}</p>
-                            </div>
-                            <PositionBadge position={pick.position} />
-                          </div>
-                        ))}
-                        {!userRoster.length ? (
-                          <div className="rounded-md border border-dashed border-zinc-300 p-4 text-sm text-zinc-500">
-                            No drafted players yet.
-                          </div>
-                        ) : null}
-                      </div>
-                    </section>
-                  </div>
-                </div>
-                  <section className="rounded-md border border-zinc-200 bg-white p-4">
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h2 className="text-base font-semibold text-zinc-950">Draft Board</h2>
-                        <p className="text-sm text-zinc-500">Current pick stays highlighted as the draft advances.</p>
-                      </div>
-                      <label className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">
-                        <input
-                          checked={autoScrollBoard}
-                          className="size-4 accent-emerald-700"
-                          onChange={(event) => setAutoScrollBoard(event.target.checked)}
-                          type="checkbox"
-                        />
-                        Auto-scroll
-                      </label>
+                      <PositionBadge position={pick.position} />
                     </div>
-                    <MockDraftBoardPreview
-                      autoScroll={autoScrollBoard}
-                      session={activeSession}
-                      currentUser={currentUser}
-                    />
-                  </section>
-
-                  {activeSession.status === "complete" ? (
-                    <MockDraftRecap
-                      session={activeSession}
-                      currentUser={currentUser}
-                      onRerun={() => prepareRerun(activeSession)}
-                    />
+                  ))}
+                  {!userRoster.length ? (
+                    <div className="rounded border border-dashed border-zinc-300 p-3 text-xs text-zinc-500 dark:border-zinc-700">
+                      No drafted players yet.
+                    </div>
                   ) : null}
                 </div>
               </div>
             </div>
+
             {selectedPlayer ? (
               <MockDraftPlayerDialog
                 currentPick={activeSession.currentPick}
@@ -8839,9 +8871,6 @@ function MockDraftStrategyPanel({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-zinc-950">Strategy Coach</h2>
-          <p className="text-sm text-zinc-500">
-            {plan?.aiUsed ? `AI plan from ${plan.model ?? "model"}` : "Cached draft plan"}
-          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {session.status === "setup" ? (
@@ -9027,10 +9056,12 @@ const MockPickCell = React.forwardRef<
 
 function MockDraftBoardPreview({
   autoScroll,
+  className,
   session,
   currentUser,
 }: {
   autoScroll: boolean;
+  className?: string;
   session: MockDraftSession;
   currentUser: AuthUser | null;
 }) {
@@ -9104,7 +9135,7 @@ function MockDraftBoardPreview({
   }, [autoScroll, session.currentPick]);
 
   return (
-    <div ref={boardScrollRef} className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 bg-white">
+    <div ref={boardScrollRef} className={cn("overflow-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950", className ?? "max-h-[560px]")}>
       <table className="border-collapse text-xs">
         <thead className="sticky top-0 z-20">
           <tr className="border-b border-zinc-200 bg-zinc-50">
@@ -12891,6 +12922,7 @@ function CommissionerDatesPanel({
   refreshData: (leagueId?: string) => Promise<void>;
 }) {
   const [keeperPickDeadline, setKeeperPickDeadline] = React.useState(league?.keeperPickDeadline ?? "");
+  const [adpLockDate, setAdpLockDate] = React.useState(league?.adpLockDate ?? "");
   const [regularSeasonStartDate, setRegularSeasonStartDate] = React.useState(
     league?.regularSeasonStartDate ?? defaultRegularSeasonStartDate(league?.seasonYear),
   );
@@ -12902,6 +12934,7 @@ function CommissionerDatesPanel({
 
   React.useEffect(() => {
     setKeeperPickDeadline(league?.keeperPickDeadline ?? "");
+    setAdpLockDate(league?.adpLockDate ?? "");
     setRegularSeasonStartDate(
       league?.regularSeasonStartDate ?? defaultRegularSeasonStartDate(league?.seasonYear),
     );
@@ -12909,11 +12942,22 @@ function CommissionerDatesPanel({
     setRevealDate(league?.keeperRevealDate ?? "");
   }, [
     league?.keeperPickDeadline,
+    league?.adpLockDate,
     league?.regularSeasonStartDate,
     league?.seasonYear,
     league?.draftDate,
     league?.keeperRevealDate,
   ]);
+
+  const handleKeeperDeadlineChange = (value: string) => {
+    setKeeperPickDeadline(value);
+    // Auto-fill ADP lock date to 7 days before keeper deadline when it hasn't been set
+    if (value && !adpLockDate) {
+      const deadline = new Date(value + "T00:00:00");
+      deadline.setDate(deadline.getDate() - 7);
+      setAdpLockDate(deadline.toISOString().slice(0, 10));
+    }
+  };
 
   const handleSave = async () => {
     if (!leagueId) return;
@@ -12921,7 +12965,7 @@ function CommissionerDatesPanel({
     setError("");
     setSaved(false);
     try {
-      await updateLeagueCalendarSettings(leagueId, { keeperPickDeadline, regularSeasonStartDate });
+      await updateLeagueCalendarSettings(leagueId, { keeperPickDeadline, adpLockDate, regularSeasonStartDate });
       await updateCommissionerSettings(leagueId, { draftDate, keeperRevealDate: revealDate });
       await refreshData(leagueId);
       setSaved(true);
@@ -12945,7 +12989,16 @@ function CommissionerDatesPanel({
             id="keeper-pick-deadline"
             type="date"
             value={keeperPickDeadline}
-            onChange={(e) => setKeeperPickDeadline(e.target.value)}
+            onChange={(e) => handleKeeperDeadlineChange(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="adp-lock-date">ADP Lock Date</Label>
+          <Input
+            id="adp-lock-date"
+            type="date"
+            value={adpLockDate}
+            onChange={(e) => setAdpLockDate(e.target.value)}
           />
         </div>
         <div className="space-y-1">

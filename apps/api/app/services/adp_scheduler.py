@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlmodel import Session, select
 
@@ -31,6 +31,8 @@ def refresh_due_adp_snapshots(settings: Settings) -> list[dict[str, object]]:
     with Session(engine) as session:
         leagues = session.exec(select(League).order_by(League.name)).all()
         for league in leagues:
+            if league.adp_lock_date is not None and date.today() >= league.adp_lock_date:
+                continue
             latest = session.exec(
                 select(ADPSnapshot)
                 .where(ADPSnapshot.league_id == league.id)

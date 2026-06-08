@@ -15,6 +15,7 @@ class LeagueBase(BaseModel):
     max_keepers_per_position: int = 2
     max_qb_keepers: int = 1
     keeper_pick_deadline: date | None = None
+    adp_lock_date: date | None = None
     regular_season_start_date: date | None = None
     draft_date: date | None = None
     keeper_reveal_date: date | None = None
@@ -36,6 +37,7 @@ class LeagueUpdate(BaseModel):
     max_keepers_per_position: int | None = None
     max_qb_keepers: int | None = None
     keeper_pick_deadline: date | None = None
+    adp_lock_date: date | None = None
     regular_season_start_date: date | None = None
     draft_date: date | None = None
     keeper_reveal_date: date | None = None
