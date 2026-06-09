@@ -7122,7 +7122,7 @@ function FinalKeepersPage() {
       }
       action={
         canEdit ? (
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <Button
               disabled={saving === "prefill"}
               onClick={handlePrefill}
@@ -8945,16 +8945,16 @@ function MockDraftPage() {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[840px] text-left text-sm">
+            <table className="w-full text-left text-sm sm:min-w-[840px]">
               <thead className="border-b border-zinc-200 text-xs uppercase text-zinc-500">
                 <tr>
                   <th className="py-2 pr-4">Compare</th>
                   <th className="py-2 pr-4">Completed</th>
                   <th className="py-2 pr-4">Team</th>
-                  <th className="py-2 pr-4">Rounds</th>
-                  <th className="py-2 pr-4">Timer</th>
+                  <th className="hidden py-2 pr-4 sm:table-cell">Rounds</th>
+                  <th className="hidden py-2 pr-4 sm:table-cell">Timer</th>
                   <th className="py-2 pr-4">Grade</th>
-                  <th className="py-2 pr-4">Summary</th>
+                  <th className="hidden py-2 pr-4 sm:table-cell">Summary</th>
                   <th className="py-2 pr-0 text-right">Actions</th>
                 </tr>
               </thead>
@@ -8972,8 +8972,8 @@ function MockDraftPage() {
                     </td>
                     <td className="py-3 pr-4 text-zinc-700">{formatMockDraftDate(row.completedAt)}</td>
                     <td className="py-3 pr-4 font-medium text-zinc-950">{row.userTeamName}</td>
-                    <td className="py-3 pr-4 text-zinc-700">{row.roundCount}</td>
-                    <td className="py-3 pr-4 text-zinc-700">
+                    <td className="hidden py-3 pr-4 text-zinc-700 sm:table-cell">{row.roundCount}</td>
+                    <td className="hidden py-3 pr-4 text-zinc-700 sm:table-cell">
                       {row.pickTimerSeconds ? `${row.pickTimerSeconds}s` : "No limit"}
                     </td>
                     <td className="py-3 pr-4">
@@ -8984,7 +8984,7 @@ function MockDraftPage() {
                         </Badge>
                       ) : null}
                     </td>
-                    <td className="max-w-[360px] truncate py-3 pr-4 text-zinc-600">{row.summary}</td>
+                    <td className="hidden max-w-[360px] truncate py-3 pr-4 text-zinc-600 sm:table-cell">{row.summary}</td>
                     <td className="py-3 pr-0">
                       <div className="flex justify-end gap-2">
                         <Button
@@ -10033,18 +10033,18 @@ function MockDraftComparison({ sessions }: { sessions: MockDraftSession[] }) {
         </Button>
       </div>
       <div className="mt-3 overflow-x-auto">
-        <table className="w-full min-w-[920px] text-left text-sm">
+        <table className="w-full text-left text-sm sm:min-w-[920px]">
           <thead className="border-b border-zinc-200 text-xs uppercase text-zinc-500">
             <tr>
               <th className="py-2 pr-4">Completed</th>
               <th className="py-2 pr-4">Grade</th>
               <th className="py-2 pr-4">Value</th>
-              <th className="py-2 pr-4">Roster</th>
-              <th className="py-2 pr-4">Balance</th>
-              <th className="py-2 pr-4">Finish</th>
-              <th className="py-2 pr-4">Timer</th>
-              <th className="py-2 pr-4">Bots</th>
-              <th className="py-2 pr-0">Overrides</th>
+              <th className="hidden py-2 pr-4 sm:table-cell">Roster</th>
+              <th className="hidden py-2 pr-4 sm:table-cell">Balance</th>
+              <th className="hidden py-2 pr-4 sm:table-cell">Finish</th>
+              <th className="hidden py-2 pr-4 sm:table-cell">Timer</th>
+              <th className="hidden py-2 pr-4 sm:table-cell">Bots</th>
+              <th className="hidden py-2 pr-0 sm:table-cell">Overrides</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-200">
@@ -10061,23 +10061,23 @@ function MockDraftComparison({ sessions }: { sessions: MockDraftSession[] }) {
                     </Badge>
                   </td>
                   <td className="py-3 pr-4 text-zinc-700">{String(components?.value_score ?? "-")}</td>
-                  <td className="py-3 pr-4 text-zinc-700">
+                  <td className="hidden py-3 pr-4 text-zinc-700 sm:table-cell">
                     {String(components?.roster_construction_score ?? "-")}
                   </td>
-                  <td className="py-3 pr-4 text-zinc-700">
+                  <td className="hidden py-3 pr-4 text-zinc-700 sm:table-cell">
                     {String(components?.positional_balance_score ?? "-")}
                   </td>
-                  <td className="py-3 pr-4 text-zinc-700">
+                  <td className="hidden py-3 pr-4 text-zinc-700 sm:table-cell">
                     {String(projected.projected_finish ?? "-")}
                   </td>
-                  <td className="py-3 pr-4 text-zinc-700">
+                  <td className="hidden py-3 pr-4 text-zinc-700 sm:table-cell">
                     {session.pickTimerSeconds ? `${session.pickTimerSeconds}s` : "No limit"}
                   </td>
-                  <td className="py-3 pr-4 text-zinc-700">
+                  <td className="hidden py-3 pr-4 text-zinc-700 sm:table-cell">
                     {String(session.botConfig.default_personality ?? "Balanced")} /{" "}
                     {String(session.botConfig.default_difficulty ?? "Medium")}
                   </td>
-                  <td className="py-3 pr-0 text-zinc-700">{countTeamBotOverrides(session.botConfig)}</td>
+                  <td className="hidden py-3 pr-0 text-zinc-700 sm:table-cell">{countTeamBotOverrides(session.botConfig)}</td>
                 </tr>
               );
             })}
