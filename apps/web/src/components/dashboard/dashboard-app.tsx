@@ -10867,7 +10867,9 @@ function KeeperRecommendationsTable({
       {
         accessorKey: "status",
         header: "Status",
-        cell: ({ getValue }) => <RecommendationBadge status={getValue<KeeperRecommendation["status"]>()} />,
+        cell: ({ row }) => (
+          <StatusOverrideCell recommendation={row.original} onOverride={onOverride} />
+        ),
       },
       {
         accessorKey: "manualOverride",
@@ -10931,6 +10933,99 @@ function KeeperRecommendationsTable({
         />
       )}
     </>
+  );
+}
+
+function StatusOverrideCell({
+  recommendation,
+  onOverride,
+}: {
+  recommendation: KeeperRecommendation;
+  onOverride?: (
+    teamId: string | undefined,
+    playerId: string | undefined,
+    overrideType: ManualOverrideType,
+  ) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+  const canOverride = !!onOverride && !!recommendation.teamId && !!recommendation.playerId;
+  const current = recommendation.manualOverride ?? "auto";
+
+  React.useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        className={cn(
+          "flex items-center gap-1 rounded transition-colors",
+          canOverride ? "hover:opacity-80 cursor-pointer" : "cursor-default",
+        )}
+        disabled={!canOverride}
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+      >
+        <RecommendationBadge status={recommendation.status} />
+        {canOverride && (
+          <ChevronRight
+            className={cn("size-3 shrink-0 text-zinc-400 transition-transform", open ? "rotate-90" : "rotate-0")}
+            aria-hidden="true"
+          />
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-20 mt-1 rounded-md border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+            Override
+          </p>
+          <div className="flex items-center gap-1">
+            <Button
+              aria-label="Auto — let optimizer decide"
+              className="h-8 w-8"
+              onClick={() => { onOverride?.(recommendation.teamId, recommendation.playerId, "auto"); setOpen(false); }}
+              size="icon"
+              title="Auto"
+              variant={current === "auto" ? "secondary" : "ghost"}
+            >
+              <RotateCcw className="size-3.5" aria-hidden="true" />
+            </Button>
+            <Button
+              aria-label="Force keep"
+              className="h-8 w-8"
+              onClick={() => { onOverride?.(recommendation.teamId, recommendation.playerId, "force_keep"); setOpen(false); }}
+              size="icon"
+              title="Force keep"
+              variant={current === "force_keep" ? "secondary" : "ghost"}
+            >
+              <CheckCircle2 className="size-3.5" aria-hidden="true" />
+            </Button>
+            <Button
+              aria-label="Exclude"
+              className="h-8 w-8"
+              onClick={() => { onOverride?.(recommendation.teamId, recommendation.playerId, "exclude"); setOpen(false); }}
+              size="icon"
+              title="Exclude"
+              variant={current === "exclude" ? "destructive" : "ghost"}
+            >
+              <Ban className="size-3.5" aria-hidden="true" />
+            </Button>
+          </div>
+          <div className="mt-1.5 flex gap-1 px-0.5 text-[9px] text-zinc-400">
+            <span className="w-8 text-center">Auto</span>
+            <span className="w-8 text-center">Keep</span>
+            <span className="w-8 text-center">Excl</span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
