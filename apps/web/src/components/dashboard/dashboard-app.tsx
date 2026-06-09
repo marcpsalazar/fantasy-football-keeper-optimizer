@@ -2714,16 +2714,17 @@ function LeagueDashboard() {
       {
         accessorKey: "player",
         header: "Player",
+        meta: { className: "overflow-hidden" },
         cell: ({ row }) => (
           <PlayerCell name={row.original.player} position={row.original.position} />
         ),
       },
-      { accessorKey: "adpPick", header: "Pick", meta: { className: "w-14 px-2" } },
-      { accessorKey: "adpRound", header: "Round", meta: { className: "w-14 px-2" } },
+      { accessorKey: "adpPick", header: "Pick", meta: { className: "w-12 px-2" } },
+      { accessorKey: "adpRound", header: "Round", meta: { className: "hidden sm:table-cell w-12 px-2" } },
       {
         id: "trend",
         header: "Trend",
-        meta: { className: "w-24 px-2" },
+        meta: { className: "w-20 px-2" },
         cell: ({ row }) => (
           <AdpSparkline history={row.original.adpHistory ?? []} />
         ),
@@ -2995,6 +2996,7 @@ function LeagueDashboard() {
                 resetSignal={tableDisplayResetSignal}
                 scrollBody
                 scrollBodyClassName="max-h-[360px]"
+                tableClassName="table-fixed"
                 tableId="adp-preview-dashboard"
               />
             </div>

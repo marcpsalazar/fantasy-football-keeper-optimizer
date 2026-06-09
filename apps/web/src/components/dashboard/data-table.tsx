@@ -31,6 +31,7 @@ type DataTableProps<TData> = {
   resetSignal?: number;
   scrollBody?: boolean;
   scrollBodyClassName?: string;
+  tableClassName?: string;
   tableId?: string;
   teamFilter?: {
     columnId: string;
@@ -57,6 +58,7 @@ export function DataTable<TData>({
   resetSignal = 0,
   scrollBody = false,
   scrollBodyClassName,
+  tableClassName,
   tableId,
   teamFilter,
 }: DataTableProps<TData>) {
@@ -274,7 +276,7 @@ export function DataTable<TData>({
           scrollBodyClassName,
         )}
       >
-        <Table>
+        <Table className={tableClassName}>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id} className="hover:bg-transparent dark:hover:bg-transparent">
