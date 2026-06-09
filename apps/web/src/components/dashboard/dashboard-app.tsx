@@ -7633,6 +7633,8 @@ function MockDraftPage() {
   const [draftSpeed, setDraftSpeed] = React.useState<MockDraftSpeed>("Medium");
   const [isDraftWorkspaceOpen, setIsDraftWorkspaceOpen] = React.useState(false);
   const [mobileDraftPanel, setMobileDraftPanel] = React.useState<"players" | "roster">("players");
+  const [panelHeight, setPanelHeight] = React.useState(340);
+  const panelDrag = React.useRef({ active: false, startY: 0, startH: 0 });
   const [isLoading, setIsLoading] = React.useState(false);
 
   // Lock body scroll while the draft workspace is open so iOS rubber-band
@@ -7652,6 +7654,36 @@ function MockDraftPage() {
       window.scrollTo(0, scrollY);
     };
   }, [isDraftWorkspaceOpen]);
+
+  // Global pointer/touch listeners for panel resize drag.
+  React.useEffect(() => {
+    const drag = panelDrag.current;
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      if (!drag.active) return;
+      if ("touches" in e) e.preventDefault();
+      const clientY = "touches" in e ? e.touches[0]!.clientY : (e as MouseEvent).clientY;
+      const delta = drag.startY - clientY;
+      const min = 160;
+      const max = Math.round(window.innerHeight * 0.75);
+      setPanelHeight(Math.max(min, Math.min(max, drag.startH + delta)));
+    };
+    const onEnd = () => { drag.active = false; };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("mouseup", onEnd);
+    window.addEventListener("touchend", onEnd);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("mouseup", onEnd);
+      window.removeEventListener("touchend", onEnd);
+    };
+  }, []);
+
+  const startPanelDrag = React.useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    const clientY = "touches" in e ? e.touches[0]!.clientY : e.clientY;
+    panelDrag.current = { active: true, startY: clientY, startH: panelHeight };
+  }, [panelHeight]);
   const [strategyGenerationMessage, setStrategyGenerationMessage] = React.useState("");
   const [errorMessage, setErrorMessage] = React.useState("");
 
@@ -8657,8 +8689,22 @@ function MockDraftPage() {
               </div>
             </div>
 
-            {/* ── Fixed bottom panel: Player list + Roster ── */}
-            <div className="flex shrink-0 flex-col border-t border-zinc-200 dark:border-zinc-800 sm:flex-row" style={{ height: "340px" }}>
+            {/* ── Resizable bottom panel: Player list + Roster ── */}
+            <div className="flex shrink-0 flex-col" style={{ height: panelHeight }}>
+
+              {/* Drag handle */}
+              <div
+                aria-label="Drag to resize player panel"
+                className="flex h-4 shrink-0 cursor-ns-resize touch-none select-none items-center justify-center border-t border-b border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950/60"
+                onMouseDown={startPanelDrag}
+                onTouchStart={startPanelDrag}
+                role="separator"
+              >
+                <span className="block h-1 w-10 rounded-full bg-zinc-300 dark:bg-zinc-600" />
+              </div>
+
+              {/* Content: tab strip + panels */}
+              <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
 
               {/* Mobile tab strip */}
               <div className="flex shrink-0 border-b border-zinc-100 dark:border-zinc-800 sm:hidden">
@@ -8914,6 +8960,7 @@ function MockDraftPage() {
                   ) : null}
                 </div>
               </div>
+              </div>{/* end content wrapper */}
             </div>
 
             {selectedPlayer ? (
