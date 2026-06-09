@@ -28,10 +28,10 @@ type DataTableProps<TData> = {
   columns: ColumnDef<TData>[];
   data: TData[];
   emptyLabel?: string;
+  fixedLayout?: boolean;
   resetSignal?: number;
   scrollBody?: boolean;
   scrollBodyClassName?: string;
-  tableClassName?: string;
   tableId?: string;
   teamFilter?: {
     columnId: string;
@@ -55,10 +55,10 @@ export function DataTable<TData>({
   columns,
   data,
   emptyLabel = "No rows",
+  fixedLayout = false,
   resetSignal = 0,
   scrollBody = false,
   scrollBodyClassName,
-  tableClassName,
   tableId,
   teamFilter,
 }: DataTableProps<TData>) {
@@ -276,7 +276,7 @@ export function DataTable<TData>({
           scrollBodyClassName,
         )}
       >
-        <Table className={tableClassName}>
+        <Table className={fixedLayout ? "table-fixed" : undefined}>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id} className="hover:bg-transparent dark:hover:bg-transparent">

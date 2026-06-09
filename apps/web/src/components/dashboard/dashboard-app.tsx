@@ -2996,7 +2996,7 @@ function LeagueDashboard() {
                 resetSignal={tableDisplayResetSignal}
                 scrollBody
                 scrollBodyClassName="max-h-[360px]"
-                tableClassName="table-fixed"
+                fixedLayout
                 tableId="adp-preview-dashboard"
               />
             </div>
