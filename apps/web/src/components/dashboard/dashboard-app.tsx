@@ -7634,6 +7634,24 @@ function MockDraftPage() {
   const [isDraftWorkspaceOpen, setIsDraftWorkspaceOpen] = React.useState(false);
   const [mobileDraftPanel, setMobileDraftPanel] = React.useState<"players" | "roster">("players");
   const [isLoading, setIsLoading] = React.useState(false);
+
+  // Lock body scroll while the draft workspace is open so iOS rubber-band
+  // scrolling can't reveal the app background behind the fixed modal.
+  React.useEffect(() => {
+    if (!isDraftWorkspaceOpen) return;
+    const scrollY = window.scrollY;
+    document.body.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
+    return () => {
+      document.body.style.overflow = "";
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
+      window.scrollTo(0, scrollY);
+    };
+  }, [isDraftWorkspaceOpen]);
   const [strategyGenerationMessage, setStrategyGenerationMessage] = React.useState("");
   const [errorMessage, setErrorMessage] = React.useState("");
 
@@ -8490,7 +8508,7 @@ function MockDraftPage() {
           <div
             aria-label="Mock Draft Room"
             aria-modal="true"
-            className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-zinc-900"
+            className="fixed inset-0 z-50 flex flex-col overscroll-none bg-white dark:bg-zinc-900"
             role="dialog"
           >
             {/* ── Header ── */}
