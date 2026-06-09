@@ -9505,23 +9505,53 @@ const NFL_TEAM_COLORS: Record<string, string> = {
   SF: "bg-red-800", TB: "bg-red-700", TEN: "bg-sky-700", WAS: "bg-red-800",
 };
 
+// Sleeper DST player names → NFL team abbreviation (used as logo URL fallback when nflTeam is null)
+const DST_NAME_TO_ABBR: Record<string, string> = {
+  Cardinals: "ARI", Falcons: "ATL", Ravens: "BAL", Bills: "BUF",
+  Panthers: "CAR", Bears: "CHI", Bengals: "CIN", Browns: "CLE",
+  Cowboys: "DAL", Broncos: "DEN", Lions: "DET", Packers: "GB",
+  Texans: "HOU", Colts: "IND", Jaguars: "JAX", Chiefs: "KC",
+  Chargers: "LAC", Rams: "LAR", Raiders: "LV", Dolphins: "MIA",
+  Vikings: "MIN", Patriots: "NE", Saints: "NO", Giants: "NYG",
+  Jets: "NYJ", Eagles: "PHI", Steelers: "PIT", Seahawks: "SEA",
+  "49ers": "SF", Buccaneers: "TB", Titans: "TEN", Commanders: "WAS",
+};
+
 function PlayerAvatar({
   imageUrl,
   playerName,
   nflTeam,
+  position,
   size = "md",
 }: {
   imageUrl: string | null | undefined;
   playerName: string;
   nflTeam: string | null | undefined;
+  position?: string | null;
   size?: "xs" | "sm" | "md" | "lg";
 }) {
   const [imgError, setImgError] = React.useState(false);
+  const [logoError, setLogoError] = React.useState(false);
   const sizeClasses = size === "xs" ? "size-8" : size === "sm" ? "size-10" : size === "lg" ? "size-20" : "size-14";
   const textSizeClass = size === "xs" ? "text-[10px]" : size === "sm" ? "text-xs" : size === "lg" ? "text-base" : "text-sm";
   const teamColor = (nflTeam && NFL_TEAM_COLORS[nflTeam]) ?? "bg-zinc-500";
 
-  if (imageUrl && !imgError) {
+  const isDst = position === "DST" || position === "DEF";
+  const resolvedTeam = nflTeam || (isDst ? (DST_NAME_TO_ABBR[playerName] ?? null) : null);
+
+  // DST players get a team logo — skip the individual-player thumb URL entirely
+  if (isDst && resolvedTeam && !logoError) {
+    return (
+      <img
+        alt={playerName}
+        className={cn(sizeClasses, "shrink-0 rounded-lg object-contain bg-white p-0.5")}
+        onError={() => setLogoError(true)}
+        src={`https://a.espncdn.com/i/teamlogos/nfl/500/${resolvedTeam.toLowerCase()}.png`}
+      />
+    );
+  }
+
+  if (!isDst && imageUrl && !imgError) {
     return (
       <img
         alt={playerName}
@@ -9619,6 +9649,7 @@ function MockDraftPlayerDialog({
               imageUrl={player.imageUrl}
               playerName={player.playerName}
               nflTeam={player.nflTeam}
+              position={player.position}
             />
             <div className="min-w-0">
               <h3 className="truncate text-lg font-semibold text-zinc-950">{player.playerName}</h3>
@@ -10726,6 +10757,7 @@ function KeeperExplanationModal({
               imageUrl={rec.imageUrl}
               playerName={rec.player}
               nflTeam={rec.nflTeam}
+              position={rec.position}
               size="sm"
             />
             <div className="min-w-0">
@@ -11849,10 +11881,11 @@ function PlayerCell({
   onClick?: () => void;
   position: string;
 }) {
+  const isDst = position === "DST" || position === "DEF";
   return (
     <div className="flex min-w-0 items-center gap-2.5">
-      {(imageUrl || nflTeam) && (
-        <PlayerAvatar imageUrl={imageUrl} nflTeam={nflTeam} playerName={name} size="xs" />
+      {(imageUrl || nflTeam || isDst) && (
+        <PlayerAvatar imageUrl={imageUrl} nflTeam={nflTeam} playerName={name} position={position} size="xs" />
       )}
       <div className="min-w-0 leading-tight">
         {onClick ? (
@@ -12677,6 +12710,12 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
               const cy = toY(rec.keeperValue);
               const posColor = SCATTER_POS_COLORS[rec.position] ?? "#a1a1aa";
               const name = shortName(rec.player);
+              const isDst = rec.position === "DST" || rec.position === "DEF";
+              const resolvedTeam = rec.nflTeam || (isDst ? (DST_NAME_TO_ABBR[rec.player] ?? null) : null);
+              const dotImageUrl =
+                isDst && resolvedTeam
+                  ? `https://a.espncdn.com/i/teamlogos/nfl/500/${resolvedTeam.toLowerCase()}.png`
+                  : rec.imageUrl;
               const handleEnter = (e: React.MouseEvent) => {
                 const svgEl = e.currentTarget.closest("svg") as SVGSVGElement;
                 const rect = svgEl.getBoundingClientRect();
@@ -12686,9 +12725,9 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
                 <g key={`r-${i}`} className="cursor-pointer" onMouseEnter={handleEnter}>
                   {/* White backing so image has a clean base */}
                   <circle cx={cx} cy={cy} r={DOT_R} fill="white" />
-                  {rec.imageUrl ? (
+                  {dotImageUrl ? (
                     <image
-                      href={rec.imageUrl}
+                      href={dotImageUrl}
                       x={cx - DOT_R} y={cy - DOT_R}
                       width={DOT_R * 2} height={DOT_R * 2}
                       clipPath={`url(#scat-clip-${i})`}
