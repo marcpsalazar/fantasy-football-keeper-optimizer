@@ -7656,18 +7656,20 @@ function MockDraftPage() {
   }, [isDraftWorkspaceOpen]);
 
   // Global pointer/touch listeners for panel resize drag.
+  // Access panelDrag.current directly inside handlers — never cache it in a
+  // local variable, because startPanelDrag mutates the same object in place
+  // and a cached reference would stay stale.
   React.useEffect(() => {
-    const drag = panelDrag.current;
     const onMove = (e: MouseEvent | TouchEvent) => {
-      if (!drag.active) return;
+      if (!panelDrag.current.active) return;
       if ("touches" in e) e.preventDefault();
       const clientY = "touches" in e ? e.touches[0]!.clientY : (e as MouseEvent).clientY;
-      const delta = drag.startY - clientY;
+      const delta = panelDrag.current.startY - clientY;
       const min = 160;
       const max = Math.round(window.innerHeight * 0.75);
-      setPanelHeight(Math.max(min, Math.min(max, drag.startH + delta)));
+      setPanelHeight(Math.max(min, Math.min(max, panelDrag.current.startH + delta)));
     };
-    const onEnd = () => { drag.active = false; };
+    const onEnd = () => { panelDrag.current.active = false; };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("touchmove", onMove, { passive: false });
     window.addEventListener("mouseup", onEnd);
@@ -7682,7 +7684,9 @@ function MockDraftPage() {
 
   const startPanelDrag = React.useCallback((e: React.MouseEvent | React.TouchEvent) => {
     const clientY = "touches" in e ? e.touches[0]!.clientY : e.clientY;
-    panelDrag.current = { active: true, startY: clientY, startH: panelHeight };
+    panelDrag.current.active = true;
+    panelDrag.current.startY = clientY;
+    panelDrag.current.startH = panelHeight;
   }, [panelHeight]);
   const [strategyGenerationMessage, setStrategyGenerationMessage] = React.useState("");
   const [errorMessage, setErrorMessage] = React.useState("");
