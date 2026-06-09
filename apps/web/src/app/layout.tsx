@@ -1,13 +1,27 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { SonnerToaster } from "@/components/sonner-toaster";
+import { PwaRegister } from "@/components/pwa-register";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Mayhem | Fantasy Football Tools",
-  description: "Fantasy football tools",
+  description: "Fantasy football keeper optimizer and mock draft tool",
   icons: {
     icon: "/icon.svg",
+    apple: "/pwa-icon/192",
   },
+  appleWebApp: {
+    capable: true,
+    title: "Mayhem",
+    statusBarStyle: "default",
+  },
+  manifest: "/manifest.webmanifest",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({
@@ -27,6 +41,7 @@ export default function RootLayout({
       <body>
         {children}
         <SonnerToaster />
+        <PwaRegister />
       </body>
     </html>
   );

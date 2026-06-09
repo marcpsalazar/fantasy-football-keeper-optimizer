@@ -198,7 +198,7 @@ export function DataTable<TData>({
                 <ChevronDown className="size-3.5" aria-hidden="true" />
               </Button>
               {isTeamFilterOpen ? (
-                <div className="absolute right-0 top-10 z-20 w-[320px] rounded-md border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                <div className="absolute right-0 top-10 z-20 w-[min(320px,calc(100vw-1rem))] rounded-md border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-semibold text-zinc-900">Filter teams</p>
                     <Button

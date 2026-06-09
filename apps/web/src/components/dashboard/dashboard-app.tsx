@@ -802,6 +802,7 @@ export function DashboardApp() {
   const [activeLeagueId, setActiveLeagueId] = React.useState<string | null>(null);
   const [userLeagues, setUserLeagues] = React.useState<LeagueWithRole[]>([]);
   const [createLeagueModalOpen, setCreateLeagueModalOpen] = React.useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = React.useState(false);
 
   const isPlatformAdmin = currentUser?.role === "platform_admin";
   const activeLeagueMembership = userLeagues.find((l) => l.id === activeLeagueId);
@@ -1608,19 +1609,37 @@ export function DashboardApp() {
     <DashboardContext.Provider value={contextValue}>
       <main className="min-h-screen bg-[#f6f5f1] text-zinc-950 dark:bg-[#0f0f12] dark:text-zinc-50">
       <div className="grid min-h-screen lg:grid-cols-[264px_minmax(0,1fr)]">
-        <aside className="border-b border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900 lg:border-b-0 lg:border-r">
+        {mobileSidebarOpen && (
+          <div
+            aria-hidden="true"
+            className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+            onClick={() => setMobileSidebarOpen(false)}
+          />
+        )}
+        <aside className={cn(
+          "fixed inset-y-0 left-0 z-50 w-72 border-r border-zinc-200 bg-white transition-transform dark:border-zinc-700 dark:bg-zinc-900 lg:static lg:z-auto lg:w-auto lg:transition-none",
+          mobileSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+        )}>
           <div className="flex h-full flex-col">
             <div className="flex items-center gap-3 border-b border-zinc-200 dark:border-zinc-700 px-5 py-4">
               <div className="flex size-9 items-center justify-center rounded-md bg-emerald-700 text-white">
                 <Trophy className="size-5" aria-hidden="true" />
               </div>
-              <div>
+              <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold leading-5">Mayhem</p>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">Fantasy Football Tools</p>
               </div>
+              <button
+                aria-label="Close navigation menu"
+                className="flex size-8 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 lg:hidden"
+                onClick={() => setMobileSidebarOpen(false)}
+                type="button"
+              >
+                <X className="size-4" aria-hidden="true" />
+              </button>
             </div>
 
-            <nav className="flex gap-1 overflow-x-auto p-2 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:overflow-x-visible">
+            <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
               {navGroups.map((group) => {
                 const groupItems = group.ids
                   .map((id) => visibleNavItems.find((item) => item.id === id))
@@ -1629,7 +1648,7 @@ export function DashboardApp() {
                 return (
                   <div key={group.label ?? "top"} className="lg:mb-1">
                     {group.label && (
-                      <p className="hidden px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 lg:block">
+                      <p className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
                         {group.label}
                       </p>
                     )}
@@ -1640,12 +1659,12 @@ export function DashboardApp() {
                         <button
                           key={item.id}
                           className={cn(
-                            "group flex h-9 w-full shrink-0 items-center gap-2.5 rounded-r-md border-l-2 pl-2.5 pr-3 text-left text-sm transition-colors lg:w-auto",
+                            "group flex min-h-[44px] w-full shrink-0 items-center gap-2.5 rounded-r-md border-l-2 pl-2.5 pr-3 text-left text-sm transition-colors lg:min-h-0 lg:h-9 lg:w-auto",
                             isActive
                               ? "border-emerald-600 bg-emerald-50 font-semibold text-emerald-900 dark:bg-emerald-900/20 dark:text-emerald-400"
                               : "border-transparent font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-50",
                           )}
-                          onClick={() => setActiveView(item.id)}
+                          onClick={() => { setActiveView(item.id); setMobileSidebarOpen(false); }}
                           title={item.label}
                           type="button"
                         >
@@ -1665,7 +1684,7 @@ export function DashboardApp() {
               })}
             </nav>
 
-            <div className="hidden border-t border-zinc-200 dark:border-zinc-700 p-4 lg:block">
+            <div className="border-t border-zinc-200 dark:border-zinc-700 p-4">
               <div className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
                 <p className="text-xs font-semibold uppercase text-amber-900 dark:text-amber-400">Active snapshot</p>
                 <p className="mt-1 text-sm text-amber-950 dark:text-amber-200">
@@ -1683,12 +1702,21 @@ export function DashboardApp() {
           <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95 md:px-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
-                <PanelLeft className="size-5 text-zinc-400 dark:text-zinc-500 lg:hidden" aria-hidden="true" />
+                <button
+                  aria-label="Open navigation menu"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 lg:hidden"
+                  onClick={() => setMobileSidebarOpen(true)}
+                  type="button"
+                >
+                  <PanelLeft className="size-5" aria-hidden="true" />
+                </button>
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">League workspace</p>
-                  <h1 className="truncate text-xl font-semibold text-zinc-950 dark:text-zinc-50">{activeLabel}</h1>
+                  <p className="hidden text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400 sm:block">League workspace</p>
+                  <h1 className="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50 sm:text-xl">{activeLabel}</h1>
                 </div>
-                <CountdownClock league={workspaceData.league} />
+                <div className="hidden sm:block">
+                  <CountdownClock league={workspaceData.league} />
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -1703,30 +1731,32 @@ export function DashboardApp() {
                 <ConnectionBadge status={apiStatus} />
                 <Button
                   aria-label="Refresh displayed workspace data from the backend without rerunning the optimizer"
-                  className="h-auto min-h-12 flex-col items-start gap-0 px-3 py-2 text-left"
+                  className="h-9 px-2 sm:h-auto sm:min-h-12 sm:flex-col sm:items-start sm:gap-0 sm:px-3 sm:py-2 sm:text-left"
                   disabled={isBusy}
                   onClick={resetDisplayAndRefresh}
                   title="Reload displayed workspace data and reset table filters/sorting. This does not rerun the optimizer."
                   variant="outline"
                 >
-                  <span className="flex items-center gap-2">
+                  <RefreshCw className="size-4 sm:hidden" aria-hidden="true" />
+                  <span className="hidden sm:flex items-center gap-2">
                     <RefreshCw className="size-4" aria-hidden="true" />
                     Refresh
                   </span>
-                  <span className="text-[11px] font-normal text-zinc-500">Reload display only</span>
+                  <span className="hidden text-[11px] font-normal text-zinc-500 sm:block">Reload display only</span>
                 </Button>
                 <Button
                   aria-label="Run the optimizer to recompute keeper recommendations from the current inputs and settings"
-                  className="h-auto min-h-12 flex-col items-start gap-0 px-3 py-2 text-left"
+                  className="h-9 px-2 sm:h-auto sm:min-h-12 sm:flex-col sm:items-start sm:gap-0 sm:px-3 sm:py-2 sm:text-left"
                   disabled={isBusy}
                   onClick={runOptimizerNow}
                   title="Recompute keeper recommendations from the current rosters, draft results, ADP, overrides, and optimizer settings."
                 >
-                  <span className="flex items-center gap-2">
+                  <Play className="size-4 sm:hidden" aria-hidden="true" />
+                  <span className="hidden sm:flex items-center gap-2">
                     <Play className="size-4" aria-hidden="true" />
                     Run Optimizer
                   </span>
-                  <span className="text-[11px] font-normal text-zinc-300 dark:text-emerald-200">Recompute recommendations</span>
+                  <span className="hidden text-[11px] font-normal text-zinc-300 dark:text-emerald-200 sm:block">Recompute recommendations</span>
                 </Button>
                 {currentUser ? (
                   <div className="relative" ref={userMenuRef}>
@@ -1745,7 +1775,7 @@ export function DashboardApp() {
                       />
                     </button>
                     {userMenuOpen ? (
-                      <div className="absolute right-0 top-14 z-30 w-80 rounded-md border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                      <div className="absolute right-0 top-14 z-30 w-[calc(100vw-2rem)] max-w-80 rounded-md border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
                         <div className="flex items-center gap-3 border-b border-zinc-100 px-2 pb-3 pt-1 dark:border-zinc-700">
                           <AvatarImage
                             avatarDataUrl={activeLeagueMembership?.avatarDataUrl ?? currentUser.avatarDataUrl}
@@ -3312,7 +3342,7 @@ function TeamsPage() {
         header: "Team",
         cell: ({ row }) => <TeamNameMark name={row.original.name} teamId={row.original.id} user={currentUser} />,
       },
-      { accessorKey: "owner", header: "Owner" },
+      { accessorKey: "owner", header: "Owner", meta: { className: "hidden sm:table-cell" } },
       { accessorKey: "draftSlot", header: "Draft Slot" },
       {
         accessorKey: "keepers",
@@ -3322,9 +3352,10 @@ function TeamsPage() {
       {
         accessorKey: "projectedScore",
         header: "Projected Keeper Score",
+        meta: { className: "hidden sm:table-cell" },
         cell: ({ getValue }) => formatter.format(getValue<number>()),
       },
-      { accessorKey: "remainingTop100Picks", header: "Top-100 Picks" },
+      { accessorKey: "remainingTop100Picks", header: "Top-100 Picks", meta: { className: "hidden sm:table-cell" } },
     ],
     [currentUser],
   );
@@ -3354,7 +3385,7 @@ function DraftResultsPage() {
         header: "Team",
         cell: ({ getValue }) => <TeamNameMark name={getValue<string>()} user={currentUser} />,
       },
-      { accessorKey: "round", header: "Round" },
+      { accessorKey: "round", header: "Round", meta: { className: "hidden sm:table-cell" } },
       { accessorKey: "overallPick", header: "Pick" },
       {
         accessorKey: "player",
@@ -3363,7 +3394,7 @@ function DraftResultsPage() {
           <PlayerCell name={row.original.player} position={row.original.position} />
         ),
       },
-      { accessorKey: "keeperCost", header: "Keeper Cost" },
+      { accessorKey: "keeperCost", header: "Keeper Cost", meta: { className: "hidden sm:table-cell" } },
     ],
     [currentUser],
   );
@@ -3390,7 +3421,7 @@ function FinalRostersPage() {
         header: "Team",
         cell: ({ getValue }) => <TeamNameMark name={getValue<string>()} user={currentUser} />,
       },
-      { accessorKey: "scenario", header: "Scenario" },
+      { accessorKey: "scenario", header: "Scenario", meta: { className: "hidden sm:table-cell" } },
       {
         accessorKey: "player",
         header: "Player",
@@ -3403,7 +3434,7 @@ function FinalRostersPage() {
         header: "Status",
         cell: ({ getValue }) => <StatusBadge status={getValue<string>()} />,
       },
-      { accessorKey: "acquiredVia", header: "Acquired Via" },
+      { accessorKey: "acquiredVia", header: "Acquired Via", meta: { className: "hidden sm:table-cell" } },
     ],
     [currentUser],
   );
@@ -6610,10 +6641,17 @@ function ScenarioComparisonPage() {
   );
   const [narrativeLoading, setNarrativeLoading] = React.useState(false);
   const [narrativeError, setNarrativeError] = React.useState(false);
+  const [mobileScenario, setMobileScenario] = React.useState<string>("");
 
   React.useEffect(() => {
     setLocalNarrative(data.scenarioNarrative);
   }, [data.scenarioNarrative]);
+
+  React.useEffect(() => {
+    if (!mobileScenario && data.scenarioComparisons.length > 0) {
+      setMobileScenario(data.scenarioComparisons[0]!.scenarioName);
+    }
+  }, [data.scenarioComparisons, mobileScenario]);
 
   const handleGenerateNarrative = React.useCallback(async () => {
     const leagueId = data.league?.id;
@@ -6676,17 +6714,34 @@ function ScenarioComparisonPage() {
           </Button>
         </CardHeader>
         <CardContent>
+          {/* Mobile scenario picker — hidden on sm+ where the full table is visible */}
+          {data.scenarioComparisons.length > 0 && (
+            <div className="mb-3 sm:hidden">
+              <select
+                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                value={mobileScenario}
+                onChange={(e) => setMobileScenario(e.target.value)}
+              >
+                {data.scenarioComparisons.map((s) => (
+                  <option key={s.scenarioName} value={s.scenarioName}>{s.scenarioName}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="max-h-[70vh] overflow-auto rounded-md border border-zinc-200">
-            <table className="min-w-[1180px] border-collapse bg-white text-sm">
+            <table className="w-full border-collapse bg-white text-sm sm:min-w-[1180px]">
               <thead>
                 <tr className="border-b border-zinc-200 bg-zinc-50">
-                  <th className="sticky left-0 top-0 z-30 w-64 bg-zinc-50 px-3 py-3 text-left text-xs font-semibold uppercase text-zinc-500 shadow-[inset_0_-1px_0_#e4e4e7] dark:shadow-[inset_0_-1px_0_rgb(63,63,70)]">
+                  <th className="sticky left-0 top-0 z-30 w-40 bg-zinc-50 px-3 py-3 text-left text-xs font-semibold uppercase text-zinc-500 shadow-[inset_0_-1px_0_#e4e4e7] dark:shadow-[inset_0_-1px_0_rgb(63,63,70)] sm:w-64">
                     Team
                   </th>
                   {data.scenarioComparisons.map((scenario) => (
                     <th
                       key={scenario.scenarioName}
-                      className="sticky top-0 z-20 w-[260px] bg-zinc-50 px-3 py-3 text-left text-xs font-semibold uppercase text-zinc-500 shadow-[inset_0_-1px_0_#e4e4e7] dark:shadow-[inset_0_-1px_0_rgb(63,63,70)]"
+                      className={cn(
+                        "sticky top-0 z-20 w-[260px] bg-zinc-50 px-3 py-3 text-left text-xs font-semibold uppercase text-zinc-500 shadow-[inset_0_-1px_0_#e4e4e7] dark:shadow-[inset_0_-1px_0_rgb(63,63,70)]",
+                        scenario.scenarioName !== mobileScenario && "hidden sm:table-cell",
+                      )}
                     >
                       {scenario.scenarioName}
                     </th>
@@ -6746,7 +6801,13 @@ function ScenarioComparisonPage() {
                         (teamResult) => teamResult.teamId === team.id || teamResult.team === team.name,
                       );
                       return (
-                        <td key={`${scenario.scenarioName}-${team.id}`} className="px-3 py-4">
+                        <td
+                          key={`${scenario.scenarioName}-${team.id}`}
+                          className={cn(
+                            "px-3 py-4",
+                            scenario.scenarioName !== mobileScenario && "hidden sm:table-cell",
+                          )}
+                        >
                           {teamResult ? <ScenarioTeamCell teamResult={teamResult} /> : null}
                         </td>
                       );
@@ -6855,8 +6916,8 @@ function DraftImpactPage() {
   ).length;
   const columns = React.useMemo<ColumnDef<DraftImpactPick>[]>(
     () => [
-      { accessorKey: "round", header: "Round" },
-      { accessorKey: "pickInRound", header: "Pick In Round" },
+      { accessorKey: "round", header: "Round", meta: { className: "hidden sm:table-cell" } },
+      { accessorKey: "pickInRound", header: "Pick In Round", meta: { className: "hidden sm:table-cell" } },
       { accessorKey: "overallPick", header: "Overall" },
       {
         accessorKey: "team",
@@ -6876,6 +6937,7 @@ function DraftImpactPage() {
       {
         accessorKey: "keeperPosition",
         header: "Pos",
+        meta: { className: "hidden sm:table-cell" },
         cell: ({ getValue }) => {
           const position = getValue<string>();
           return position ? <PositionBadge position={position} /> : null;
@@ -6884,6 +6946,7 @@ function DraftImpactPage() {
       {
         accessorKey: "keeperScore",
         header: "Score",
+        meta: { className: "hidden md:table-cell" },
         cell: ({ getValue }) => {
           const score = getValue<number>();
           return score ? formatter.format(score) : "";
@@ -7349,10 +7412,10 @@ function KeeperHistoryPage() {
                                 <th className="pb-1 text-right">Cost (rd)</th>
                                 <th className="pb-1 text-right">ADP (rd)</th>
                                 <th className="pb-1 text-right">Surplus</th>
-                                <th className="pb-1 text-right">Finish</th>
-                                <th className="pb-1 text-right">Pts</th>
-                                <th className="pb-1 text-center">Met ADP</th>
-                                <th className="pb-1 text-center">Bust</th>
+                                <th className="hidden pb-1 text-right sm:table-cell">Finish</th>
+                                <th className="hidden pb-1 text-right sm:table-cell">Pts</th>
+                                <th className="hidden pb-1 text-center sm:table-cell">Met ADP</th>
+                                <th className="hidden pb-1 text-center sm:table-cell">Bust</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-zinc-50">
@@ -7382,18 +7445,18 @@ function KeeperHistoryPage() {
                                         o.keeperValueAtKeep.toFixed(1)
                                       : "—"}
                                   </td>
-                                  <td className="py-1 pr-2 text-right">{o.finishRank ?? "—"}</td>
-                                  <td className="py-1 pr-2 text-right">
+                                  <td className="hidden py-1 pr-2 text-right sm:table-cell">{o.finishRank ?? "—"}</td>
+                                  <td className="hidden py-1 pr-2 text-right sm:table-cell">
                                     {o.fantasyPoints != null ? o.fantasyPoints.toFixed(1) : "—"}
                                   </td>
-                                  <td className="py-1 pr-2 text-center">
+                                  <td className="hidden py-1 pr-2 text-center sm:table-cell">
                                     {o.metAdpProjection == null
                                       ? "—"
                                       : o.metAdpProjection
                                         ? "✓"
                                         : "✗"}
                                   </td>
-                                  <td className="py-1 text-center">
+                                  <td className="hidden py-1 text-center sm:table-cell">
                                     {o.isBust ? (
                                       <span className="text-red-500">✗</span>
                                     ) : (
@@ -7567,6 +7630,7 @@ function MockDraftPage() {
   const isAutoAdvancingBotsRef = React.useRef(false);
   const [draftSpeed, setDraftSpeed] = React.useState<MockDraftSpeed>("Medium");
   const [isDraftWorkspaceOpen, setIsDraftWorkspaceOpen] = React.useState(false);
+  const [mobileDraftPanel, setMobileDraftPanel] = React.useState<"players" | "roster">("players");
   const [isLoading, setIsLoading] = React.useState(false);
   const [strategyGenerationMessage, setStrategyGenerationMessage] = React.useState("");
   const [errorMessage, setErrorMessage] = React.useState("");
@@ -8574,10 +8638,41 @@ function MockDraftPage() {
             </div>
 
             {/* ── Fixed bottom panel: Player list + Roster ── */}
-            <div className="flex shrink-0 border-t border-zinc-200 dark:border-zinc-800" style={{ height: "340px" }}>
+            <div className="flex shrink-0 flex-col border-t border-zinc-200 dark:border-zinc-800 sm:flex-row" style={{ height: "340px" }}>
+
+              {/* Mobile tab strip */}
+              <div className="flex shrink-0 border-b border-zinc-100 dark:border-zinc-800 sm:hidden">
+                <button
+                  className={cn(
+                    "flex-1 py-2 text-xs font-semibold transition-colors",
+                    mobileDraftPanel === "players"
+                      ? "border-b-2 border-emerald-600 text-emerald-700"
+                      : "text-zinc-500",
+                  )}
+                  onClick={() => setMobileDraftPanel("players")}
+                  type="button"
+                >
+                  Players
+                </button>
+                <button
+                  className={cn(
+                    "flex-1 py-2 text-xs font-semibold transition-colors",
+                    mobileDraftPanel === "roster"
+                      ? "border-b-2 border-emerald-600 text-emerald-700"
+                      : "text-zinc-500",
+                  )}
+                  onClick={() => setMobileDraftPanel("roster")}
+                  type="button"
+                >
+                  My Roster
+                </button>
+              </div>
 
               {/* Left: Available Players */}
-              <div className="flex min-w-0 flex-1 flex-col overflow-hidden border-r border-zinc-200 dark:border-zinc-800">
+              <div className={cn(
+                "flex min-w-0 flex-1 flex-col overflow-hidden sm:border-r sm:border-zinc-200 sm:dark:border-zinc-800",
+                mobileDraftPanel !== "players" && "hidden sm:flex",
+              )}>
 
                 {/* On the clock banner */}
                 {isUserPickSlot && activeSession.status === "in_progress" && (
@@ -8741,7 +8836,11 @@ function MockDraftPage() {
               </div>
 
               {/* Right: Your Roster */}
-              <div className="flex w-64 shrink-0 flex-col overflow-hidden">
+              <div className={cn(
+                "flex shrink-0 flex-col overflow-hidden sm:w-64",
+                mobileDraftPanel !== "roster" && "hidden sm:flex",
+                mobileDraftPanel === "roster" && "flex flex-1",
+              )}>
                 <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
                   <span className="truncate text-sm font-semibold text-zinc-950 dark:text-white">{activeSession.userTeamName}</span>
                   <span className="shrink-0 text-[10px] text-zinc-500">
@@ -10145,6 +10244,7 @@ function DraftBoardPreview({
   currentUser: AuthUser | null;
   picks: DraftImpactPick[];
 }) {
+  const [boardView, setBoardView] = React.useState<"grid" | "list">("grid");
   const { teams, rounds, grid } = React.useMemo(() => {
     const roundSet = new Set(picks.map((p) => p.round));
     const rounds = Array.from(roundSet).sort((a, b) => a - b);
@@ -10179,90 +10279,165 @@ function DraftBoardPreview({
   }, [picks]);
 
   return (
-    <div className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 bg-white">
-      <table className="border-collapse text-xs">
-        <thead className="sticky top-0 z-20">
-          <tr className="border-b border-zinc-200 bg-zinc-50">
-            <th className="sticky left-0 z-30 min-w-[112px] border-r border-zinc-200 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600">
-              Team
-            </th>
-            {rounds.map((round) => (
-              <th
-                key={round}
-                className="min-w-[116px] border-r border-zinc-100 px-2 py-2 text-center last:border-r-0"
-              >
-                <span className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                  R{round}
-                </span>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-100">
-          {teams.map((team) => {
-            const isUserTeam = isCurrentUserTeam({ name: team, user: currentUser });
-            return (
-              <tr key={team} className={isUserTeam ? "bg-emerald-50/40" : "bg-white"}>
-                <td
-                  className={cn(
-                    "sticky left-0 z-10 min-w-[112px] border-r border-zinc-200 px-3 py-2 align-middle",
-                    isUserTeam ? "bg-emerald-50 text-emerald-900" : "bg-white text-zinc-800",
-                  )}
-                >
-                  <div className="flex items-center gap-1.5">
-                    {isUserTeam && (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-                    )}
-                    <span className="max-w-[92px] truncate text-[11px] font-medium">{team}</span>
-                  </div>
-                </td>
-                {rounds.map((round) => {
-                  const pick = grid.get(team)?.get(round);
-                  if (!pick) {
-                    return (
-                      <td key={round} className="min-w-[116px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-300 last:border-r-0">
-                        —
-                      </td>
-                    );
-                  }
-                  const isForfeited = pick.status === "Forfeited";
-                  return (
+    <div className="space-y-2">
+      <div className="flex justify-end">
+        <div className="flex rounded-md border border-zinc-200 text-[11px] font-medium overflow-hidden">
+          <button
+            className={cn("px-2 py-1 transition-colors", boardView === "grid" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50")}
+            onClick={() => setBoardView("grid")}
+            type="button"
+          >
+            Grid
+          </button>
+          <button
+            className={cn("px-2 py-1 transition-colors border-l border-zinc-200", boardView === "list" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50")}
+            onClick={() => setBoardView("list")}
+            type="button"
+          >
+            List
+          </button>
+        </div>
+      </div>
+
+      {boardView === "grid" ? (
+        <div className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 bg-white">
+          <table className="border-collapse text-xs">
+            <thead className="sticky top-0 z-20">
+              <tr className="border-b border-zinc-200 bg-zinc-50">
+                <th className="sticky left-0 z-30 min-w-[112px] border-r border-zinc-200 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600">
+                  Team
+                </th>
+                {rounds.map((round) => (
+                  <th
+                    key={round}
+                    className="min-w-[80px] border-r border-zinc-100 px-2 py-2 text-center last:border-r-0"
+                  >
+                    <span className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                      R{round}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {teams.map((team) => {
+                const isUserTeam = isCurrentUserTeam({ name: team, user: currentUser });
+                return (
+                  <tr key={team} className={isUserTeam ? "bg-emerald-50/40" : "bg-white"}>
                     <td
-                      key={round}
                       className={cn(
-                        "min-w-[116px] border-r border-zinc-100 px-2 py-2 align-top last:border-r-0",
-                        isForfeited ? "bg-rose-50" : "bg-white",
+                        "sticky left-0 z-10 min-w-[112px] border-r border-zinc-200 px-3 py-2 align-middle",
+                        isUserTeam ? "bg-emerald-50 text-emerald-900" : "bg-white text-zinc-800",
                       )}
                     >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-[10px] tabular-nums font-medium text-zinc-400">
-                            #{pick.overallPick}
-                          </span>
-                          {isForfeited && <Lock className="h-2.5 w-2.5 shrink-0 text-rose-400" aria-label="Keeper" />}
-                        </div>
-                        {isForfeited ? (
-                          <>
-                            <p
-                              className="truncate text-[11px] font-semibold leading-tight text-rose-800"
-                              title={pick.keeperPlayer}
-                            >
-                              {pick.keeperPlayer}
-                            </p>
-                            {pick.keeperPosition && <PositionBadge position={pick.keeperPosition} />}
-                          </>
-                        ) : (
-                          <p className="text-[10px] italic text-zinc-400">Open</p>
+                      <div className="flex items-center gap-1.5">
+                        {isUserTeam && (
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
                         )}
+                        <span className="max-w-[92px] truncate text-[11px] font-medium">{team}</span>
                       </div>
                     </td>
-                  );
-                })}
-              </tr>
+                    {rounds.map((round) => {
+                      const pick = grid.get(team)?.get(round);
+                      if (!pick) {
+                        return (
+                          <td key={round} className="min-w-[80px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-300 last:border-r-0">
+                            —
+                          </td>
+                        );
+                      }
+                      const isForfeited = pick.status === "Forfeited";
+                      return (
+                        <td
+                          key={round}
+                          className={cn(
+                            "min-w-[80px] border-r border-zinc-100 px-2 py-2 align-top last:border-r-0",
+                            isForfeited ? "bg-rose-50" : "bg-white",
+                          )}
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-[10px] tabular-nums font-medium text-zinc-400">
+                                #{pick.overallPick}
+                              </span>
+                              {isForfeited && <Lock className="h-2.5 w-2.5 shrink-0 text-rose-400" aria-label="Keeper" />}
+                            </div>
+                            {isForfeited ? (
+                              <>
+                                <p
+                                  className="truncate text-[11px] font-semibold leading-tight text-rose-800"
+                                  title={pick.keeperPlayer}
+                                >
+                                  {pick.keeperPlayer}
+                                </p>
+                                {pick.keeperPosition && <PositionBadge position={pick.keeperPosition} />}
+                              </>
+                            ) : (
+                              <p className="text-[10px] italic text-zinc-400">Open</p>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {rounds.map((round) => {
+            const roundPicks = picks
+              .filter((p) => p.round === round)
+              .sort((a, b) => a.overallPick - b.overallPick);
+            const forfeitedCount = roundPicks.filter((p) => p.status === "Forfeited").length;
+            return (
+              <div key={round} className="rounded-lg border border-zinc-200 bg-white overflow-hidden">
+                <div className="border-b border-zinc-100 bg-zinc-50 px-3 py-2">
+                  <span className="rounded bg-zinc-900 px-2 py-0.5 text-[10px] font-semibold text-white">
+                    Round {round}
+                  </span>
+                  <span className="ml-2 text-xs text-zinc-500">
+                    {forfeitedCount} forfeited · {roundPicks.length - forfeitedCount} open
+                  </span>
+                </div>
+                <div className="divide-y divide-zinc-100">
+                  {roundPicks.map((pick) => {
+                    const isForfeited = pick.status === "Forfeited";
+                    const isUserTeam = isCurrentUserTeam({ name: pick.team, user: currentUser });
+                    return (
+                      <div
+                        key={pick.overallPick}
+                        className={cn(
+                          "flex items-center gap-3 px-3 py-2 text-xs",
+                          isForfeited ? "bg-rose-50" : isUserTeam ? "bg-emerald-50/50" : "",
+                        )}
+                      >
+                        <span className={cn("w-8 shrink-0 font-semibold tabular-nums", isForfeited ? "text-rose-500" : "text-zinc-400")}>
+                          #{pick.overallPick}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          {isForfeited ? (
+                            <p className="truncate font-semibold text-rose-800">{pick.keeperPlayer ?? "—"}</p>
+                          ) : (
+                            <p className="truncate text-zinc-400">Open pick</p>
+                          )}
+                          <p className="truncate text-[10px] text-zinc-500">{pick.team}</p>
+                        </div>
+                        {isForfeited && pick.keeperPosition && (
+                          <PositionBadge position={pick.keeperPosition} />
+                        )}
+                        {isForfeited && <Lock className="size-3 shrink-0 text-rose-400" aria-hidden="true" />}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
-        </tbody>
-      </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -10539,7 +10714,7 @@ function KeeperRecommendationsTable({
           />
         ),
       },
-      { accessorKey: "scenario", header: "Scenario" },
+      { accessorKey: "scenario", header: "Scenario", meta: { className: "hidden sm:table-cell" } },
       {
         accessorKey: "player",
         header: "Player",
@@ -10615,6 +10790,7 @@ function KeeperRecommendationsTable({
       {
         accessorKey: "keeperScore",
         header: "Score",
+        meta: { className: "hidden sm:table-cell" },
         cell: ({ getValue }) => formatter.format(getValue<number>()),
       },
       {
@@ -10626,12 +10802,13 @@ function KeeperRecommendationsTable({
         accessorKey: "manualOverride",
         id: "manualOverride",
         enableSorting: false,
+        meta: { className: "hidden md:table-cell" },
         header: () => <ManualOverrideHeader />,
         cell: ({ row }) => (
           <ManualOverrideControls recommendation={row.original} onOverride={onOverride} />
         ),
       },
-      { accessorKey: "reason", header: "Reason" },
+      { accessorKey: "reason", header: "Reason", meta: { className: "hidden md:table-cell" } },
     ],
     [
       currentUser,
@@ -11920,6 +12097,7 @@ function DraftBoardPage() {
   const [board, setBoard] = React.useState<DraftBoardResult | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [boardView, setBoardView] = React.useState<"grid" | "list">("grid");
 
   React.useEffect(() => {
     if (!activeLeagueId) return;
@@ -12002,74 +12180,151 @@ function DraftBoardPage() {
                 Keepers finalized
               </span>
             )}
+            <div className="flex rounded-md border border-zinc-200 text-[11px] font-medium overflow-hidden">
+              <button
+                className={cn("px-2 py-1 transition-colors", boardView === "grid" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50")}
+                onClick={() => setBoardView("grid")}
+                type="button"
+              >
+                Grid
+              </button>
+              <button
+                className={cn("px-2 py-1 transition-colors border-l border-zinc-200", boardView === "list" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50")}
+                onClick={() => setBoardView("list")}
+                type="button"
+              >
+                List
+              </button>
+            </div>
           </span>
         </div>
 
-        {/* Grid: rows = teams (by draft slot), columns = rounds */}
-        <div className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 bg-white">
-          <table className="border-collapse text-xs">
-            <thead className="sticky top-0 z-20">
-              <tr className="border-b border-zinc-200 bg-zinc-50">
-                <th className="sticky left-0 z-30 min-w-[128px] border-r border-zinc-200 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600">
-                  Team
-                </th>
-                {rounds.map((round) => (
-                  <th
-                    key={round}
-                    className="min-w-[116px] border-r border-zinc-100 px-2 py-2 text-center last:border-r-0"
-                  >
-                    <span className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                      R{round}
-                    </span>
+        {boardView === "grid" ? (
+          /* Grid: rows = teams (by draft slot), columns = rounds */
+          <div className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 bg-white">
+            <table className="border-collapse text-xs">
+              <thead className="sticky top-0 z-20">
+                <tr className="border-b border-zinc-200 bg-zinc-50">
+                  <th className="sticky left-0 z-30 min-w-[120px] border-r border-zinc-200 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600">
+                    Team
                   </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {teamsInOrder.map((team) => {
-                const isUserTeam = isCurrentUserTeam({
-                  name: team.teamName,
-                  teamId: team.teamId,
-                  user: currentUser,
-                });
-                const slot = team.draftSlot ?? 0;
-                return (
-                  <tr key={team.teamId ?? team.teamName} className={isUserTeam ? "bg-emerald-50/40" : "bg-white"}>
-                    <td
-                      className={cn(
-                        "sticky left-0 z-10 min-w-[128px] border-r border-zinc-200 px-3 py-2 align-middle",
-                        isUserTeam ? "bg-emerald-50 text-emerald-900" : "bg-white text-zinc-800",
-                      )}
+                  {rounds.map((round) => (
+                    <th
+                      key={round}
+                      className="min-w-[80px] border-r border-zinc-100 px-2 py-2 text-center last:border-r-0"
                     >
-                      <div className="flex items-center gap-1.5">
-                        {isUserTeam && (
-                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                      <span className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                        R{round}
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {teamsInOrder.map((team) => {
+                  const isUserTeam = isCurrentUserTeam({
+                    name: team.teamName,
+                    teamId: team.teamId,
+                    user: currentUser,
+                  });
+                  const slot = team.draftSlot ?? 0;
+                  return (
+                    <tr key={team.teamId ?? team.teamName} className={isUserTeam ? "bg-emerald-50/40" : "bg-white"}>
+                      <td
+                        className={cn(
+                          "sticky left-0 z-10 min-w-[120px] border-r border-zinc-200 px-3 py-2 align-middle",
+                          isUserTeam ? "bg-emerald-50 text-emerald-900" : "bg-white text-zinc-800",
                         )}
-                        <div className="min-w-0">
-                          <p className="max-w-[100px] truncate text-[11px] font-medium">{team.teamName}</p>
-                          {team.ownerName && (
-                            <p className="max-w-[100px] truncate text-[10px] text-zinc-400">{team.ownerName}</p>
+                      >
+                        <div className="flex items-center gap-1.5">
+                          {isUserTeam && (
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                          )}
+                          <div className="min-w-0">
+                            <p className="max-w-[88px] truncate text-[11px] font-medium">{team.teamName}</p>
+                            {team.ownerName && (
+                              <p className="max-w-[88px] truncate text-[10px] text-zinc-400">{team.ownerName}</p>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      {rounds.map((round) => {
+                        const pick = grid.get(slot)?.get(round);
+                        if (!pick) {
+                          return (
+                            <td key={round} className="min-w-[80px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-300 last:border-r-0">
+                              —
+                            </td>
+                          );
+                        }
+                        return <DraftPickCell key={round} pick={pick} />;
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          /* List view: picks grouped by round — better for mobile */
+          <div className="space-y-3">
+            {rounds.map((round) => {
+              const roundPicks = allPicks
+                .filter((p) => p.round === round)
+                .sort((a, b) => a.overallPick - b.overallPick);
+              return (
+                <div key={round} className="rounded-lg border border-zinc-200 bg-white overflow-hidden">
+                  <div className="border-b border-zinc-100 bg-zinc-50 px-3 py-2">
+                    <span className="rounded bg-zinc-900 px-2 py-0.5 text-[10px] font-semibold text-white">
+                      Round {round}
+                    </span>
+                    <span className="ml-2 text-xs text-zinc-500">
+                      {roundPicks.filter((p) => p.isForfeited).length} forfeited · {roundPicks.filter((p) => !p.isForfeited).length} open
+                    </span>
+                  </div>
+                  <div className="divide-y divide-zinc-100">
+                    {roundPicks.map((pick) => {
+                      const isUserTeam = isCurrentUserTeam({
+                        name: pick.teamName ?? "",
+                        teamId: pick.teamId ?? "",
+                        user: currentUser,
+                      });
+                      return (
+                        <div
+                          key={pick.overallPick}
+                          className={cn(
+                            "flex items-center gap-3 px-3 py-2 text-xs",
+                            pick.isForfeited ? "bg-rose-50" : isUserTeam ? "bg-emerald-50/50" : "",
+                          )}
+                        >
+                          <span className={cn("w-8 shrink-0 font-semibold tabular-nums", pick.isForfeited ? "text-rose-500" : "text-zinc-400")}>
+                            #{pick.overallPick}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            {pick.isForfeited ? (
+                              <p className="truncate font-semibold text-rose-800">
+                                {pick.forfeitedPlayerName ?? "—"}
+                              </p>
+                            ) : (
+                              <p className="truncate text-zinc-400">Open pick</p>
+                            )}
+                            <p className="truncate text-[10px] text-zinc-500">{pick.teamName ?? "—"}</p>
+                          </div>
+                          {pick.isForfeited && pick.forfeitedPlayerPosition && (
+                            <PositionBadge position={pick.forfeitedPlayerPosition} />
+                          )}
+                          {pick.isForfeited && (
+                            <Lock className="size-3 shrink-0 text-rose-400" aria-hidden="true" />
                           )}
                         </div>
-                      </div>
-                    </td>
-                    {rounds.map((round) => {
-                      const pick = grid.get(slot)?.get(round);
-                      if (!pick) {
-                        return (
-                          <td key={round} className="min-w-[116px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-300 last:border-r-0">
-                            —
-                          </td>
-                        );
-                      }
-                      return <DraftPickCell key={round} pick={pick} />;
+                      );
                     })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Forfeited picks summary */}
         {forfeitedPicks.length > 0 && (
@@ -12103,7 +12358,7 @@ function DraftBoardPage() {
 function DraftPickCell({ pick }: { pick: DraftBoardPick }) {
   if (pick.isForfeited) {
     return (
-      <td className="min-w-[116px] border-r border-zinc-100 px-2 py-2 align-top bg-rose-50 last:border-r-0">
+      <td className="min-w-[80px] border-r border-zinc-100 px-2 py-2 align-top bg-rose-50 last:border-r-0">
         <div className="space-y-0.5">
           <div className="flex items-center justify-between gap-1">
             <span className="text-[10px] tabular-nums font-medium text-rose-400">
@@ -12125,7 +12380,7 @@ function DraftPickCell({ pick }: { pick: DraftBoardPick }) {
     );
   }
   return (
-    <td className="min-w-[116px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-400 tabular-nums text-[10px] last:border-r-0">
+    <td className="min-w-[80px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-400 tabular-nums text-[10px] last:border-r-0">
       #{pick.overallPick}
     </td>
   );
@@ -12610,14 +12865,15 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
       </div>
 
       {/* Chart + team selector */}
-      <div className="flex items-start gap-5">
-        {/* Chart — fixed at 60% of the row */}
-        <div className="relative shrink-0" style={{ width: "60%" }}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-5">
+        {/* Chart — full-width on mobile, 60% on sm+ */}
+        <div className="relative w-full sm:w-[60%] sm:shrink-0">
           <svg
             width="100%"
           viewBox={`0 0 ${W} ${H}`}
           className="overflow-visible"
           onMouseLeave={() => setTooltip(null)}
+          onClick={() => setTooltip(null)}
         >
           <g transform={`translate(${PAD.left},${PAD.top})`}>
             {/* clipPaths defined inside the transform group so coordinates match */}
@@ -12691,15 +12947,20 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
               const cx = toX(rec.keeperCostRound);
               const cy = toY(rec.keeperValue);
               const stroke = SCATTER_POS_COLORS[rec.position] ?? "#a1a1aa";
+              const handleDotEvent = (e: React.MouseEvent | React.TouchEvent) => {
+                const svgEl = (e.currentTarget as Element).closest("svg") as SVGSVGElement;
+                const rect = svgEl.getBoundingClientRect();
+                const clientX = "touches" in e ? e.touches[0]?.clientX ?? 0 : e.clientX;
+                const clientY = "touches" in e ? e.touches[0]?.clientY ?? 0 : e.clientY;
+                e.stopPropagation();
+                setTooltip({ x: clientX - rect.left, y: clientY - rect.top, rec });
+              };
               return (
-                <circle key={`e-${i}`} cx={cx} cy={cy} r={4}
-                  fill="none" stroke={stroke} strokeWidth={1.5}
+                <circle key={`e-${i}`} cx={cx} cy={cy} r={6}
+                  fill="transparent" stroke={stroke} strokeWidth={1.5}
                   className="cursor-pointer"
-                  onMouseEnter={(e) => {
-                    const svgEl = e.currentTarget.closest("svg") as SVGSVGElement;
-                    const rect = svgEl.getBoundingClientRect();
-                    setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, rec });
-                  }}
+                  onMouseEnter={handleDotEvent}
+                  onClick={handleDotEvent}
                 />
               );
             })}
@@ -12716,13 +12977,16 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
                 isDst && resolvedTeam
                   ? `https://a.espncdn.com/i/teamlogos/nfl/500/${resolvedTeam.toLowerCase()}.png`
                   : rec.imageUrl;
-              const handleEnter = (e: React.MouseEvent) => {
-                const svgEl = e.currentTarget.closest("svg") as SVGSVGElement;
+              const handleDotEvent = (e: React.MouseEvent | React.TouchEvent) => {
+                const svgEl = (e.currentTarget as Element).closest("svg") as SVGSVGElement;
                 const rect = svgEl.getBoundingClientRect();
-                setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, rec });
+                const clientX = "touches" in e ? e.touches[0]?.clientX ?? 0 : e.clientX;
+                const clientY = "touches" in e ? e.touches[0]?.clientY ?? 0 : e.clientY;
+                e.stopPropagation();
+                setTooltip({ x: clientX - rect.left, y: clientY - rect.top, rec });
               };
               return (
-                <g key={`r-${i}`} className="cursor-pointer" onMouseEnter={handleEnter}>
+                <g key={`r-${i}`} className="cursor-pointer" onMouseEnter={handleDotEvent} onClick={handleDotEvent}>
                   {/* White backing so image has a clean base */}
                   <circle cx={cx} cy={cy} r={DOT_R} fill="white" />
                   {dotImageUrl ? (
@@ -12756,7 +13020,11 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
           {tooltip && (
             <div
               className="pointer-events-none absolute z-20 min-w-[148px] rounded-md border border-zinc-200 bg-white px-3 py-2 shadow-lg text-xs dark:border-zinc-700 dark:bg-zinc-900"
-              style={{ left: tooltip.x + 12, top: tooltip.y - 10 }}
+              style={
+                tooltip.x > W * 0.55
+                  ? { right: 0, top: tooltip.y - 10 }
+                  : { left: tooltip.x + 12, top: tooltip.y - 10 }
+              }
             >
               <p className="font-semibold text-zinc-900 dark:text-zinc-100">{tooltip.rec.player}</p>
               <p className="text-zinc-500">{tooltip.rec.position} · {tooltip.rec.team}</p>
@@ -12777,7 +13045,7 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
         </div>
 
         {/* Team selector */}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-w-0 flex-col sm:flex-1">
           <div className="mb-2 flex items-center justify-between gap-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
               Teams
@@ -12786,6 +13054,7 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
               <button
                 onClick={() => setSelectedTeamKeys(new Set(allTeams.map((t) => t.key)))}
                 className="hover:text-zinc-600 dark:hover:text-zinc-200"
+                type="button"
               >
                 All
               </button>
@@ -12793,12 +13062,14 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
               <button
                 onClick={() => setSelectedTeamKeys(new Set())}
                 className="hover:text-zinc-600 dark:hover:text-zinc-200"
+                type="button"
               >
                 None
               </button>
             </div>
           </div>
-          <div className="max-h-[220px] overflow-y-auto space-y-px pr-1">
+          {/* Mobile: wrap chips; Desktop: scrollable vertical list */}
+          <div className="flex flex-wrap gap-1.5 sm:block sm:max-h-[220px] sm:overflow-y-auto sm:space-y-px sm:pr-1">
             {allTeams.map(({ key, name }) => {
               const isUserTeam = key === userTeamKey;
               const isChecked = selectedTeamKeys.size === 0 || selectedTeamKeys.has(key);
@@ -12806,17 +13077,17 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
                 <label
                   key={key}
                   className={cn(
-                    "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm transition-colors",
+                    "flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs transition-colors sm:w-full sm:rounded sm:border-0 sm:px-2 sm:py-2 sm:text-sm",
                     isChecked
-                      ? "bg-zinc-50 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
-                      : "text-zinc-400 hover:bg-zinc-50 dark:text-zinc-500 dark:hover:bg-zinc-800",
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200 sm:border-0 sm:bg-zinc-50 sm:text-zinc-900 sm:dark:bg-zinc-800 sm:dark:text-zinc-100"
+                      : "border-zinc-200 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500 sm:border-0 sm:hover:bg-zinc-50 sm:dark:hover:bg-zinc-800",
                   )}
                 >
                   <input
                     type="checkbox"
                     checked={isChecked}
                     onChange={() => toggleTeam(key)}
-                    className="accent-emerald-600"
+                    className="hidden accent-emerald-600 sm:block"
                   />
                   {isUserTeam && (
                     <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
