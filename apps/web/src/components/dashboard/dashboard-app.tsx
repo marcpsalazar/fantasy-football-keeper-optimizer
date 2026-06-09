@@ -2714,7 +2714,7 @@ function LeagueDashboard() {
       {
         accessorKey: "player",
         header: "Player",
-        meta: { className: "overflow-hidden" },
+        meta: { className: "w-[130px] overflow-hidden px-2" },
         cell: ({ row }) => (
           <PlayerCell name={row.original.player} position={row.original.position} />
         ),
@@ -2724,7 +2724,7 @@ function LeagueDashboard() {
       {
         id: "trend",
         header: "Trend",
-        meta: { className: "w-20 px-2" },
+        meta: { className: "px-2" },
         cell: ({ row }) => (
           <AdpSparkline history={row.original.adpHistory ?? []} />
         ),
