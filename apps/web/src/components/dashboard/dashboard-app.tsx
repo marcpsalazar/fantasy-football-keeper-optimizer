@@ -112,6 +112,7 @@ import {
   login,
   logout,
   mockWorkspaceData,
+  fetchMockDraftPickRecommendation,
   makeMockDraftBotPick,
   makeMockDraftPick,
   pauseMockDraft,
@@ -171,6 +172,7 @@ import {
   type MockDraftBoardSlot,
   type MockDraftCreateForm,
   type MockDraftHistoryRow,
+  type MockDraftPickRecommendation,
   type MockDraftSession,
   type NewsHeadline,
   type TeamDraftHistory,
@@ -651,7 +653,7 @@ const glossaryTerms: GlossaryTerm[] = [
   },
   {
     term: "Pick Timer",
-    meaning: "An optional countdown per pick in Mock Draft, set to 30, 60, 90, or 120 seconds. When the timer expires on your turn, the pick slot stays open but a warning is shown. Disable it by selecting No limit for a relaxed practice session.",
+    meaning: "An optional countdown per pick in Mock Draft, set to 30, 60, 90, or 120 seconds. When the timer expires on your turn, the AI automatically makes your pick using the top available player by ADP. Disable it by selecting No limit for a relaxed practice session.",
   },
   {
     term: "Final Keepers",
@@ -7556,6 +7558,9 @@ function MockDraftPage() {
   const [timeRemaining, setTimeRemaining] = React.useState<number | null>(null);
   const [timerNotice, setTimerNotice] = React.useState("");
   const timerAlertSecondRef = React.useRef<number | null>(null);
+  const [aiPickRec, setAiPickRec] = React.useState<MockDraftPickRecommendation | null>(null);
+  const [isAiPickLoading, setIsAiPickLoading] = React.useState(false);
+  const aiPickAbortRef = React.useRef<AbortController | null>(null);
   const userTurnAlertKeyRef = React.useRef<string | null>(null);
   const [autoScrollBoard, setAutoScrollBoard] = React.useState(true);
   const [isAutoAdvancingBots, setIsAutoAdvancingBots] = React.useState(false);
@@ -7742,6 +7747,10 @@ function MockDraftPage() {
       if (!activeSession) {
         return;
       }
+      aiPickAbortRef.current?.abort();
+      aiPickAbortRef.current = null;
+      setAiPickRec(null);
+      setIsAiPickLoading(false);
       setIsLoading(true);
       try {
         const pickableSession =
@@ -7984,9 +7993,14 @@ function MockDraftPage() {
     if (!isUserTurn || timeRemaining !== 0 || activeSession?.status !== "in_progress") {
       return;
     }
-    setTimerNotice("Timer expired. Draft paused; choose a player to continue.");
-    void pauseSession();
-  }, [activeSession?.status, isUserTurn, pauseSession, timeRemaining]);
+    const rec = aiPickRecRef.current;
+    const autoPickId = rec?.playerId ?? suggestedPickRef.current?.playerId ?? activeSession!.availablePlayers[0]?.playerId ?? null;
+    const autoPickName = rec?.playerName ?? suggestedPickRef.current?.playerName ?? "a player";
+    if (autoPickId) {
+      setTimerNotice(`Time expired — AI picked ${autoPickName} for you.`);
+      void draftPlayer(autoPickId);
+    }
+  }, [activeSession?.availablePlayers, activeSession?.status, draftPlayer, isUserTurn, timeRemaining]);
 
   React.useEffect(() => {
     if (
@@ -8015,6 +8029,42 @@ function MockDraftPage() {
     playDraftTurnAlert();
   }, [activeSession?.currentPick, activeSession?.id, activeSession?.status, isUserTurn]);
 
+  // Fire an AI pick recommendation whenever it becomes the user's turn.
+  // Cancels automatically when the turn advances or the user drafts first.
+  React.useEffect(() => {
+    aiPickAbortRef.current?.abort();
+    aiPickAbortRef.current = null;
+    setAiPickRec(null);
+    setIsAiPickLoading(false);
+
+    if (!isUserPickSlot || activeSession?.status !== "in_progress" || !activeSession.id) {
+      return;
+    }
+
+    const controller = new AbortController();
+    aiPickAbortRef.current = controller;
+    setIsAiPickLoading(true);
+    const sessionId = activeSession.id;
+
+    void (async () => {
+      try {
+        const rec = await fetchMockDraftPickRecommendation(sessionId, controller.signal);
+        if (!controller.signal.aborted) {
+          setAiPickRec(rec);
+          setIsAiPickLoading(false);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setIsAiPickLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+  }, [timerKey, isUserPickSlot, activeSession?.id, activeSession?.status]);
+
   const positionOptions = React.useMemo(
     () =>
       Array.from(new Set(activeSession?.availablePlayers.map((player) => player.position).filter(Boolean) ?? []))
@@ -8023,15 +8073,38 @@ function MockDraftPage() {
   );
   const suggestedPick = React.useMemo(() => {
     if (!activeSession?.availablePlayers.length || !isUserPickSlot) return null;
-    const withAdp = activeSession.availablePlayers.filter((p) => p.adpPick !== null);
-    const pool = withAdp.length ? withAdp : activeSession.availablePlayers;
+    const players = activeSession.availablePlayers;
     const currentPick = activeSession.currentPick ?? 0;
+    const rosterNeeds = activeSession.rosterNeeds;
+
+    // Derive priority positions from unfilled starter slots (mirrors buildLiveStrategyAdvice logic)
+    const baseNeeds = rosterNeeds.filter(
+      (need) => need.remaining > 0 && !["BENCH", "FLEX", "SUPERFLEX", "K", "DST", "DEF"].includes(need.slot),
+    );
+    const flexNeed = rosterNeeds.find((need) => need.slot === "FLEX" && need.remaining > 0);
+    const superflexNeed = rosterNeeds.find((need) => need.slot === "SUPERFLEX" && need.remaining > 0);
+    let priorityPositions: string[] = baseNeeds.map((need) => need.slot);
+    if (!priorityPositions.length && superflexNeed) {
+      priorityPositions = ["QB", "RB", "WR"];
+    } else if (!priorityPositions.length && flexNeed) {
+      priorityPositions = ["RB", "WR", "TE"];
+    }
+    const prioritySet = new Set(priorityPositions.map((p) => (p === "DEF" ? "DST" : p)));
+
+    const withAdp = players.filter((p) => p.adpPick !== null);
+    const pool = withAdp.length ? withAdp : players;
+    // ~1 round bonus for filling an open starter slot without fully overriding a large ADP value fall
+    const NEED_BONUS = 12;
     return pool.slice().sort((a, b) => {
-      const va = a.adpPick !== null ? currentPick - a.adpPick : -999;
-      const vb = b.adpPick !== null ? currentPick - b.adpPick : -999;
+      const va = (a.adpPick !== null ? currentPick - a.adpPick : -999) + (prioritySet.size > 0 && prioritySet.has(a.position) ? NEED_BONUS : 0);
+      const vb = (b.adpPick !== null ? currentPick - b.adpPick : -999) + (prioritySet.size > 0 && prioritySet.has(b.position) ? NEED_BONUS : 0);
       return vb - va;
     })[0] ?? null;
-  }, [activeSession?.availablePlayers, activeSession?.currentPick, isUserPickSlot]);
+  }, [activeSession?.availablePlayers, activeSession?.currentPick, activeSession?.rosterNeeds, isUserPickSlot]);
+  const suggestedPickRef = React.useRef(suggestedPick);
+  React.useEffect(() => { suggestedPickRef.current = suggestedPick; }, [suggestedPick]);
+  const aiPickRecRef = React.useRef(aiPickRec);
+  React.useEffect(() => { aiPickRecRef.current = aiPickRec; }, [aiPickRec]);
   const filteredPlayers = React.useMemo(() => {
     const query = playerSearch.trim().toLowerCase();
     return (activeSession?.availablePlayers ?? [])
@@ -8527,31 +8600,47 @@ function MockDraftPage() {
                   <span className="text-xs text-zinc-500">Timer: {timerLabel}</span>
                 </div>
 
-                {/* Best Available suggestion */}
-                {suggestedPick && activeSession.status === "in_progress" && (
-                  <div className="flex shrink-0 items-center justify-between gap-3 border-b border-emerald-100 bg-emerald-50 px-3 py-1.5 dark:border-emerald-900/30 dark:bg-emerald-950/20">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <p className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Best</p>
-                      <p className="truncate text-sm font-bold text-emerald-950 dark:text-emerald-100">{suggestedPick.playerName}</p>
-                      <PositionBadge position={suggestedPick.position} />
-                      {suggestedPick.nflTeam && <span className="text-xs text-emerald-700 dark:text-emerald-400">{suggestedPick.nflTeam}</span>}
-                      {suggestedPick.adpPick !== null && (
-                        <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400">
-                          ADP {Math.round(suggestedPick.adpPick)}
-                          {activeSession.currentPick && suggestedPick.adpPick < activeSession.currentPick
-                            ? ` · +${Math.round(activeSession.currentPick - suggestedPick.adpPick)}`
-                            : ""}
-                        </span>
-                      )}
-                    </div>
-                    <Button
-                      disabled={isBusy || isLoading || !isUserPickSlot || positionsAtLimit.has(suggestedPick.position)}
-                      onClick={() => void draftPlayer(suggestedPick.playerId)}
-                      size="sm"
-                      className="shrink-0"
-                    >
-                      Draft
-                    </Button>
+                {/* AI Pick Recommendation banner */}
+                {isUserPickSlot && activeSession.status === "in_progress" && (isAiPickLoading || aiPickRec) && (
+                  <div className="shrink-0 border-b border-emerald-100 bg-emerald-50 dark:border-emerald-900/30 dark:bg-emerald-950/20">
+                    {isAiPickLoading && !aiPickRec ? (
+                      <div className="flex items-center gap-2 px-3 py-2">
+                        <div className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+                        <span className="text-xs text-emerald-700 dark:text-emerald-400">Generating pick recommendation…</span>
+                      </div>
+                    ) : aiPickRec ? (
+                      <div className="flex items-center justify-between gap-3 px-3 py-1.5">
+                        <div className="flex min-w-0 flex-col gap-0.5">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <p className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                              {aiPickRec.aiUsed ? "AI Rec" : "Best"}
+                            </p>
+                            <p className="truncate text-sm font-bold text-emerald-950 dark:text-emerald-100">{aiPickRec.playerName}</p>
+                            <PositionBadge position={aiPickRec.position} />
+                            {aiPickRec.nflTeam && <span className="text-xs text-emerald-700 dark:text-emerald-400">{aiPickRec.nflTeam}</span>}
+                            {aiPickRec.adpPick !== null && (
+                              <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400">
+                                ADP {Math.round(aiPickRec.adpPick)}
+                                {activeSession.currentPick && aiPickRec.adpPick < activeSession.currentPick
+                                  ? ` · +${Math.round(activeSession.currentPick - aiPickRec.adpPick)}`
+                                  : ""}
+                              </span>
+                            )}
+                          </div>
+                          {aiPickRec.aiUsed && (
+                            <p className="text-[11px] leading-snug text-emerald-700 dark:text-emerald-400">{aiPickRec.reasoning}</p>
+                          )}
+                        </div>
+                        <Button
+                          disabled={isBusy || isLoading || !isUserPickSlot || positionsAtLimit.has(aiPickRec.position)}
+                          onClick={() => void draftPlayer(aiPickRec.playerId)}
+                          size="sm"
+                          className="shrink-0"
+                        >
+                          Draft
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 )}
 

@@ -288,6 +288,101 @@ def make_user_pick(
     return pick
 
 
+def recommend_pick_for_user(
+    session: Session,
+    draft_session: MockDraftSession,
+    current_slot: DraftSlot,
+) -> dict[str, Any]:
+    """Return an AI pick recommendation for the user's current turn, with heuristic fallback."""
+    settings = get_settings()
+    league = _require_league(session, draft_session.league_id)
+    candidates = [
+        player
+        for player in available_players(session, draft_session, limit=500)
+        if _can_fit_roster(session, draft_session, league, draft_session.user_team_id, player)
+    ]
+    if not candidates:
+        raise MockDraftError("No available players")
+    adp_by_player = _adp_by_player(session, draft_session)
+    if mock_draft_ai.is_enabled(settings):
+        candidate_limit = max(15, min(settings.mock_draft_ai_candidate_limit, len(candidates)))
+        scoped = candidates[:candidate_limit]
+        try:
+            _t0 = time.monotonic()
+            decision = mock_draft_ai.recommend_user_pick(
+                settings=settings,
+                valid_player_ids={p.id for p in scoped},
+                context={
+                    "league": {
+                        "draft_type": draft_session.draft_type,
+                        "round_count": draft_session.round_count,
+                        "roster_settings": league.roster_settings,
+                    },
+                    "current_pick": {
+                        "round": current_slot.round,
+                        "pick_in_round": current_slot.pick_in_round,
+                        "overall_pick": current_slot.overall_pick,
+                    },
+                    "user_roster_needs": roster_needs(session, draft_session, draft_session.user_team_id),
+                    "user_roster_counts": _roster_counts(session, draft_session, draft_session.user_team_id),
+                    "recent_picks": _recent_pick_context(session, draft_session, limit=8),
+                    "candidate_players": [_player_context(p, adp_by_player.get(p.id)) for p in scoped],
+                },
+            )
+            player = {p.id: p for p in scoped}.get(decision.player_id)
+            if player is not None:
+                adp = adp_by_player.get(player.id)
+                write_ai_log(
+                    session,
+                    feature="user_pick_recommendation",
+                    league_id=draft_session.league_id,
+                    user_id=draft_session.user_id,
+                    model=settings.mock_draft_ai_model,
+                    status="success",
+                    token_usage=decision.token_usage,
+                    latency_ms=int((time.monotonic() - _t0) * 1000),
+                )
+                return {
+                    "player_id": player.id,
+                    "player_name": player.full_name,
+                    "position": player.position,
+                    "nfl_team": player.nfl_team,
+                    "adp_pick": adp.adp_pick if adp else None,
+                    "reasoning": decision.reasoning,
+                    "ai_used": True,
+                }
+        except mock_draft_ai.MockDraftAIError as _exc:
+            write_ai_log(
+                session,
+                feature="user_pick_recommendation",
+                league_id=draft_session.league_id,
+                user_id=draft_session.user_id,
+                model=settings.mock_draft_ai_model,
+                status="failed",
+                error_message=str(_exc)[:500],
+            )
+    # Heuristic fallback: best ADP value among candidates
+    scored = sorted(
+        candidates,
+        key=lambda p: -(
+            (current_slot.overall_pick - adp_by_player[p.id].adp_pick)
+            if p.id in adp_by_player
+            else -999
+        ),
+    )
+    player = scored[0]
+    adp = adp_by_player.get(player.id)
+    return {
+        "player_id": player.id,
+        "player_name": player.full_name,
+        "position": player.position,
+        "nfl_team": player.nfl_team,
+        "adp_pick": adp.adp_pick if adp else None,
+        "reasoning": "Best available player by ADP value.",
+        "ai_used": False,
+    }
+
+
 def make_bot_pick(session: Session, draft_session: MockDraftSession) -> MockDraftPick | None:
     if draft_session.status != "in_progress":
         raise MockDraftError("Mock draft must be in progress")

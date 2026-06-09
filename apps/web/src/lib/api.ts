@@ -268,6 +268,16 @@ export type MockDraftRosterNeed = {
   remaining: number;
 };
 
+export type MockDraftPickRecommendation = {
+  playerId: string;
+  playerName: string;
+  position: string;
+  nflTeam: string | null;
+  adpPick: number | null;
+  reasoning: string;
+  aiUsed: boolean;
+};
+
 export type MockDraftStrategyPlan = {
   summary: string;
   roundPlan: Record<string, unknown>[];
@@ -1457,6 +1467,35 @@ export async function makeMockDraftBotPick(sessionId: string): Promise<MockDraft
     method: "POST",
   });
   return mapMockDraftSession(payload.session);
+}
+
+export async function fetchMockDraftPickRecommendation(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<MockDraftPickRecommendation> {
+  const raw = await fetchJson<{
+    player_id: string;
+    player_name: string;
+    position: string;
+    nfl_team: string | null;
+    adp_pick: number | null;
+    reasoning: string;
+    ai_used: boolean;
+  }>(`/api/mock-drafts/${sessionId}/pick-recommendation`, {
+    method: "POST",
+    signal,
+    body: JSON.stringify({}),
+    headers: { "content-type": "application/json" },
+  });
+  return {
+    playerId: raw.player_id,
+    playerName: raw.player_name,
+    position: raw.position,
+    nflTeam: raw.nfl_team,
+    adpPick: raw.adp_pick,
+    reasoning: raw.reasoning,
+    aiUsed: raw.ai_used,
+  };
 }
 
 export async function deleteMockDraft(sessionId: string): Promise<void> {

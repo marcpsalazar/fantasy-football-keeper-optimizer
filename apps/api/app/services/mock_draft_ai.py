@@ -14,6 +14,13 @@ class MockDraftAIError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class AIPickRecommendation:
+    player_id: uuid.UUID
+    reasoning: str
+    token_usage: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
 class AIBotPickDecision:
     player_id: uuid.UUID
     reasoning_summary: str
@@ -90,6 +97,45 @@ def choose_bot_player(
         confidence=confidence if isinstance(confidence, int | float) else None,
         token_usage=usage,
     )
+
+
+def recommend_user_pick(
+    *,
+    settings: Settings,
+    context: dict[str, Any],
+    valid_player_ids: set[uuid.UUID],
+) -> AIPickRecommendation:
+    if not is_enabled(settings):
+        raise MockDraftAIError("Mock draft AI is not enabled")
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "player_id": {"type": "string"},
+            "reasoning": {"type": "string", "maxLength": 200},
+        },
+        "required": ["player_id", "reasoning"],
+    }
+    data, usage = _responses_json(
+        settings=settings,
+        name="mock_draft_pick_recommendation",
+        schema=schema,
+        instructions=(
+            "You are a fantasy football draft advisor giving a real-time pick recommendation for the user's team. "
+            "Choose exactly one player_id from candidate_players. "
+            "Prefer players at unfilled starter positions (see user_roster_needs) unless a non-needed position player "
+            "has fallen more than 2 rounds past their ADP — in that case it may be worth taking the value. "
+            "Write reasoning as 1-2 tight sentences only. Example: 'Take Adams: fills your last WR slot and fell 18 picks past ADP.' "
+            "Return concise JSON only."
+        ),
+        user_payload=context,
+        max_output_tokens=300,
+    )
+    player_id = _uuid_from_value(data.get("player_id"))
+    if player_id not in valid_player_ids:
+        raise MockDraftAIError("AI selected a player that is not available")
+    reasoning = str(data.get("reasoning") or "Best fit for current roster needs and ADP value.")[:200]
+    return AIPickRecommendation(player_id=player_id, reasoning=reasoning, token_usage=usage)
 
 
 def generate_strategy_plan(

@@ -19,6 +19,7 @@ from app.schemas.mock_draft import (
     MockDraftHistoryRow,
     MockDraftPickCreate,
     MockDraftPickRead,
+    MockDraftPickRecommendationRead,
     MockDraftRosterNeed,
     MockDraftRerunAnalysisRequest,
     MockDraftSessionRead,
@@ -34,12 +35,14 @@ from app.services.mock_draft import (
     board_slots,
     complete_mock_draft,
     create_mock_draft_session,
+    current_open_slot,
     end_mock_draft,
     generate_analysis,
     generate_strategy_plan as generate_mock_draft_strategy_plan,
     make_bot_pick,
     make_user_pick,
     pause_mock_draft,
+    recommend_pick_for_user,
     resume_mock_draft,
     roster_needs,
     start_mock_draft,
@@ -293,6 +296,25 @@ def rerun_analysis(
     session.commit()
     session.refresh(analysis)
     return MockDraftAnalysisRead.model_validate(analysis)
+
+
+@router.post("/mock-drafts/{session_id}/pick-recommendation", response_model=MockDraftPickRecommendationRead)
+def get_pick_recommendation(
+    session_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> MockDraftPickRecommendationRead:
+    draft_session = _owned_session(session, session_id, user)
+    if draft_session.status != "in_progress":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Draft must be in progress")
+    slot = current_open_slot(session, draft_session)
+    if slot is None or slot.team_id != draft_session.user_team_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not the user's pick")
+    try:
+        rec = recommend_pick_for_user(session, draft_session, slot)
+    except MockDraftError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return MockDraftPickRecommendationRead(**rec)
 
 
 @router.delete("/mock-drafts/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

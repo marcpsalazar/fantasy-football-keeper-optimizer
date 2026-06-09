@@ -154,6 +154,16 @@ class MockDraftHistoryRow(BaseModel):
     summary: str | None = None
 
 
+class MockDraftPickRecommendationRead(BaseModel):
+    player_id: uuid.UUID
+    player_name: str
+    position: str
+    nfl_team: str | None = None
+    adp_pick: float | None = None
+    reasoning: str
+    ai_used: bool = False
+
+
 class MockDraftActionResult(BaseModel):
     session: MockDraftSessionRead
 
