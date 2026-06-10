@@ -598,7 +598,7 @@ def _source_note(candidate: CompositeCandidate) -> str:
 def _export_adp_pick(candidate: CompositeCandidate) -> float | None:
     if candidate.composite_adp is None:
         return None
-    return float(round(candidate.composite_adp))
+    return candidate.composite_adp
 
 
 def _fetch_draftsharks_superflex_rows(settings: Settings, team_count: int) -> ProviderFetchResult:

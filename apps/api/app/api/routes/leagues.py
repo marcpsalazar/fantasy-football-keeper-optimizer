@@ -970,7 +970,7 @@ def preview_adp(
 @router.get("/leagues/{league_id}/adp-trend")
 def get_adp_trend(
     league_id: uuid.UUID,
-    snapshot_limit: int = Query(default=4, ge=2, le=8),
+    snapshot_limit: int = Query(default=8, ge=2, le=16),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Return per-player ADP pick history across the most recent N snapshots."""
