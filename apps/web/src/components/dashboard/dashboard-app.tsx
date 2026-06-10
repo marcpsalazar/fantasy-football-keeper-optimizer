@@ -2720,11 +2720,11 @@ function LeagueDashboard() {
         ),
       },
       { accessorKey: "adpPick", header: "Pick", meta: { className: "w-12 px-2" } },
-      { accessorKey: "adpRound", header: "Round", meta: { className: "hidden sm:table-cell w-12 px-2" } },
+      { accessorKey: "adpRound", header: "Round", meta: { className: "hidden sm:table-cell w-16 px-2" } },
       {
         id: "trend",
         header: "Trend",
-        meta: { className: "px-2" },
+        meta: { className: "pl-4 pr-2" },
         cell: ({ row }) => (
           <AdpSparkline history={row.original.adpHistory ?? []} />
         ),
