@@ -11431,7 +11431,7 @@ function KeeperRecommendationsTable({
                   }
                   variant={tenureBadgeVariant}
                 >
-                  {maxSn != null ? `${sn}/${maxSn}` : `${sn}sn`}
+                  {maxSn != null ? `yr ${sn}/${maxSn}` : `yr ${sn}`}
                 </Badge>
               )}
             </div>
