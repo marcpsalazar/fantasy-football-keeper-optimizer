@@ -23,6 +23,7 @@ from app.models import (
     FinalRosterEntry,
     KeeperCandidate,
     KeeperRecommendation,
+    KeeperTenure,
     League,
     LeagueMembership,
     ManualOverride,
@@ -111,6 +112,8 @@ from app.schemas.draft_history import TeamDraftHistoryRead
 from app.services import keeper_signals as keeper_signals_svc
 from app.services import keeper_history as keeper_history_svc
 from app.services.keeper_history import KeeperHistoryImportError
+from app.services import keeper_tenure as keeper_tenure_svc
+from app.services.keeper_tenure import KeeperTenureError
 from app.services import final_keepers as final_keepers_svc
 from app.services.final_keepers import FinalKeeperError, KeeperSelectionInput
 from app.services import sleeper_season_stats as sleeper_stats_svc
@@ -2922,6 +2925,86 @@ def get_keeper_history(
     return keeper_history_svc.get_keeper_history(session, league_id)
 
 
+# ── Keeper Tenure ─────────────────────────────────────────────────────────────
+
+@router.get("/leagues/{league_id}/keeper-tenure")
+def get_keeper_tenure(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    _require_league(session, league_id)
+    rows = keeper_tenure_svc.get_tenure_for_league(session, league_id)
+    return _table(rows)
+
+
+@router.post("/leagues/{league_id}/keeper-tenure/preview")
+def preview_keeper_tenure(
+    league_id: uuid.UUID,
+    payload: dict,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    csv_text = payload.get("csv_text", "")
+    try:
+        result = keeper_tenure_svc.preview_tenure_csv(session, league_id, csv_text)
+    except KeeperTenureError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return result.to_payload()
+
+
+@router.post("/leagues/{league_id}/keeper-tenure/import")
+def import_keeper_tenure(
+    league_id: uuid.UUID,
+    payload: dict,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    csv_text = payload.get("csv_text", "")
+    try:
+        result = keeper_tenure_svc.import_tenure_csv(session, league_id, csv_text)
+    except KeeperTenureError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return {
+        "imported_count": result.imported,
+        "updated_count": result.updated,
+        "skipped_count": result.skipped,
+        "rows": result.rows,
+    }
+
+
+@router.delete("/leagues/{league_id}/keeper-tenure/{tenure_id}")
+def delete_keeper_tenure(
+    league_id: uuid.UUID,
+    tenure_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    try:
+        keeper_tenure_svc.delete_tenure(session, league_id, tenure_id)
+    except KeeperTenureError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return {"deleted": True}
+
+
+@router.delete("/leagues/{league_id}/keeper-tenure")
+def clear_keeper_tenure(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    if not _is_league_admin(session, user, league_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="League admin required")
+    count = keeper_tenure_svc.clear_all_tenure(session, league_id)
+    return {"deleted_count": count}
+
+
 # ── Final Keeper Selections ───────────────────────────────────────────────────
 
 @router.get("/leagues/{league_id}/final-keepers")
@@ -3134,6 +3217,13 @@ def _optimizer_table(
         player.id: player
         for player in session.exec(select(Player).where(Player.id.in_(player_ids))).all()
     }
+    league_ids = {recommendation.league_id for recommendation in recommendations}
+    tenure_by_team_player: dict[tuple[Any, Any], int] = {}
+    if league_ids:
+        for tenure in session.exec(
+            select(KeeperTenure).where(KeeperTenure.league_id.in_(league_ids))
+        ).all():
+            tenure_by_team_player[(tenure.team_id, tenure.player_id)] = tenure.consecutive_seasons
     adp_keys = {
         (recommendation.adp_snapshot_id, recommendation.player_id)
         for recommendation in recommendations
@@ -3152,7 +3242,6 @@ def _optimizer_table(
         if adp_keys
         else {}
     )
-    league_ids = {recommendation.league_id for recommendation in recommendations}
     user_id = recommendations[0].user_id if recommendations else None
     overrides = (
         {
@@ -3233,6 +3322,9 @@ def _optimizer_table(
                 "override_notes": override.notes if override else None,
                 "reason": recommendation.reason,
                 "ai_explanation": explanation.content if explanation else None,
+                "consecutive_seasons": tenure_by_team_player.get(
+                    (recommendation.team_id, recommendation.player_id)
+                ),
             }
         )
 

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.keeper import KeeperCandidate
     from app.models.final_keeper import FinalKeeperSelection
     from app.models.keeper_outcome import KeeperOutcome
+    from app.models.keeper_tenure import KeeperTenure
     from app.models.membership import LeagueMembership
     from app.models.mock_draft import MockDraftPick, MockDraftSession
     from app.models.optimizer import (
@@ -56,6 +57,7 @@ class League(TimestampMixin, table=True):
         default_factory=dict,
         sa_column=Column(JSON, nullable=False),
     )
+    max_consecutive_keeper_seasons: int | None = Field(default=None)
 
     teams: list["Team"] = Relationship(back_populates="league")
     memberships: list["LeagueMembership"] = Relationship(back_populates="league")
@@ -69,6 +71,7 @@ class League(TimestampMixin, table=True):
     mock_draft_sessions: list["MockDraftSession"] = Relationship(back_populates="league")
     keeper_outcomes: list["KeeperOutcome"] = Relationship(back_populates="league")
     final_keeper_selections: list["FinalKeeperSelection"] = Relationship(back_populates="league")
+    keeper_tenures: list["KeeperTenure"] = Relationship(back_populates="league")
 
 
 class Team(TimestampMixin, table=True):
@@ -93,3 +96,4 @@ class Team(TimestampMixin, table=True):
     mock_draft_picks: list["MockDraftPick"] = Relationship(back_populates="team")
     keeper_outcomes: list["KeeperOutcome"] = Relationship(back_populates="team")
     final_keeper_selections: list["FinalKeeperSelection"] = Relationship(back_populates="team")
+    keeper_tenures: list["KeeperTenure"] = Relationship(back_populates="team")

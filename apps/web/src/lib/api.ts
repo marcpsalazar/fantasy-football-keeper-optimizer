@@ -36,7 +36,7 @@ type ApiScenarioPayload = {
 };
 
 export type ManualOverrideType = "auto" | "force_keep" | "exclude";
-export type CsvImportKind = "draft-results" | "final-rosters" | "adp";
+export type CsvImportKind = "draft-results" | "final-rosters" | "adp" | "keeper-tenure";
 
 export type AuthUser = {
   id: string;
@@ -105,6 +105,21 @@ export type LeagueSummary = {
   draftDate: string | null;
   keeperRevealDate: string | null;
   rosterSettings: LeagueRosterSettings;
+  maxConsecutiveKeeperSeasons: number | null;
+};
+
+export type KeeperTenureRow = {
+  tenureId: string;
+  leagueId: string;
+  teamId: string;
+  teamName: string | null;
+  playerId: string;
+  playerName: string | null;
+  position: string | null;
+  nflTeam: string | null;
+  consecutiveSeasons: number;
+  lastKeptSeasonYear: number | null;
+  atLimit: boolean;
 };
 
 export type LeagueWithRole = LeagueSummary & {
@@ -400,6 +415,7 @@ export const mockWorkspaceData: WorkspaceData = {
     draftDate: null,
     keeperRevealDate: null,
     rosterSettings: defaultLeagueRosterSettings,
+    maxConsecutiveKeeperSeasons: null,
   },
   activeSnapshot: {
     id: "mock-snapshot",
@@ -1434,6 +1450,78 @@ export async function saveOptimizerSettings(
     headers: { "content-type": "application/json" },
     method: "PATCH",
   });
+}
+
+export async function saveLeagueKeeperSettings(
+  leagueId: string,
+  maxConsecutiveKeeperSeasons: number | null,
+): Promise<LeagueSummary> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}`, {
+    body: JSON.stringify({ max_consecutive_keeper_seasons: maxConsecutiveKeeperSeasons }),
+    headers: { "content-type": "application/json" },
+    method: "PATCH",
+  });
+  return mapLeague(payload);
+}
+
+export async function loadKeeperTenure(leagueId: string): Promise<KeeperTenureRow[]> {
+  const payload = await fetchTable(`/api/leagues/${leagueId}/keeper-tenure`);
+  return payload.rows.map(
+    (row): KeeperTenureRow => ({
+      tenureId: text(row.tenure_id),
+      leagueId: text(row.league_id),
+      teamId: text(row.team_id),
+      teamName: text(row.team_name) || null,
+      playerId: text(row.player_id),
+      playerName: text(row.player_name) || null,
+      position: text(row.position) || null,
+      nflTeam: text(row.nfl_team) || null,
+      consecutiveSeasons: number(row.consecutive_seasons),
+      lastKeptSeasonYear: row.last_kept_season_year != null ? number(row.last_kept_season_year) : null,
+      atLimit: Boolean(row.at_limit),
+    }),
+  );
+}
+
+export async function previewTenureCsv(
+  leagueId: string,
+  csvText: string,
+): Promise<CsvPreviewResult> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/keeper-tenure/preview`, {
+    body: JSON.stringify({ csv_text: csvText }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapCsvPreview(payload as ApiRow, "keeper-tenure");
+}
+
+export async function importTenureCsv(
+  leagueId: string,
+  csvText: string,
+): Promise<{ importedCount: number; updatedCount: number; skippedCount: number }> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/keeper-tenure/import`, {
+    body: JSON.stringify({ csv_text: csvText }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return {
+    importedCount: number((payload as ApiRow).imported_count),
+    updatedCount: number((payload as ApiRow).updated_count),
+    skippedCount: number((payload as ApiRow).skipped_count),
+  };
+}
+
+export async function deleteTenureRecord(leagueId: string, tenureId: string): Promise<void> {
+  await fetchJson(`/api/leagues/${leagueId}/keeper-tenure/${tenureId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function clearAllTenure(leagueId: string): Promise<number> {
+  const payload = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/keeper-tenure`, {
+    method: "DELETE",
+  });
+  return number((payload as ApiRow).deleted_count);
 }
 
 export async function saveLeagueRosterSettings(
@@ -2815,6 +2903,10 @@ function mapLeague(row: ApiRow): LeagueSummary {
     draftDate: text(row.draft_date) || null,
     keeperRevealDate: text(row.keeper_reveal_date) || null,
     rosterSettings: mapLeagueRosterSettings(row.roster_settings),
+    maxConsecutiveKeeperSeasons:
+      row.max_consecutive_keeper_seasons != null
+        ? number(row.max_consecutive_keeper_seasons)
+        : null,
   };
 }
 
@@ -2964,6 +3056,8 @@ function mapRecommendation(row: ApiRow): KeeperRecommendation {
     manualOverride: text(row.manual_override, "auto") as ManualOverrideType,
     reason: text(row.reason),
     aiExplanation: mapExplanation(row.ai_explanation),
+    consecutiveSeasons:
+      row.consecutive_seasons != null ? number(row.consecutive_seasons) : null,
   };
 }
 

@@ -71,6 +71,7 @@ export type KeeperRecommendation = {
   manualOverride?: "auto" | "force_keep" | "exclude";
   reason: string;
   aiExplanation?: KeeperExplanation | null;
+  consecutiveSeasons?: number | null;
 };
 
 export type Outlook = {

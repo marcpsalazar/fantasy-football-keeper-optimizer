@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.final_keeper import FinalKeeperSelection
     from app.models.keeper import KeeperCandidate
     from app.models.keeper_outcome import KeeperOutcome
+    from app.models.keeper_tenure import KeeperTenure
     from app.models.mock_draft import MockDraftPick
     from app.models.optimizer import KeeperRecommendation, ManualOverride
     from app.models.roster import FinalRosterEntry
@@ -41,3 +42,4 @@ class Player(TimestampMixin, table=True):
     mock_draft_picks: list["MockDraftPick"] = Relationship(back_populates="player")
     keeper_outcomes: list["KeeperOutcome"] = Relationship(back_populates="player")
     final_keeper_selections: list["FinalKeeperSelection"] = Relationship(back_populates="player")
+    keeper_tenures: list["KeeperTenure"] = Relationship(back_populates="player")

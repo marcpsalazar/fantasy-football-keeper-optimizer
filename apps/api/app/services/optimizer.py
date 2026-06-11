@@ -19,6 +19,7 @@ from app.models import (
     Player,
     Team,
 )
+from app.services.keeper_tenure import get_tenure_map
 
 AUTO_OVERRIDE = "auto"
 EXCLUDE_OVERRIDE = "exclude"
@@ -213,6 +214,8 @@ def run_optimizer(
         ).all()
     }
 
+    tenure_map = get_tenure_map(session, league.id)
+
     candidates = [
         _build_candidate(
             league=league,
@@ -228,6 +231,7 @@ def run_optimizer(
             scenario_name=scenario,
             team_count=team_count,
             user_id=user_id,
+            consecutive_seasons=tenure_map.get((roster_entry.team_id, roster_entry.player_id)),
         )
         for roster_entry in roster_entries
         if roster_entry.team_id in team_by_id and roster_entry.player_id in players
@@ -629,6 +633,7 @@ def _build_candidate(
     scenario_name: str,
     team_count: int,
     user_id: uuid.UUID | None,
+    consecutive_seasons: int | None = None,
 ) -> KeeperCandidate:
     if player is None:
         raise OptimizerInputError(f"Missing player for roster entry {roster_entry.id}")
@@ -652,6 +657,7 @@ def _build_candidate(
             team_count=team_count,
             user_id=user_id,
             override_type=override_type,
+            consecutive_seasons=consecutive_seasons,
         )
 
     adp_pick = adp_entry.adp_pick if adp_entry else None
@@ -717,6 +723,14 @@ def _build_candidate(
         recommendation.reason = "Manual override forced keeper"
         return KeeperCandidate(recommendation, roster_entry, player, override_type, selection_priority=1)
 
+    if (
+        league.max_consecutive_keeper_seasons is not None
+        and consecutive_seasons is not None
+        and consecutive_seasons >= league.max_consecutive_keeper_seasons
+    ):
+        recommendation.reason = f"Exceeded maximum consecutive keeper seasons ({league.max_consecutive_keeper_seasons})"
+        return KeeperCandidate(recommendation, roster_entry, player, override_type)
+
     is_eligible, reason = _calculate_eligibility(
         settings,
         player,
@@ -745,6 +759,7 @@ def _build_auction_candidate(
     team_count: int,
     user_id: uuid.UUID | None,
     override_type: str,
+    consecutive_seasons: int | None = None,
 ) -> KeeperCandidate:
     auction_value = adp_entry.auction_value if adp_entry else None
     retained_salary = roster_entry.keeper_salary
@@ -799,6 +814,14 @@ def _build_auction_candidate(
         recommendation.is_eligible = True
         recommendation.reason = "Manual override forced keeper"
         return KeeperCandidate(recommendation, roster_entry, player, override_type, selection_priority=1)
+
+    if (
+        league.max_consecutive_keeper_seasons is not None
+        and consecutive_seasons is not None
+        and consecutive_seasons >= league.max_consecutive_keeper_seasons
+    ):
+        recommendation.reason = f"Exceeded maximum consecutive keeper seasons ({league.max_consecutive_keeper_seasons})"
+        return KeeperCandidate(recommendation, roster_entry, player, override_type)
 
     is_eligible, reason = _calculate_auction_eligibility(
         settings=settings,

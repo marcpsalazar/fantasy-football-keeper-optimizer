@@ -6,6 +6,7 @@ from app.models.draft import DraftPick
 from app.models.final_keeper import FinalKeeperSelection
 from app.models.keeper import KeeperCandidate
 from app.models.keeper_outcome import KeeperOutcome
+from app.models.keeper_tenure import KeeperTenure
 from app.models.league import League, Team
 from app.models.membership import LeagueMembership
 from app.models.mock_draft import MockDraftAnalysis, MockDraftPick, MockDraftSession
@@ -31,6 +32,7 @@ __all__ = [
     "FinalRosterEntry",
     "KeeperCandidate",
     "KeeperOutcome",
+    "KeeperTenure",
     "KeeperRecommendation",
     "League",
     "LeagueMembership",

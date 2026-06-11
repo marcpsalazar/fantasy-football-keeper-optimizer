@@ -220,7 +220,14 @@ import {
   type UserForm,
   type ValueWindowResult,
   type WorkspaceData,
+  type KeeperTenureRow,
   getValueWindow,
+  saveLeagueKeeperSettings,
+  loadKeeperTenure,
+  previewTenureCsv,
+  importTenureCsv,
+  deleteTenureRecord,
+  clearAllTenure,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -784,6 +791,7 @@ export function DashboardApp() {
     "draft-results": null,
     "final-rosters": null,
     adp: null,
+    "keeper-tenure": null,
   });
   const [settings, setSettings] = React.useState<OptimizerSettingsForm>(mockWorkspaceData.settings);
   const [selectedScenarioByTeam, setSelectedScenarioByTeam] = React.useState<TeamScenarioSelection>(
@@ -3561,6 +3569,32 @@ function AdminPage({
           <LeagueMembersPanel />
 
           <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+              <SlidersHorizontal className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">Keeper Rules</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Set league-level keeper eligibility constraints, including the maximum number of consecutive seasons a team may keep the same player.
+              </p>
+            </div>
+          </div>
+          <KeeperRulesPanel />
+
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+              <Upload className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-zinc-950">Keeper Tenure History</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Upload a CSV to backfill how many consecutive seasons each player has been kept by a team. This data drives the consecutive-seasons eligibility rule.
+              </p>
+            </div>
+          </div>
+          <KeeperTenurePanel />
+
+          <div className="flex items-center gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-rose-700 text-white">
               <Trash2 className="size-5" aria-hidden="true" />
             </div>
@@ -4241,6 +4275,316 @@ function LeagueRosterSettingsPanel() {
             Save League Settings
           </Button>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function KeeperRulesPanel() {
+  const { activeLeagueId, data, isBusy, refreshData } = useDashboard();
+  const current = data.league?.maxConsecutiveKeeperSeasons ?? null;
+  const [value, setValue] = React.useState<string>(current != null ? String(current) : "");
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    setValue(data.league?.maxConsecutiveKeeperSeasons != null ? String(data.league.maxConsecutiveKeeperSeasons) : "");
+  }, [data.league?.maxConsecutiveKeeperSeasons]);
+
+  const parsed = value.trim() === "" ? null : parseInt(value, 10);
+  const isValid = parsed === null || (!isNaN(parsed) && parsed >= 1);
+  const isDirty = parsed !== current;
+
+  const handleSave = async () => {
+    if (!activeLeagueId || !isValid) return;
+    setSaving(true);
+    setError("");
+    try {
+      await saveLeagueKeeperSettings(activeLeagueId, parsed);
+      await refreshData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save keeper rules.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Consecutive Season Limit</CardTitle>
+        <CardDescription>
+          Set the maximum number of consecutive seasons any team may retain the same player as a keeper. Leave blank to disable the restriction. Players who reach the limit will be marked ineligible by the optimizer.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-end gap-3">
+          <div className="w-40 space-y-1">
+            <label className="text-sm font-medium text-zinc-700" htmlFor="max-consec-seasons">
+              Max consecutive seasons
+            </label>
+            <input
+              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
+              id="max-consec-seasons"
+              min={1}
+              placeholder="No limit"
+              type="number"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+            />
+          </div>
+          <p className="pb-2 text-sm text-zinc-500">
+            {parsed != null
+              ? `Players kept for ${parsed} consecutive season${parsed !== 1 ? "s" : ""} will be ineligible.`
+              : "No consecutive season limit is enforced."}
+          </p>
+        </div>
+        {!isValid && (
+          <p className="text-sm text-rose-600">Value must be a whole number ≥ 1 or left blank.</p>
+        )}
+        {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+        <div className="flex justify-end">
+          <Button
+            disabled={isBusy || saving || data.source !== "api" || !activeLeagueId || !isDirty || !isValid}
+            onClick={() => void handleSave()}
+          >
+            <Save className="size-4" aria-hidden="true" />
+            Save Keeper Rules
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function KeeperTenurePanel() {
+  const { activeLeagueId, data, isBusy } = useDashboard();
+  const leagueId = activeLeagueId ?? "";
+  const maxSn = data.league?.maxConsecutiveKeeperSeasons ?? null;
+
+  const [tenureRows, setTenureRows] = React.useState<KeeperTenureRow[]>([]);
+  const [loadingRows, setLoadingRows] = React.useState(false);
+  const [csvText, setCsvText] = React.useState("");
+  const [preview, setPreview] = React.useState<CsvPreviewResult | null>(null);
+  const [previewing, setPreviewing] = React.useState(false);
+  const [importing, setImporting] = React.useState(false);
+  const [importResult, setImportResult] = React.useState<{ importedCount: number; updatedCount: number; skippedCount: number } | null>(null);
+  const [error, setError] = React.useState("");
+
+  const loadTenure = React.useCallback(async () => {
+    if (!leagueId) return;
+    setLoadingRows(true);
+    try {
+      const rows = await loadKeeperTenure(leagueId);
+      setTenureRows(rows);
+    } catch {
+      // silently ignore
+    } finally {
+      setLoadingRows(false);
+    }
+  }, [leagueId]);
+
+  React.useEffect(() => {
+    void loadTenure();
+  }, [loadTenure]);
+
+  const handlePreview = async () => {
+    if (!leagueId || !csvText.trim()) return;
+    setPreviewing(true);
+    setError("");
+    setPreview(null);
+    try {
+      const result = await previewTenureCsv(leagueId, csvText);
+      setPreview(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Preview failed.");
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!leagueId || !csvText.trim()) return;
+    setImporting(true);
+    setError("");
+    setImportResult(null);
+    try {
+      const result = await importTenureCsv(leagueId, csvText);
+      setImportResult(result);
+      setCsvText("");
+      setPreview(null);
+      await loadTenure();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Import failed.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleDelete = async (tenureId: string) => {
+    if (!leagueId) return;
+    try {
+      await deleteTenureRecord(leagueId, tenureId);
+      await loadTenure();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed.");
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!leagueId || !window.confirm("Clear all keeper tenure records for this league? This cannot be undone.")) return;
+    try {
+      await clearAllTenure(leagueId);
+      await loadTenure();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Clear failed.");
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Keeper Tenure Records</CardTitle>
+        <CardDescription>
+          ESPN, Sleeper, and Yahoo do not expose consecutive keeper season counts through their APIs — this data must be entered manually. Upload a CSV with columns: <code className="text-xs bg-zinc-100 px-1 rounded">player, position, team, consecutive_seasons</code> (and optional <code className="text-xs bg-zinc-100 px-1 rounded">last_kept_season_year</code>). Each import upserts records; existing entries are updated, not duplicated.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {tenureRows.length > 0 ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-zinc-700">
+                {tenureRows.length} record{tenureRows.length !== 1 ? "s" : ""} on file
+              </p>
+              <Button
+                className="text-xs"
+                disabled={isBusy}
+                size="sm"
+                variant="outline"
+                onClick={() => void handleClearAll()}
+              >
+                Clear All
+              </Button>
+            </div>
+            <div className="overflow-x-auto rounded-md border border-zinc-200">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Team</th>
+                    <th className="px-3 py-2 text-left">Player</th>
+                    <th className="px-3 py-2 text-left">Pos</th>
+                    <th className="px-3 py-2 text-center">Seasons Kept</th>
+                    <th className="px-3 py-2 text-center">Last Year</th>
+                    <th className="px-3 py-2 text-center">Status</th>
+                    <th className="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {tenureRows.map((row) => (
+                    <tr key={row.tenureId} className="hover:bg-zinc-50">
+                      <td className="px-3 py-2 text-zinc-700">{row.teamName ?? "—"}</td>
+                      <td className="px-3 py-2 font-medium text-zinc-900">{row.playerName ?? "—"}</td>
+                      <td className="px-3 py-2 text-zinc-500">{row.position ?? "—"}</td>
+                      <td className="px-3 py-2 text-center">
+                        <span className={row.atLimit ? "font-semibold text-rose-600" : "text-zinc-700"}>
+                          {row.consecutiveSeasons}
+                          {maxSn != null ? `/${maxSn}` : ""}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-center text-zinc-500">{row.lastKeptSeasonYear ?? "—"}</td>
+                      <td className="px-3 py-2 text-center">
+                        {row.atLimit ? (
+                          <Badge variant="danger" className="text-[9px]">Ineligible</Badge>
+                        ) : (
+                          <Badge variant="success" className="text-[9px]">Eligible</Badge>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          className="text-xs text-rose-500 hover:text-rose-700"
+                          title="Remove this tenure record"
+                          onClick={() => void handleDelete(row.tenureId)}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          !loadingRows && (
+            <p className="rounded-md bg-zinc-50 border border-zinc-200 px-4 py-3 text-sm text-zinc-500">
+              No tenure records on file. Upload a CSV below to add them.
+            </p>
+          )
+        )}
+
+        <div className="space-y-3">
+          <label className="block text-sm font-medium text-zinc-700">Upload CSV</label>
+          <textarea
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600"
+            disabled={isBusy || previewing || importing}
+            placeholder={"player,position,team,consecutive_seasons\nPatrick Mahomes,QB,Team A,2\nJustin Jefferson,WR,Team B,3"}
+            rows={6}
+            value={csvText}
+            onChange={(e) => { setCsvText(e.target.value); setPreview(null); setImportResult(null); }}
+          />
+          <div className="flex gap-2">
+            <Button
+              disabled={isBusy || previewing || importing || !csvText.trim() || data.source !== "api"}
+              size="sm"
+              variant="outline"
+              onClick={() => void handlePreview()}
+            >
+              {previewing ? "Previewing…" : "Preview"}
+            </Button>
+            <Button
+              disabled={isBusy || importing || !csvText.trim() || data.source !== "api"}
+              size="sm"
+              onClick={() => void handleImport()}
+            >
+              {importing ? "Importing…" : "Import"}
+            </Button>
+          </div>
+        </div>
+
+        {preview && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Badge variant={preview.valid ? "success" : "danger"}>
+                {preview.valid ? "Valid" : "Has Errors"}
+              </Badge>
+              <span className="text-sm text-zinc-500">
+                {preview.validRows} of {preview.totalRows} rows valid
+              </span>
+            </div>
+            {preview.errors.length > 0 && (
+              <ul className="rounded-md bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700 space-y-0.5">
+                {preview.errors.map((e, i) => (
+                  <li key={i}>{e.rowNumber != null ? `Row ${e.rowNumber}: ` : ""}{e.message}</li>
+                ))}
+              </ul>
+            )}
+            {preview.warnings.length > 0 && (
+              <ul className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700 space-y-0.5">
+                {preview.warnings.map((w, i) => (
+                  <li key={i}>{w.rowNumber != null ? `Row ${w.rowNumber}: ` : ""}{w.message}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {importResult && (
+          <p className="rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-700">
+            Import complete — {importResult.importedCount} added, {importResult.updatedCount} updated, {importResult.skippedCount} skipped.
+          </p>
+        )}
+
+        {error ? <p className="text-sm text-rose-700">{error}</p> : null}
       </CardContent>
     </Card>
   );
@@ -11025,25 +11369,48 @@ function KeeperRecommendationsTable({
         header: "Player",
         cell: ({ row }) => {
           const rec = row.original;
+          const maxSn = workspaceData.league?.maxConsecutiveKeeperSeasons ?? null;
+          const sn = rec.consecutiveSeasons ?? null;
+          const tenureBadgeVariant: "danger" | "warning" | "info" =
+            sn != null && maxSn != null && sn >= maxSn
+              ? "danger"
+              : sn != null && maxSn != null && sn >= maxSn - 1
+                ? "warning"
+                : "info";
           return (
-            <PlayerCell
-              imageUrl={rec.imageUrl}
-              name={rec.player}
-              nflTeam={rec.nflTeam}
-              position={rec.position}
-              onClick={() => {
-                setSelectedRec(rec);
-                const hasExplanation = rec.id
-                  ? !!(localExplanations[rec.id] ?? rec.aiExplanation)
-                  : !!rec.aiExplanation;
-                if (!hasExplanation && rec.id && !loadingIds.has(rec.id) && !errorIds.has(rec.id)) {
-                  handleGenerateExplanation(rec);
-                }
-                if (rec.id && !valueWindowCache[rec.id] && !valueWindowLoading.has(rec.id)) {
-                  handleFetchValueWindow(rec);
-                }
-              }}
-            />
+            <div className="flex items-center gap-1.5">
+              <PlayerCell
+                imageUrl={rec.imageUrl}
+                name={rec.player}
+                nflTeam={rec.nflTeam}
+                position={rec.position}
+                onClick={() => {
+                  setSelectedRec(rec);
+                  const hasExplanation = rec.id
+                    ? !!(localExplanations[rec.id] ?? rec.aiExplanation)
+                    : !!rec.aiExplanation;
+                  if (!hasExplanation && rec.id && !loadingIds.has(rec.id) && !errorIds.has(rec.id)) {
+                    handleGenerateExplanation(rec);
+                  }
+                  if (rec.id && !valueWindowCache[rec.id] && !valueWindowLoading.has(rec.id)) {
+                    handleFetchValueWindow(rec);
+                  }
+                }}
+              />
+              {sn != null && (
+                <Badge
+                  className="shrink-0 text-[9px] py-0 px-1"
+                  title={
+                    maxSn != null
+                      ? `${sn} of ${maxSn} consecutive seasons kept`
+                      : `${sn} consecutive season${sn !== 1 ? "s" : ""} kept`
+                  }
+                  variant={tenureBadgeVariant}
+                >
+                  {maxSn != null ? `${sn}/${maxSn}` : `${sn}sn`}
+                </Badge>
+              )}
+            </div>
           );
         },
       },
