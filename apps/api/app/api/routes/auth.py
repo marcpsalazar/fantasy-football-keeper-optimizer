@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import re
+import urllib.request
 from typing import Any, Literal
 import uuid
 
@@ -15,10 +18,12 @@ from app.models import (
     KeeperRecommendation,
     ManualOverride,
     OptimizerSettings,
+    Player,
     Team,
     TeamScenarioSelection,
     User,
 )
+from app.services.sleeper_import import SLEEPER_THUMB_URL
 from app.schemas.optimizer import OptimizerSettingsUpdate
 from app.services.auth import (
     clear_session_cookie,
@@ -479,3 +484,72 @@ def _default_settings_payload(settings: AppDefaultOptimizerSettings) -> dict[str
         "created_at": settings.created_at.isoformat(),
         "updated_at": settings.updated_at.isoformat(),
     }
+
+
+@router.post("/admin/players/backfill-images")
+def backfill_player_images(
+    key: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+    settings=Depends(get_settings),
+) -> dict[str, Any]:
+    """Match DB players with no image_url to Sleeper by name+position and populate image_url + external_id."""
+    if key != settings.session_secret:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+    _SUFFIX_RE = re.compile(r"\s+(jr\.?|sr\.?|ii|iii|iv|v|vi)$", re.IGNORECASE)
+
+    def strip_suffix(name: str) -> str:
+        return _SUFFIX_RE.sub("", name).strip()
+
+    req = urllib.request.Request(
+        "https://api.sleeper.app/v1/players/nfl",
+        headers={"User-Agent": "keeper-optimizer/1.0", "Accept": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        players_db = json.loads(resp.read().decode("utf-8"))
+
+    _pos_map = {"QB": "QB", "RB": "RB", "WR": "WR", "TE": "TE", "K": "K", "DEF": "DST", "DST": "DST"}
+    _valid = frozenset({"QB", "RB", "WR", "TE", "K", "DST"})
+
+    lookup: dict[str, list[tuple[str, str]]] = {}
+    for pid, p in players_db.items():
+        if not isinstance(p, dict):
+            continue
+        first = (p.get("first_name") or "").strip()
+        last = (p.get("last_name") or "").strip()
+        full = p.get("full_name") or f"{first} {last}".strip()
+        if not full:
+            continue
+        pos = _pos_map.get(str(p.get("position") or "").upper())
+        if pos not in _valid:
+            continue
+        entry = (str(pid), SLEEPER_THUMB_URL.format(pid))
+        for variant in {full.lower(), strip_suffix(full).lower()}:
+            lookup.setdefault(f"{variant}|{pos}", []).append(entry)
+
+    db_players = session.exec(select(Player).where(Player.image_url.is_(None))).all()  # type: ignore[union-attr]
+    updated = skipped_ambiguous = skipped_no_match = 0
+
+    for player in db_players:
+        lookup_key = f"{player.full_name.lower()}|{player.position}"
+        if lookup_key not in lookup:
+            lookup_key = f"{strip_suffix(player.full_name).lower()}|{player.position}"
+        matches = lookup.get(lookup_key, [])
+        if not matches:
+            skipped_no_match += 1
+            continue
+        if len(matches) > 1:
+            team_matches = [(pid, url) for pid, url in matches if players_db[pid].get("team") == player.nfl_team]
+            if len(team_matches) == 1:
+                matches = team_matches
+            else:
+                skipped_ambiguous += 1
+                continue
+        sleeper_id, image_url = matches[0]
+        player.image_url = image_url
+        if player.external_id is None:
+            player.external_id = sleeper_id
+        updated += 1
+
+    session.commit()
+    return {"updated": updated, "skipped_no_match": skipped_no_match, "skipped_ambiguous": skipped_ambiguous}
