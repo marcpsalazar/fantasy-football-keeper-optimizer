@@ -17,6 +17,7 @@ from sqlmodel import Session, select
 
 from app.models import FinalKeeperSelection, KeeperRecommendation, Player, Team
 from app.models.league import League
+from app.services.keeper_tenure import update_tenure_after_finalization
 
 
 class FinalKeeperError(ValueError):
@@ -213,6 +214,8 @@ def finalize_league_keepers(
     league.keepers_finalized_by_user_id = user_id
     session.add(league)
     session.commit()
+
+    update_tenure_after_finalization(session, league_id, league.season_year)
 
     return {
         "is_finalized": True,

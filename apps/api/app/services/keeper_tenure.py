@@ -326,6 +326,58 @@ def clear_all_tenure(session: Session, league_id: uuid.UUID) -> int:
 # Lookup helper used by optimizer
 # ---------------------------------------------------------------------------
 
+def update_tenure_after_finalization(
+    session: Session,
+    league_id: uuid.UUID,
+    season_year: int,
+) -> None:
+    """Called when keepers are finalized.
+
+    - Players in FinalKeeperSelection for this season: increment consecutive_seasons
+      by 1 (idempotent — skipped if last_kept_season_year already equals season_year).
+    - Players with an existing tenure record who are NOT kept this season: record deleted.
+    - Players kept for the first time (no prior tenure record): created with count of 1.
+    """
+    from app.models.final_keeper import FinalKeeperSelection
+
+    selections = session.exec(
+        select(FinalKeeperSelection).where(
+            FinalKeeperSelection.league_id == league_id,
+            FinalKeeperSelection.season_year == season_year,
+        )
+    ).all()
+
+    kept_pairs = {(s.team_id, s.player_id) for s in selections}
+
+    existing_tenures = session.exec(
+        select(KeeperTenure).where(KeeperTenure.league_id == league_id)
+    ).all()
+    existing_map = {(t.team_id, t.player_id): t for t in existing_tenures}
+
+    for sel in selections:
+        key = (sel.team_id, sel.player_id)
+        tenure = existing_map.get(key)
+        if tenure is not None:
+            if tenure.last_kept_season_year != season_year:
+                tenure.consecutive_seasons += 1
+                tenure.last_kept_season_year = season_year
+                session.add(tenure)
+        else:
+            session.add(KeeperTenure(
+                league_id=league_id,
+                team_id=sel.team_id,
+                player_id=sel.player_id,
+                consecutive_seasons=1,
+                last_kept_season_year=season_year,
+            ))
+
+    for key, tenure in existing_map.items():
+        if key not in kept_pairs:
+            session.delete(tenure)
+
+    session.commit()
+
+
 def get_tenure_map(
     session: Session,
     league_id: uuid.UUID,
