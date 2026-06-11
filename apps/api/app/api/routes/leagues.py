@@ -44,6 +44,11 @@ from app.services.csv_imports import (
     import_final_rosters_csv,
 )
 from app.services.adp_refresh import ADPRefreshError, refresh_adp_from_api
+from app.services.espn_import import (
+    EspnAPIError,
+    commit_espn_import,
+    preview_espn_import,
+)
 from app.services.sleeper_import import (
     SleeperAPIError,
     commit_sleeper_import,
@@ -183,6 +188,13 @@ class LeagueMemberRoleRequest(BaseModel):
 
 class LeagueAvatarRequest(BaseModel):
     avatar_data_url: str | None = None
+
+
+class EspnImportRequest(BaseModel):
+    espn_league_id: int
+    season_year: int
+    espn_s2: str | None = None
+    swid: str | None = None
 
 
 class SleeperImportRequest(BaseModel):
@@ -622,6 +634,65 @@ def commit_sleeper(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {
         "season_year": result.season_year,
+        "teams_upserted": result.teams_upserted,
+        "draft_picks_upserted": result.draft_picks_upserted,
+        "roster_entries_upserted": result.roster_entries_upserted,
+        "warnings": result.warnings,
+    }
+
+
+@router.post("/leagues/{league_id}/import/espn/preview")
+def preview_espn(
+    league_id: uuid.UUID,
+    payload: EspnImportRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    result = preview_espn_import(
+        session,
+        league_id,
+        payload.espn_league_id,
+        payload.season_year,
+        payload.espn_s2,
+        payload.swid,
+    )
+    return {
+        "valid": result.valid,
+        "season_year": result.season_year,
+        "league_name": result.league_name,
+        "teams": result.teams,
+        "draft_picks_count": result.draft_picks_count,
+        "roster_entries_count": result.roster_entries_count,
+        "warnings": result.warnings,
+        "errors": result.errors,
+    }
+
+
+@router.post("/leagues/{league_id}/import/espn/commit")
+def commit_espn(
+    league_id: uuid.UUID,
+    payload: EspnImportRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    try:
+        result = commit_espn_import(
+            session,
+            league_id,
+            payload.espn_league_id,
+            payload.season_year,
+            payload.espn_s2,
+            payload.swid,
+        )
+    except EspnAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {
+        "season_year": result.season_year,
+        "league_name": result.league_name,
         "teams_upserted": result.teams_upserted,
         "draft_picks_upserted": result.draft_picks_upserted,
         "roster_entries_upserted": result.roster_entries_upserted,

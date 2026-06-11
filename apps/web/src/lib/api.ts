@@ -736,6 +736,100 @@ export async function commitSleeperImport(
   };
 }
 
+// ---------------------------------------------------------------------------
+// ESPN Fantasy import
+// ---------------------------------------------------------------------------
+
+export type EspnImportPreview = {
+  valid: boolean;
+  seasonYear: number;
+  leagueName: string;
+  teams: Array<{ teamId: number; teamName: string; ownerName: string | null; playerCount: number }>;
+  draftPicksCount: number;
+  rosterEntriesCount: number;
+  warnings: string[];
+  errors: string[];
+};
+
+export type EspnImportResult = {
+  seasonYear: number;
+  leagueName: string;
+  teamsUpserted: number;
+  draftPicksUpserted: number;
+  rosterEntriesUpserted: number;
+  warnings: string[];
+};
+
+export async function previewEspnImport(
+  leagueId: string,
+  espnLeagueId: number,
+  seasonYear: number,
+  espnS2?: string,
+  swid?: string,
+): Promise<EspnImportPreview> {
+  const row = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/import/espn/preview`,
+    {
+      body: JSON.stringify({
+        espn_league_id: espnLeagueId,
+        season_year: seasonYear,
+        espn_s2: espnS2 || null,
+        swid: swid || null,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  return {
+    valid: Boolean(row.valid),
+    seasonYear: Number(row.season_year),
+    leagueName: text(row.league_name),
+    teams: ((row.teams as unknown[]) ?? []).map((t: unknown) => {
+      const team = t as Record<string, unknown>;
+      return {
+        teamId: Number(team.team_id),
+        teamName: String(team.team_name ?? ""),
+        ownerName: team.owner_name != null ? String(team.owner_name) : null,
+        playerCount: Number(team.player_count ?? 0),
+      };
+    }),
+    draftPicksCount: Number(row.draft_picks_count ?? 0),
+    rosterEntriesCount: Number(row.roster_entries_count ?? 0),
+    warnings: Array.isArray(row.warnings) ? (row.warnings as string[]) : [],
+    errors: Array.isArray(row.errors) ? (row.errors as string[]) : [],
+  };
+}
+
+export async function commitEspnImport(
+  leagueId: string,
+  espnLeagueId: number,
+  seasonYear: number,
+  espnS2?: string,
+  swid?: string,
+): Promise<EspnImportResult> {
+  const row = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/import/espn/commit`,
+    {
+      body: JSON.stringify({
+        espn_league_id: espnLeagueId,
+        season_year: seasonYear,
+        espn_s2: espnS2 || null,
+        swid: swid || null,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  return {
+    seasonYear: Number(row.season_year),
+    leagueName: text(row.league_name),
+    teamsUpserted: Number(row.teams_upserted ?? 0),
+    draftPicksUpserted: Number(row.draft_picks_upserted ?? 0),
+    rosterEntriesUpserted: Number(row.roster_entries_upserted ?? 0),
+    warnings: Array.isArray(row.warnings) ? (row.warnings as string[]) : [],
+  };
+}
+
 export type TradePlayerRow = {
   playerId: string;
   playerName: string;

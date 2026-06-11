@@ -38,6 +38,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
 - **Player headshots**: player dialogs (keeper explanation modal and mock draft player detail) display the player's headshot sourced from the Sleeper CDN, with a team-color circle fallback showing the team abbreviation when no photo is available.
 - **Sleeper league import**: paste a Sleeper League ID to automatically pull teams, draft results, and final rosters — preview first, then commit.
 - **Yahoo Fantasy league import**: connect via Yahoo OAuth to automatically pull teams, draft results, and final rosters from a Yahoo Fantasy Sports league — preview first, then commit.
+- **ESPN Fantasy league import**: enter an ESPN League ID and season year to automatically pull teams, draft results, and final rosters from an ESPN Fantasy league — preview first, then commit. Public leagues need no credentials; private leagues require the `espn_s2` and `SWID` cookies from the user's browser session.
 - **Mock Draft**: run a simulated draft against AI-powered bots, get a personalized pre-draft strategy plan, and receive a graded post-draft analysis.
   - Full snake draft board with keeper forfeit pre-placement.
   - 9 bot personalities × 3 difficulty levels, configurable per team.
@@ -593,6 +594,20 @@ Missing teams are warnings because the import path can create missing teams auto
 3. Click `Preview` to validate the import — the panel shows which teams, draft picks, and roster entries will be created.
 4. Click `Import` to commit.
 
+`Import from Yahoo Fantasy` pulls teams, draft results, final rosters, and league settings from a Yahoo Fantasy Sports league via OAuth:
+
+1. Click `Connect Yahoo Account` and authorize access. You will be redirected back to the app.
+2. Select your Yahoo league from the dropdown (or paste the league key manually).
+3. Optionally check `Also import league settings` to sync scoring format and roster slots.
+4. Click `Preview`, review the summary, then click `Import`.
+
+`Import from ESPN Fantasy` pulls teams, draft results, and final rosters from an ESPN Fantasy league:
+
+1. Enter your ESPN League ID (found in the ESPN URL, e.g. `fantasy.espn.com/football/league?leagueId=123456`).
+2. Enter the season year.
+3. For private leagues, expand "Private league?" and enter your `espn_s2` and `SWID` cookies (find them in browser DevTools → Application → Cookies on `fantasy.espn.com`).
+4. Click `Preview` to validate, then click `Import` to commit.
+
 `Roster Settings` lets admins configure the mock draft round count, allowed positions, roster slot counts, position caps, and bench limits for the league.
 
 `AI Usage` (platform admin only) shows a log of recent AI requests with token counts, estimated cost, feature type, and whether the monthly budget is currently exceeded. Use this to monitor spending when AI features are enabled.
@@ -980,6 +995,9 @@ POST   /api/auth/logout
 GET    /api/auth/me
 PATCH  /api/auth/profile
 POST   /api/auth/password
+GET    /api/auth/yahoo/init
+GET    /api/auth/yahoo/callback
+GET    /api/auth/yahoo/status
 
 POST   /api/admin/users
 GET    /api/admin/users
@@ -1017,6 +1035,13 @@ POST   /api/leagues/{league_id}/final-rosters/import
 
 POST   /api/leagues/{league_id}/import/sleeper/preview
 POST   /api/leagues/{league_id}/import/sleeper/commit
+
+POST   /api/leagues/{league_id}/import/espn/preview
+POST   /api/leagues/{league_id}/import/espn/commit
+
+GET    /api/leagues/{league_id}/import/yahoo/user-leagues
+POST   /api/leagues/{league_id}/import/yahoo/preview
+POST   /api/leagues/{league_id}/import/yahoo/commit
 
 POST   /api/leagues/{league_id}/adp-snapshots
 GET    /api/leagues/{league_id}/adp-snapshots
@@ -1173,6 +1198,5 @@ CREATE_TABLES_ON_STARTUP=true uvicorn app.main:app --reload
 
 ## Current Limitations
 
-- ESPN league import is not implemented. Sleeper and Yahoo Fantasy Sports are the supported third-party league providers.
 - Frontend CRUD is focused on users, teams, imports, optimizer runs, overrides, scenarios, draft impact, and exports.
 - PDF reports are intentionally simple and dependency-free.

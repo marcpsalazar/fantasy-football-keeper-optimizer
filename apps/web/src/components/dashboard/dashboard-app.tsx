@@ -119,11 +119,13 @@ import {
   previewCsv,
   readMockDraft,
   analyzeKeeperTrade,
+  commitEspnImport,
   commitSleeperImport,
   commitYahooImport,
   getYahooAuthStatus,
   initYahooAuth,
   listYahooUserLeagues,
+  previewEspnImport,
   previewSleeperImport,
   previewYahooImport,
   removeLeagueMember,
@@ -155,6 +157,7 @@ import {
   type CsvImportKind,
   type CsvPreviewResult,
   type KeeperRevealResult,
+  type EspnImportPreview,
   type SleeperImportPreview,
   type SmtpStatus,
   type YahooAuthStatus,
@@ -391,9 +394,9 @@ const screenGuides: ScreenGuide[] = [
   {
     title: "Admin",
     icon: ShieldCheck,
-    bestFor: "Managing users, team assignments, CSV imports, and ADP snapshots.",
-    howToRead: "Admins preview and import league source data here. ADP is the market baseline; lower ADP picks mean earlier, more expensive players.",
-    watchFor: "Preview before import. Missing ADP makes scores unreliable, and imported data should be followed by Run Optimizer.",
+    bestFor: "Managing users, team assignments, league data imports, and ADP snapshots.",
+    howToRead: "Admins import league source data here — from Sleeper, Yahoo Fantasy, or ESPN (platform imports), or by pasting CSV directly. ADP is the market baseline; lower ADP picks mean earlier, more expensive players. Roster Settings controls mock draft round count and position slot configuration.",
+    watchFor: "Preview before import. Platform imports (Sleeper, Yahoo, ESPN) require a valid league ID and season year; private ESPN leagues also need espn_s2 and SWID cookies. Missing ADP makes scores unreliable. Always run the optimizer after any import.",
     view: "admin",
     adminOnly: true,
   },
@@ -492,7 +495,7 @@ const screenGuides: ScreenGuide[] = [
 const workflowSteps: WorkflowStep[] = [
   {
     title: "Confirm the source data",
-    text: "Check teams, draft results, final rosters, and ADP before trusting recommendations. Admins should preview and import CSVs from Admin when those inputs need to change.",
+    text: "Check teams, draft results, final rosters, and ADP before trusting recommendations. Admins can pull data automatically from Sleeper, Yahoo Fantasy, or ESPN via the platform import panels in Admin, or paste CSV directly. Always run the optimizer after any import.",
     view: "dashboard",
   },
   {
@@ -561,7 +564,7 @@ const controlGuides: ControlGuide[] = [
   {
     title: "Preview and Import",
     icon: Upload,
-    text: "Preview validates pasted CSV before writes. Import commits valid draft, roster, or ADP rows. Always run the optimizer after an import when you want recommendations to reflect the new data.",
+    text: "Preview validates data before any writes — for CSV pastes this catches errors row by row; for platform imports (Sleeper, Yahoo, ESPN) it shows which teams, picks, and roster entries will be created. Import commits the validated data. Always run the optimizer after an import when you want recommendations to reflect the new data.",
   },
   {
     title: "Run All Presets",
@@ -4542,6 +4545,7 @@ function AdminDataImports({
     <div className="space-y-5">
       <SleeperImportPanel />
       <YahooImportPanel />
+      <EspnImportPanel />
       <KeeperOutcomesImportPanel />
       <div className="grid gap-5 xl:grid-cols-2">
         <CsvImportPanel
@@ -4974,6 +4978,236 @@ function YahooImportPanel() {
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+function EspnImportPanel() {
+  const { activeLeagueId, data, isBusy, refreshData } = useDashboard();
+  const [espnLeagueId, setEspnLeagueId] = React.useState("");
+  const [seasonYear, setSeasonYear] = React.useState<string>("");
+  const [espnS2, setEspnS2] = React.useState("");
+  const [swid, setSwid] = React.useState("");
+  const [showCredentials, setShowCredentials] = React.useState(false);
+  const [preview, setPreview] = React.useState<EspnImportPreview | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [successMessage, setSuccessMessage] = React.useState("");
+
+  const defaultYear = data?.league?.seasonYear ?? new Date().getFullYear();
+
+  const handlePreview = async () => {
+    if (!activeLeagueId || !espnLeagueId.trim() || !seasonYear.trim()) return;
+    setLoading(true);
+    setError("");
+    setSuccessMessage("");
+    setPreview(null);
+    try {
+      const result = await previewEspnImport(
+        activeLeagueId,
+        parseInt(espnLeagueId.trim(), 10),
+        parseInt(seasonYear, 10),
+        espnS2.trim() || undefined,
+        swid.trim() || undefined,
+      );
+      setPreview(result);
+    } catch {
+      setError("Preview failed — check the ESPN League ID and season year.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!activeLeagueId || !espnLeagueId.trim() || !seasonYear.trim() || !preview?.valid) return;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await commitEspnImport(
+        activeLeagueId,
+        parseInt(espnLeagueId.trim(), 10),
+        parseInt(seasonYear, 10),
+        espnS2.trim() || undefined,
+        swid.trim() || undefined,
+      );
+      await refreshData();
+      setSuccessMessage(
+        `Import complete: ${result.teamsUpserted} teams, ${result.draftPicksUpserted} draft picks, ${result.rosterEntriesUpserted} roster entries.`,
+      );
+      setPreview(null);
+      setEspnLeagueId("");
+      setSeasonYear("");
+      setEspnS2("");
+      setSwid("");
+    } catch {
+      setError("Import failed. Check the API logs.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const busy = isBusy || loading;
+  const canPreview = !busy && !!espnLeagueId.trim() && !!seasonYear.trim();
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Import from ESPN Fantasy</CardTitle>
+        <CardDescription>
+          Pull teams, draft results, and final rosters from an ESPN Fantasy league. Find your league ID in the ESPN URL
+          (e.g. fantasy.espn.com/football/league?leagueId=<strong>123456</strong>).
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+          <div className="grid gap-2">
+            <Label htmlFor="espn-league-id">ESPN League ID</Label>
+            <Input
+              id="espn-league-id"
+              disabled={busy}
+              onChange={(e) => { setEspnLeagueId(e.target.value); setPreview(null); }}
+              placeholder="e.g. 123456"
+              value={espnLeagueId}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="espn-season-year">Season Year</Label>
+            <Input
+              id="espn-season-year"
+              disabled={busy}
+              min={2000}
+              max={2100}
+              onChange={(e) => { setSeasonYear(e.target.value); setPreview(null); }}
+              placeholder={String(defaultYear)}
+              type="number"
+              className="w-28"
+              value={seasonYear}
+            />
+          </div>
+        </div>
+        <div>
+          <button
+            type="button"
+            className="text-xs text-zinc-500 underline hover:text-zinc-700"
+            onClick={() => setShowCredentials((v) => !v)}
+          >
+            {showCredentials ? "Hide" : "Private league?"} — enter ESPN credentials
+          </button>
+          {showCredentials ? (
+            <div className="mt-3 grid gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <p className="text-xs text-zinc-500">
+                For private leagues, provide your <code className="font-mono">espn_s2</code> and <code className="font-mono">SWID</code> cookies from{" "}
+                <strong>fantasy.espn.com</strong>. Open browser DevTools → Application → Cookies to find them.
+              </p>
+              <div className="grid gap-2">
+                <Label htmlFor="espn-s2" className="text-xs">espn_s2 cookie</Label>
+                <Input
+                  id="espn-s2"
+                  disabled={busy}
+                  onChange={(e) => setEspnS2(e.target.value)}
+                  placeholder="AEB..."
+                  type="password"
+                  value={espnS2}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="espn-swid" className="text-xs">SWID cookie</Label>
+                <Input
+                  id="espn-swid"
+                  disabled={busy}
+                  onChange={(e) => setSwid(e.target.value)}
+                  placeholder="{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}"
+                  value={swid}
+                />
+              </div>
+            </div>
+          ) : null}
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Button
+            disabled={!canPreview}
+            onClick={() => { void handlePreview(); }}
+            variant="outline"
+          >
+            <ListChecks className="size-4" aria-hidden="true" />
+            Preview
+          </Button>
+          <Button
+            disabled={busy || !preview?.valid}
+            onClick={() => { void handleImport(); }}
+          >
+            <Upload className="size-4" aria-hidden="true" />
+            Import
+          </Button>
+        </div>
+        {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+        {successMessage && !preview ? (
+          <p className="text-sm text-emerald-700">{successMessage}</p>
+        ) : null}
+        {preview ? <EspnPreviewSummary preview={preview} /> : (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-600">
+            Enter an ESPN League ID and season year, then click Preview to validate before importing.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function EspnPreviewSummary({ preview }: { preview: EspnImportPreview }) {
+  return (
+    <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={preview.valid ? "success" : "danger"}>
+          {preview.valid ? "Ready" : "Error"}
+        </Badge>
+        {preview.valid ? (
+          <span className="text-sm text-zinc-700">
+            {preview.leagueName} · Season {preview.seasonYear} · {preview.teams.length} teams · {preview.draftPicksCount} draft picks · {preview.rosterEntriesCount} roster entries
+          </span>
+        ) : null}
+      </div>
+
+      {preview.errors.length > 0 ? (
+        <div className="space-y-1">
+          {preview.errors.map((e, i) => (
+            <p key={i} className="text-sm text-rose-700">{e}</p>
+          ))}
+        </div>
+      ) : null}
+
+      {preview.warnings.length > 0 ? (
+        <div className="space-y-1">
+          {preview.warnings.map((w, i) => (
+            <p key={i} className="text-xs text-amber-700">{w}</p>
+          ))}
+        </div>
+      ) : null}
+
+      {preview.valid && preview.teams.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-zinc-200 text-left text-zinc-500">
+                <th className="pb-1 pr-3 font-medium">ID</th>
+                <th className="pb-1 pr-3 font-medium">Team</th>
+                <th className="pb-1 pr-3 font-medium">Owner</th>
+                <th className="pb-1 font-medium text-right">Players</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.teams.map((team) => (
+                <tr key={team.teamId} className="border-b border-zinc-100 last:border-0">
+                  <td className="py-1 pr-3 text-zinc-500">{team.teamId}</td>
+                  <td className="py-1 pr-3 font-medium text-zinc-900">{team.teamName}</td>
+                  <td className="py-1 pr-3 text-zinc-500">{team.ownerName ?? "—"}</td>
+                  <td className="py-1 text-right text-zinc-700">{team.playerCount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
