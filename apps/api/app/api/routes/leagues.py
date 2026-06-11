@@ -89,6 +89,7 @@ from app.services.optimizer import (
 from app.services.pdf_export import PDFExportError, build_team_outlooks_pdf
 from app.services.auth import (
     assert_league_admin,
+    current_user_or_none,
     require_current_user,
     require_platform_admin,
 )
@@ -2543,10 +2544,15 @@ def get_ai_usage(
 
 @router.post("/admin/players/backfill-images")
 def backfill_player_images(
-    _: User | None = Depends(require_platform_admin),
+    x_admin_key: str | None = Query(default=None, alias="key"),
+    _: User | None = Depends(current_user_or_none),
     session: Session = Depends(get_session),
+    settings=Depends(get_settings),
 ) -> dict[str, Any]:
     """Match DB players with no image_url to Sleeper by name+position and populate image_url + external_id."""
+    if x_admin_key != settings.session_secret:
+        if _ is None or getattr(_, "role", None) != "platform_admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     import json
     import re
     import urllib.request
