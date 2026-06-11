@@ -170,7 +170,25 @@ points_against: float
 waiver_priority: int | None
 ```
 
+### FAAB Configuration on League
+
+Add to `League` model (`apps/api/app/models/league.py`):
+
+```python
+waiver_type: str | None       # "faab" | "priority" | "none"
+faab_budget: int | None       # total season budget (e.g., 100); null if waiver_type != "faab"
+```
+
+These are set manually in league settings OR auto-populated during the first successful in-season sync (see platform notes below).
+
 ### Extensions to Existing Models
+
+**`TeamStandings`** — add FAAB fields (same model, no separate table needed):
+
+```python
+faab_spent: float | None      # cumulative FAAB spent this season
+faab_remaining: float | None  # computed: league.faab_budget - faab_spent; null if not FAAB league
+```
 
 **`Player`** (`apps/api/app/models/player.py`) — add three fields:
 
@@ -195,7 +213,8 @@ Enables injury filtering across all queries without joining through `InSeasonRos
 | `yahoo_in_season.py` | Yahoo roster/matchup fetch | Reuses `yahoo_get()` from `yahoo_oauth.py` (auto-refresh built-in) |
 | `espn_in_season.py` | ESPN matchup/roster fetch via `?view=mMatchup&view=mMatchupScore` | Extends existing ESPN HTTP layer from `espn_import.py` |
 | `weekly_projections.py` | Fetch/store `WeeklyProjection` from Sleeper or FantasyNerds | Cross-refs by `Player.external_id`, same as `sleeper_season_stats.py` |
-| `waiver_wire.py` | Players not on any roster; enriched with keeper value | Calls `compute_value_window()` from `value_window.py` with `next_year_adp_round_override` |
+| `waiver_wire.py` | Players not on any roster; enriched with keeper value + FAAB bid suggestions | Calls `compute_value_window()` from `value_window.py` with `next_year_adp_round_override` |
+| `faab_advisor.py` | AI-powered FAAB bid recommendations; analyzes competition + budget pacing | Calls OpenAI with roster context, `TeamStandings.faab_remaining`, league standings |
 | `start_sit.py` | Ranks lineup by projected points; annotates with keeper/injury context | Calls `compute_value_window()` and joins `KeeperRecommendation` |
 | `in_season_trade_context.py` | Builds `TradeInSeasonContext` (season points per player, team records) | Injected as optional param into existing `trade_analysis.py` |
 
@@ -220,8 +239,9 @@ Create `apps/api/app/api/routes/in_season.py` (existing `leagues.py` is large en
 POST /api/leagues/{id}/in-season/sync                   # full sync trigger (admin)
 GET  /api/leagues/{id}/in-season/roster/{team_id}       # ?week=N
 GET  /api/leagues/{id}/in-season/matchup                # ?week=N&team_id=X
-GET  /api/leagues/{id}/in-season/standings              # ?week=N
-GET  /api/leagues/{id}/in-season/waiver-wire            # ?week=N&position=RB
+GET  /api/leagues/{id}/in-season/standings              # ?week=N — includes faab_remaining per team
+GET  /api/leagues/{id}/in-season/waiver-wire            # ?week=N&position=RB — includes bid suggestions when FAAB league
+POST /api/leagues/{id}/in-season/faab-advice            # AI bid advice for one or more players
 GET  /api/leagues/{id}/in-season/start-sit/{team_id}    # ?week=N
 GET  /api/leagues/{id}/in-season/injury-alerts          # enhanced; no new params
 POST /api/leagues/{id}/in-season/projections/refresh    # ?week=N (admin)
@@ -239,6 +259,165 @@ INSEASON_SYNC_INTERVAL_HOURS=6
 
 ---
 
+## FAAB System
+
+### League Configuration
+
+FAAB is opt-in per league. `League.waiver_type` drives all FAAB behavior:
+
+- `"faab"` — bidding is enabled; bid suggestions and budget tracking are shown
+- `"priority"` — traditional waiver priority; waiver wire shows only player value rankings
+- `"none"` — free agency (first-come-first-served); waiver wire shows only rankings
+
+Admins set `waiver_type` and `faab_budget` in League Settings, or it is auto-populated on the first successful in-season sync from the platform (see below). The UI in League Settings should show a toggle: **Waiver Type** (FAAB / Priority / Free Agency) and, if FAAB, a **Total Budget** input (default: 100).
+
+### Platform Sync — FAAB Data Availability
+
+**Sleeper (confirmed, data already fetched)**
+
+The `league_info` dict returned by `_fetch_league_data()` already contains:
+- `league_info["settings"]["waiver_budget"]` — total season FAAB budget (integer)
+- `league_info["settings"]["waiver_type"]` — `0` = rolling priority, `1` = next-day priority, `2` = FAAB
+
+Each entry in `rosters` (already fetched) contains:
+- `roster["settings"]["waiver_budget_used"]` — cumulative FAAB spent by this team
+
+So: `faab_remaining = league_info["settings"]["waiver_budget"] - roster["settings"]["waiver_budget_used"]`
+
+No new API calls needed. Both values are in the payload already fetched by `_fetch_league_data()`.
+
+**Yahoo (needs investigation)**
+
+The Yahoo Fantasy API's `team` resource includes a `faab_balance` field when the league uses FAAB. This is accessible via the existing `yahoo_get()` call pattern:
+
+```
+GET /fantasy/v2/league/{league_key}/teams;out=faab
+```
+
+League-level FAAB settings are in the `league` resource under `settings > waiver_rule` (`"faab"` or `"standard"`). The total FAAB budget is in `settings > faab_budget`.
+
+*Requires verification against a live Yahoo FAAB league.* The existing Yahoo OAuth layer handles auth; this is a new resource URL, not a new auth pattern.
+
+**ESPN (needs investigation)**
+
+ESPN's `?view=mTeam` response includes `acquisitionBudgetSpent` per team. League-level settings include:
+- `settings.acquisitionSettings.isUsingAcquisitionLimit` — boolean, true if FAAB
+- `settings.acquisitionSettings.acquisitionBudget` — total FAAB budget
+
+*Requires verification against a live ESPN FAAB league.* The existing cookie-based ESPN HTTP layer should work without changes.
+
+### FAAB Sync in `in_season_sync.py`
+
+When syncing Sleeper:
+1. Read `league_info["settings"]["waiver_type"]` → map `2` → `"faab"`, else `"priority"` or `"none"`
+2. Write to `League.waiver_type` and `League.faab_budget` if not already set (don't overwrite admin-set values)
+3. Per roster, write `faab_spent` and compute `faab_remaining` into `TeamStandings` for the current week
+
+### AI FAAB Advisor
+
+New service: `apps/api/app/services/faab_advisor.py`
+
+Enabled by new env var: `FAAB_ADVISOR_AI_ENABLED=false`
+
+**Endpoint:**
+
+```
+POST /api/leagues/{id}/in-season/faab-advice
+Body: {
+  team_id: UUID,
+  week: int,
+  player_ids: list[UUID]     # 1–5 players the user is considering bidding on
+}
+```
+
+**AI context injected:**
+
+```python
+{
+  # The requesting team
+  "team_name": str,
+  "faab_remaining": float,       # e.g., 42 (out of 100)
+  "weeks_remaining": int,        # e.g., 6
+  "record": "5-3",
+  "playoff_contention": bool,    # wins > median wins in league
+
+  # Each target player
+  "players": [
+    {
+      "name": str,
+      "position": str,
+      "projected_points_this_week": float,
+      "keeper_value_rounds": float,    # from compute_value_window()
+      "is_keeper_candidate": bool,     # from KeeperRecommendation
+      "injury_status": str,
+    }
+  ],
+
+  # All other teams — to estimate competition
+  "other_teams": [
+    {
+      "name": str,
+      "faab_remaining": float,
+      "record": str,
+      "roster_needs": list[str],     # positions with weak depth from InSeasonRosterEntry
+      "playoff_contention": bool,
+    }
+  ],
+
+  # League context
+  "total_faab_budget": int,          # e.g., 100
+  "average_faab_remaining": float,   # league-wide average
+  "scoring_format": str,             # from League.scoring_format
+}
+```
+
+**AI output format:**
+
+```python
+{
+  "bids": [
+    {
+      "player_id": UUID,
+      "suggested_bid": float,           # e.g., 18
+      "bid_range": [float, float],      # e.g., [12, 25]
+      "confidence": str,                # "high" | "medium" | "low"
+      "rationale": str,                 # 2-3 sentences
+      "competition_assessment": str,    # "2-3 teams likely bidding; Team X needs RBs"
+      "budget_pacing_note": str,        # "You have $42 left; $7/week floor suggested"
+      "keeper_note": str | None,        # if player is a keeper candidate
+    }
+  ],
+  "budget_strategy": str,              # overall pacing recommendation for the week
+}
+```
+
+**Bid logic the AI is prompted to apply:**
+
+1. **Player value** — project this week's points + keeper surplus in rounds converted to dollar equivalent (1 round surplus ≈ 10% of average team FAAB budget)
+2. **Competition estimation** — teams with matching positional needs and remaining FAAB above the league average are likely competitors; named explicitly in the rationale
+3. **Budget pacing** — with N weeks remaining, the "safe floor" to retain is `faab_remaining * (2 / weeks_remaining)` to avoid running dry in the playoff push. Bids are constrained to not blow below this floor for low-value adds
+4. **Keeper premium** — if the player is a keeper candidate, the AI explicitly notes the long-term value justification for a higher bid
+5. **Playoff context** — a team that is 1-8 gets different advice than a 7-2 team (rebuild vs. win-now)
+
+The AI follows the same pattern as `scenario_narrative_ai.py` and `trade_analysis.py`: deterministic fallback if AI is disabled (rule-based bid estimate using the budget pacing formula above), AI narrative layered on top when enabled.
+
+### Frontend: WaiverWirePanel FAAB Integration
+
+`WaiverWirePanel.tsx` gains FAAB mode when `league.waiver_type === "faab"`:
+
+- **Column additions to the player table:**
+  - **Suggested Bid** — `$18` with a tooltip showing the bid range and confidence badge
+  - **Competition** — color-coded: `Low` / `Medium` / `High` (from AI competition assessment)
+  - *(Keeper Val column remains; in FAAB mode it shows a dollar equivalent alongside rounds)*
+
+- **"Get AI Bid Advice" button** — appears above the table when FAAB mode is active; sends selected player IDs to `POST .../faab-advice` and renders a side panel with per-player rationale + the budget strategy note
+
+- **Budget tracker widget** — top of the Waiver Wire panel shows: `Your FAAB: $42 remaining · League avg: $31 · 6 weeks left · Safe floor: ~$14`; updated from `TeamStandings.faab_remaining` for the user's team
+
+- **Standings table** in `StandingsPanel.tsx` gains a **FAAB Remaining** column (hidden when `waiver_type !== "faab"`)
+
+---
+
 ## Frontend Components
 
 New directory: `apps/web/src/components/in-season/`
@@ -253,7 +432,7 @@ All panels follow the existing `card + DataTable` pattern. The `[KEEPER]` badge 
 | `MyTeamPanel.tsx` | Current roster with `[KEEPER]` badge, injury status, projected points |
 | `MatchupPanel.tsx` | Side-by-side lineup vs opponent, projected + actual scores |
 | `StandingsPanel.tsx` | League standings table |
-| `WaiverWirePanel.tsx` | Available players with **Keeper Val** column (sortable, color-coded) |
+| `WaiverWirePanel.tsx` | Available players with **Keeper Val** + **Suggested Bid** + **Competition** columns (FAAB mode); budget tracker widget at top |
 | `StartSitPanel.tsx` | Ranked lineup recommendations with keeper watchlist annotations |
 | `InjuryAlertsPanel.tsx` | Extends existing news alerts: adds `injury_status`, `flip_adp_round`, keeper context |
 
@@ -273,9 +452,9 @@ All panels follow the existing `card + DataTable` pattern. The `[KEEPER]` badge 
 - Immediately exposes injury status in the existing injury alerts endpoint → fastest user-visible value
 
 **Step 3: New DB models + migration (1 day)**
-- Create `models/in_season.py` with `InSeasonRosterEntry`, `WeeklyProjection`, `LeagueMatchup`, `TeamStandings`
+- Create `models/in_season.py` with `InSeasonRosterEntry`, `WeeklyProjection`, `LeagueMatchup`, `TeamStandings` (include `faab_spent` + `faab_remaining` on `TeamStandings`)
+- Add `waiver_type` + `faab_budget` to `leagues` in the same migration as Step 1 (or consolidate into one migration)
 - Add to `models/__init__.py`
-- Single Alembic migration
 
 **Step 4: Weekly projections service (2 days)**
 - `services/weekly_projections.py` — Sleeper projection fetch + `WeeklyProjection` upsert
@@ -283,14 +462,16 @@ All panels follow the existing `card + DataTable` pattern. The `[KEEPER]` badge 
 - Validates cross-reference via `Player.external_id` (same pattern as `sleeper_season_stats.py`)
 
 **Step 5: Sleeper in-season sync (3 days)**
-- `services/sleeper_in_season.py` — matchup + roster fetch
-- `services/in_season_sync.py` — platform orchestrator
+- `services/sleeper_in_season.py` — matchup + roster fetch; read `league_info["settings"]["waiver_budget"]` + `waiver_type` (already in the `_fetch_league_data()` payload) and `roster["settings"]["waiver_budget_used"]` per team
+- `services/in_season_sync.py` — platform orchestrator; writes `League.waiver_type`, `League.faab_budget`, and `TeamStandings.faab_spent/faab_remaining` on first sync
 - `POST .../sync`, `GET .../standings`, `GET .../roster/{team_id}`, `GET .../matchup` endpoints
 
-**Step 6: Waiver wire + start/sit (2 days)**
-- `services/waiver_wire.py` — keeper value enrichment via `compute_value_window()`
+**Step 6: Waiver wire + start/sit + FAAB advisor (3 days)**
+- `services/waiver_wire.py` — keeper value enrichment via `compute_value_window()`; include `faab_remaining` for user's team and basic rule-based bid estimate (deterministic fallback, no AI required)
+- `services/faab_advisor.py` — AI bid recommendations; rule-based path always runs, AI narrative added when `FAAB_ADVISOR_AI_ENABLED=true`
 - `services/start_sit.py` — keeper badge annotations
-- `GET .../waiver-wire` and `GET .../start-sit/{team_id}` endpoints
+- `GET .../waiver-wire`, `POST .../faab-advice`, and `GET .../start-sit/{team_id}` endpoints
+- League Settings UI: add **Waiver Type** toggle + **FAAB Budget** input
 
 **Step 7: Enhanced injury alerts (0.5 day)**
 - Extend existing `news_impact.py` endpoint to join `Player.injury_status` + `flip_adp_round`
@@ -304,15 +485,18 @@ All panels follow the existing `card + DataTable` pattern. The `[KEEPER]` badge 
 - `season_mode` derived field on League schema response
 - Conditional `navGroups` in `dashboard-app.tsx`
 
-**Step 9: In-season panel components (4 days — frontend)**
+**Step 9: In-season panel components (5 days — frontend)**
 - All 8 components listed above
+- `WaiverWirePanel`: FAAB mode columns (Suggested Bid, Competition) + budget tracker widget + "Get AI Bid Advice" side panel
+- `StandingsPanel`: FAAB Remaining column (conditional on `waiver_type`)
 - Wired to Phase 1 API endpoints
 
 ### Phase 3 — Full Platform Coverage + AI (~7 dev-days)
 
-**Step 10: Yahoo + ESPN in-season sync (3 days)**
-- `services/yahoo_in_season.py`, `services/espn_in_season.py`
-- Wired into `in_season_sync.py` platform dispatch
+**Step 10: Yahoo + ESPN in-season sync (3–4 days)**
+- `services/yahoo_in_season.py` — roster/matchup fetch; also attempt `GET /fantasy/v2/league/{key}/teams;out=faab` for `faab_balance` per team (verify against a live Yahoo FAAB league; fall back gracefully if not available)
+- `services/espn_in_season.py` — matchup/roster fetch via `?view=mMatchup&view=mMatchupScore`; also check `acquisitionBudgetSpent` on `?view=mTeam` and `acquisitionSettings` on `?view=mSettings` for FAAB config (verify against a live ESPN FAAB league)
+- Both wired into `in_season_sync.py` platform dispatch with FAAB field writes matching Sleeper path
 
 **Step 11: AI weekly digest (2 days)**
 - `services/weekly_digest_ai.py` — follows `scenario_narrative_ai.py` pattern
@@ -328,7 +512,7 @@ All panels follow the existing `card + DataTable` pattern. The `[KEEPER]` badge 
 - Add `in_season_scheduler.py` or extend `adp_scheduler.py`
 - Wire into `main.py` lifespan
 
-**Total estimate:** ~25 dev-days. Phase 1 (12 days) = MVP. Phase 2 (6 days) = usable product. Phase 3 (7 days) = competitive feature set.
+**Total estimate:** ~27 dev-days. Phase 1 (13 days) = MVP including FAAB sync + rule-based bids. Phase 2 (7 days) = usable product with FAAB UI. Phase 3 (7 days) = full platform coverage + AI digest.
 
 ---
 
@@ -348,7 +532,7 @@ All panels follow the existing `card + DataTable` pattern. The `[KEEPER]` badge 
 
 ## Verification
 
-- **Phase 1**: Call `POST /api/leagues/{id}/in-season/sync` on a test Sleeper league with active matchups. Confirm `InSeasonRosterEntry`, `LeagueMatchup`, and `TeamStandings` rows populate. Call `GET .../waiver-wire` and verify `keeper_value` fields are non-null for eligible players.
+- **Phase 1**: Call `POST /api/leagues/{id}/in-season/sync` on a test Sleeper league with active matchups. Confirm `InSeasonRosterEntry`, `LeagueMatchup`, and `TeamStandings` rows populate. For a FAAB league, verify `League.waiver_type = "faab"`, `League.faab_budget` is set, and `TeamStandings.faab_remaining` is populated per team. Call `GET .../waiver-wire` and verify `keeper_value` fields are non-null; on a FAAB league verify `suggested_bid` appears in the response. Call `POST .../faab-advice` and confirm the rule-based path returns a bid range without AI enabled, and an enriched rationale with `FAAB_ADVISOR_AI_ENABLED=true`.
 - **Phase 2**: Set `season_mode_override = "in_season"` on a test league to trigger the in-season nav before the real season starts. Confirm pre-season tools remain accessible in the collapsed secondary group.
 - **Phase 3**: Confirm AI digest returns keeper-contextualized language, not generic fantasy advice. Verify Yahoo and ESPN matchup data matches what the respective platforms display natively.
 - **Regression**: Existing keeper optimizer, mock draft, and trade analyzer must continue working regardless of `season_mode`. The seasonal UX is additive.
@@ -362,3 +546,5 @@ All panels follow the existing `card + DataTable` pattern. The `[KEEPER]` badge 
 - **Dynasty-specific tools** — contract years (auction), devy picks, taxi squads, rookie pick trading. High value for dynasty leagues specifically; scoped separately from this plan.
 - **Power rankings** — computable from `TeamStandings` + `InSeasonRosterEntry` keeper strength score. 1-day add-on once Phase 1 data is in place.
 - **MyFantasyLeague (MFL) support** — popular for dynasty leagues; adding a 4th platform import would significantly expand the TAM.
+- **Yahoo/ESPN FAAB verification** — Yahoo's `faab_balance` field and ESPN's `acquisitionBudgetSpent` are documented in platform API references but need to be confirmed against a live FAAB league before Step 10. If unavailable, fall back to manual FAAB tracking (admin enters remaining budgets per team).
+- **FAAB transaction history** — tracking individual bid outcomes (who won, at what price) would improve AI competition modeling over time. Sleeper exposes this via `/league/{id}/transactions/{week}`; deferred to a later phase.
