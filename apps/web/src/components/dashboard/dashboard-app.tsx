@@ -4523,7 +4523,31 @@ function KeeperTenurePanel() {
         )}
 
         <div className="space-y-3">
-          <label className="block text-sm font-medium text-zinc-700">Upload CSV</label>
+          <div className="flex items-center justify-between">
+            <label className="block text-sm font-medium text-zinc-700">CSV Data</label>
+            <label className={`flex cursor-pointer items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition-colors ${isBusy || previewing || importing ? "pointer-events-none opacity-50" : ""}`}>
+              <Upload className="size-3" aria-hidden="true" />
+              Choose file
+              <input
+                accept=".csv,text/csv"
+                className="sr-only"
+                disabled={isBusy || previewing || importing}
+                type="file"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    setCsvText((ev.target?.result as string) ?? "");
+                    setPreview(null);
+                    setImportResult(null);
+                  };
+                  reader.readAsText(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
           <textarea
             className="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600"
             disabled={isBusy || previewing || importing}
