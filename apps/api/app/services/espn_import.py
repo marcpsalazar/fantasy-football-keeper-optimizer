@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 import uuid
@@ -22,6 +23,12 @@ _POSITION_MAP: dict[int, str] = {
     16: "DST",
 }
 _VALID_POSITIONS = frozenset({"QB", "RB", "WR", "TE", "K", "DST"})
+
+_SUFFIX_RE = re.compile(r"\s+(jr\.?|sr\.?|ii|iii|iv|v|vi)$", re.IGNORECASE)
+
+
+def _strip_suffix(name: str) -> str:
+    return _SUFFIX_RE.sub("", name).strip()
 
 # Lineup slot IDs that represent starter positions
 _STARTER_SLOT_IDS = frozenset({0, 2, 4, 6, 16, 17, 23, 24})
@@ -174,6 +181,14 @@ def _get_or_create_player(
     candidates = session.exec(
         select(Player).where(Player.full_name == full_name, Player.position == position)
     ).all()
+
+    # Suffix-stripped fallback: "Travis Etienne Jr." ↔ "Travis Etienne", etc.
+    if not candidates:
+        stripped = _strip_suffix(full_name).lower()
+        if stripped != full_name.lower():
+            all_pos = session.exec(select(Player).where(Player.position == position)).all()
+            candidates = [p for p in all_pos if _strip_suffix(p.full_name).lower() == stripped]
+
     player = (
         next((p for p in candidates if p.nfl_team == nfl_team), None)
         or next((p for p in candidates if p.nfl_team is None), None)

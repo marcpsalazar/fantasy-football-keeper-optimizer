@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 import uuid
@@ -13,12 +14,19 @@ from sqlmodel import Session, select
 from app.models import DraftPick, FinalRosterEntry, League, Player, Team
 
 SLEEPER_BASE = "https://api.sleeper.app/v1"
+SLEEPER_THUMB_URL = "https://sleepercdn.com/content/nfl/players/thumb/{}.jpg"
 
 _POSITION_MAP: dict[str, str] = {
     "QB": "QB", "RB": "RB", "WR": "WR", "TE": "TE",
     "K": "K", "DEF": "DST", "DST": "DST",
 }
 _VALID_POSITIONS = frozenset({"QB", "RB", "WR", "TE", "K", "DST"})
+
+_SUFFIX_RE = re.compile(r"\s+(jr\.?|sr\.?|ii|iii|iv|v|vi)$", re.IGNORECASE)
+
+
+def _strip_suffix(name: str) -> str:
+    return _SUFFIX_RE.sub("", name).strip()
 
 
 class SleeperAPIError(Exception):
@@ -191,6 +199,14 @@ def _get_or_create_player(
     candidates = session.exec(
         select(Player).where(Player.full_name == full_name, Player.position == position)
     ).all()
+
+    # Suffix-stripped fallback: "Travis Etienne Jr." ↔ "Travis Etienne", etc.
+    if not candidates:
+        stripped = _strip_suffix(full_name).lower()
+        if stripped != full_name.lower():
+            all_pos = session.exec(select(Player).where(Player.position == position)).all()
+            candidates = [p for p in all_pos if _strip_suffix(p.full_name).lower() == stripped]
+
     player = (
         next((p for p in candidates if p.nfl_team == nfl_team), None)
         or next((p for p in candidates if p.nfl_team is None), None)

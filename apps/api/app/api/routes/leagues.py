@@ -51,6 +51,7 @@ from app.services.espn_import import (
     preview_espn_import,
 )
 from app.services.sleeper_import import (
+    SLEEPER_THUMB_URL,
     SleeperAPIError,
     commit_sleeper_import,
     preview_sleeper_import,
@@ -3301,7 +3302,10 @@ def _optimizer_table(
                 "player_name": player.full_name if player else None,
                 "position": player.position if player else None,
                 "nfl_team": player.nfl_team if player else None,
-                "image_url": player.image_url if player else None,
+                "image_url": (
+                    player.image_url
+                    or (SLEEPER_THUMB_URL.format(player.external_id) if player.external_id and player.external_id.isdigit() else None)
+                ) if player else None,
                 "settings_id": str(recommendation.settings_id)
                 if recommendation.settings_id
                 else None,

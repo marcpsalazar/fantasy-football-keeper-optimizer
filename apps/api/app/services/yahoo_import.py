@@ -12,6 +12,7 @@ Yahoo API quirks handled here:
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Iterator
@@ -29,6 +30,12 @@ from app.schemas.yahoo_import import (
 from app.services.yahoo_oauth import YahooAPIError, yahoo_get
 
 _VALID_POSITIONS = frozenset({"QB", "RB", "WR", "TE", "K", "DST"})
+
+_SUFFIX_RE = re.compile(r"\s+(jr\.?|sr\.?|ii|iii|iv|v|vi)$", re.IGNORECASE)
+
+
+def _strip_suffix(name: str) -> str:
+    return _SUFFIX_RE.sub("", name).strip()
 
 # Yahoo selected_position values that count as starter slots
 _STARTER_POSITIONS = frozenset({
@@ -435,6 +442,14 @@ def _get_or_create_player(
     candidates = session.exec(
         select(Player).where(Player.full_name == full_name, Player.position == position)
     ).all()
+
+    # Suffix-stripped fallback: "Travis Etienne Jr." ↔ "Travis Etienne", etc.
+    if not candidates:
+        stripped = _strip_suffix(full_name).lower()
+        if stripped != full_name.lower():
+            all_pos = session.exec(select(Player).where(Player.position == position)).all()
+            candidates = [p for p in all_pos if _strip_suffix(p.full_name).lower() == stripped]
+
     player = (
         next((p for p in candidates if p.nfl_team == nfl_team), None)
         or next((p for p in candidates if p.nfl_team is None), None)

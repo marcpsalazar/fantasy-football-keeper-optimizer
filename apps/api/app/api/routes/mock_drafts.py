@@ -27,6 +27,7 @@ from app.schemas.mock_draft import (
     MockDraftUpdate,
 )
 from app.services.auth import require_current_user
+from app.services.sleeper_import import SLEEPER_THUMB_URL
 from app.services.mock_draft import (
     MockDraftError,
     adp_entries_by_player,
@@ -452,7 +453,7 @@ def _available_player_payload(
                 adp_round=adp.adp_round if adp else None,
                 risk=adp.risk if adp else None,
                 projection=adp.consensus_projection if adp else None,
-                image_url=player.image_url,
+                image_url=player.image_url or (SLEEPER_THUMB_URL.format(player.external_id) if player.external_id and player.external_id.isdigit() else None),
             )
         )
     return rows
