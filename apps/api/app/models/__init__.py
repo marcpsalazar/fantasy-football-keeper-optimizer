@@ -19,6 +19,7 @@ from app.models.optimizer import (
 )
 from app.models.player import Player
 from app.models.roster import FinalRosterEntry
+from app.models.watchlist import PlayerWatchlist
 
 __all__ = [
     "ADPEntry",
@@ -46,4 +47,5 @@ __all__ = [
     "TeamScenarioSelection",
     "User",
     "YahooOAuthToken",
+    "PlayerWatchlist",
 ]

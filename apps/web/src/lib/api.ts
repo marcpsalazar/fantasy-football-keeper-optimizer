@@ -4100,3 +4100,80 @@ export async function getValueWindow(
     })),
   };
 }
+
+// ── Watchlist ──────────────────────────────────────────────────────────────
+
+export type WatchlistEntry = {
+  id: string;
+  playerId: string;
+  playerName: string;
+  position: string;
+  nflTeam: string | null;
+  imageUrl: string | null;
+};
+
+export type WatchlistSearchResult = {
+  playerId: string;
+  playerName: string;
+  position: string;
+  nflTeam: string | null;
+  imageUrl: string | null;
+  adpPick: number | null;
+};
+
+function mapWatchlistEntry(row: ApiRow): WatchlistEntry {
+  return {
+    id: text(row.id),
+    playerId: text(row.player_id),
+    playerName: text(row.player_name),
+    position: text(row.position),
+    nflTeam: text(row.nfl_team) || null,
+    imageUrl: text(row.image_url) || null,
+  };
+}
+
+function mapWatchlistSearchResult(row: ApiRow): WatchlistSearchResult {
+  return {
+    playerId: text(row.player_id),
+    playerName: text(row.player_name),
+    position: text(row.position),
+    nflTeam: text(row.nfl_team) || null,
+    imageUrl: text(row.image_url) || null,
+    adpPick: nullableNumber(row.adp_pick),
+  };
+}
+
+export async function getWatchlist(leagueId: string): Promise<WatchlistEntry[]> {
+  const payload = await fetchTable(`/api/leagues/${leagueId}/watchlist`);
+  return payload.rows.map(mapWatchlistEntry);
+}
+
+export async function addToWatchlist(leagueId: string, playerId: string): Promise<WatchlistEntry> {
+  const row = await fetchJson<ApiRow>(`/api/leagues/${leagueId}/watchlist`, {
+    method: "POST",
+    body: JSON.stringify({ player_id: playerId }),
+    headers: { "content-type": "application/json" },
+  });
+  return mapWatchlistEntry(row);
+}
+
+export async function removeFromWatchlist(leagueId: string, playerId: string): Promise<void> {
+  await fetch(`${API_BASE_URL}/api/leagues/${leagueId}/watchlist/${playerId}`, {
+    credentials: "include",
+    method: "DELETE",
+  }).then(async (response) => {
+    if (!response.ok) {
+      throw new Error(`API ${response.status}: ${await response.text()}`);
+    }
+  });
+}
+
+export async function searchWatchlistPlayers(
+  leagueId: string,
+  query: string,
+): Promise<WatchlistSearchResult[]> {
+  const payload = await fetchTable(
+    `/api/leagues/${leagueId}/watchlist/search?q=${encodeURIComponent(query)}`,
+  );
+  return payload.rows.map(mapWatchlistSearchResult);
+}

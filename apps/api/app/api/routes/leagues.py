@@ -32,6 +32,7 @@ from app.models import (
     MockDraftSession,
     OptimizerSettings,
     Player,
+    PlayerWatchlist,
     Team,
     TeamScenarioSelection,
     User,
@@ -3844,3 +3845,153 @@ def get_value_window(
     if result is None:
         raise HTTPException(status_code=404, detail="Recommendation not found or missing ADP data")
     return value_window_svc.value_window_to_dict(result)
+
+
+# ── Watchlist ────────────────────────────────────────────────────────────────
+
+def _watchlist_player_row(entry: PlayerWatchlist) -> dict[str, Any]:
+    player = entry.player
+    return {
+        "id": str(entry.id),
+        "player_id": str(player.id),
+        "player_name": player.full_name,
+        "position": player.position,
+        "nfl_team": player.nfl_team,
+        "image_url": player.image_url,
+    }
+
+
+@router.get("/leagues/{league_id}/watchlist")
+def get_watchlist(
+    league_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    entries = session.exec(
+        select(PlayerWatchlist)
+        .where(
+            PlayerWatchlist.league_id == league_id,
+            PlayerWatchlist.user_id == user.id,
+        )
+        .order_by(PlayerWatchlist.created_at.asc())
+    ).all()
+    return {"rows": [_watchlist_player_row(e) for e in entries]}
+
+
+class WatchlistAddRequest(BaseModel):
+    player_id: uuid.UUID
+
+
+@router.post("/leagues/{league_id}/watchlist", status_code=status.HTTP_201_CREATED)
+def add_to_watchlist(
+    league_id: uuid.UUID,
+    payload: WatchlistAddRequest,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    player = session.get(Player, payload.player_id)
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    existing = session.exec(
+        select(PlayerWatchlist).where(
+            PlayerWatchlist.user_id == user.id,
+            PlayerWatchlist.league_id == league_id,
+            PlayerWatchlist.player_id == payload.player_id,
+        )
+    ).first()
+    if existing:
+        return _watchlist_player_row(existing)
+
+    entry = PlayerWatchlist(
+        user_id=user.id,
+        league_id=league_id,
+        player_id=payload.player_id,
+    )
+    session.add(entry)
+    session.commit()
+    session.refresh(entry)
+    return _watchlist_player_row(entry)
+
+
+@router.delete("/leagues/{league_id}/watchlist/{player_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_from_watchlist(
+    league_id: uuid.UUID,
+    player_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> None:
+    entry = session.exec(
+        select(PlayerWatchlist).where(
+            PlayerWatchlist.user_id == user.id,
+            PlayerWatchlist.league_id == league_id,
+            PlayerWatchlist.player_id == player_id,
+        )
+    ).first()
+    if entry:
+        session.delete(entry)
+        session.commit()
+
+
+@router.get("/leagues/{league_id}/watchlist/search")
+def search_watchlist_players(
+    league_id: uuid.UUID,
+    q: str = Query(default="", min_length=0),
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    if not q or len(q.strip()) < 2:
+        return {"rows": []}
+
+    query_str = f"%{q.strip()}%"
+
+    # Prefer players that appear in the league's active ADP snapshot
+    active_snapshot = session.exec(
+        select(ADPSnapshot)
+        .where(ADPSnapshot.league_id == league_id)
+        .order_by(ADPSnapshot.snapshot_date.desc(), ADPSnapshot.created_at.desc())
+        .limit(1)
+    ).first()
+
+    if active_snapshot:
+        rows = session.exec(
+            select(Player, ADPEntry)
+            .join(ADPEntry, ADPEntry.player_id == Player.id)
+            .where(
+                ADPEntry.snapshot_id == active_snapshot.id,
+                Player.full_name.ilike(query_str),
+            )
+            .order_by(ADPEntry.adp_pick.asc())
+            .limit(20)
+        ).all()
+        results = [
+            {
+                "player_id": str(player.id),
+                "player_name": player.full_name,
+                "position": player.position,
+                "nfl_team": player.nfl_team,
+                "image_url": player.image_url,
+                "adp_pick": entry.adp_pick,
+            }
+            for player, entry in rows
+        ]
+    else:
+        players = session.exec(
+            select(Player)
+            .where(Player.full_name.ilike(query_str))
+            .order_by(Player.full_name.asc())
+            .limit(20)
+        ).all()
+        results = [
+            {
+                "player_id": str(player.id),
+                "player_name": player.full_name,
+                "position": player.position,
+                "nfl_team": player.nfl_team,
+                "image_url": player.image_url,
+                "adp_pick": None,
+            }
+            for player in players
+        ]
+
+    return {"rows": results}

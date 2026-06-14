@@ -31,9 +31,11 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
   Share2,
   ShieldCheck,
   SlidersHorizontal,
+  Star,
   Sun,
   Trash2,
   Trophy,
@@ -228,6 +230,12 @@ import {
   importTenureCsv,
   deleteTenureRecord,
   clearAllTenure,
+  getWatchlist,
+  addToWatchlist,
+  removeFromWatchlist,
+  searchWatchlistPlayers,
+  type WatchlistEntry,
+  type WatchlistSearchResult,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -2954,6 +2962,7 @@ function LeagueDashboard() {
           <CardContent className="space-y-4">
             {isLeagueAdmin && <NewsImpactSummary leagueId={activeLeagueId} />}
             <DashboardNewsList items={data.leagueNews} />
+            <WatchlistSection leagueId={activeLeagueId} />
           </CardContent>
         </Card>
 
@@ -8238,6 +8247,15 @@ function MockDraftPage() {
   const [panelHeight, setPanelHeight] = React.useState(340);
   const panelDrag = React.useRef({ active: false, startY: 0, startH: 0 });
   const [isLoading, setIsLoading] = React.useState(false);
+  const [watchedPlayerIds, setWatchedPlayerIds] = React.useState<Set<string>>(new Set());
+
+  // Load watchlist for star indicators in the player list.
+  React.useEffect(() => {
+    if (!leagueId) return;
+    getWatchlist(leagueId)
+      .then((entries) => setWatchedPlayerIds(new Set(entries.map((e) => e.playerId))))
+      .catch(() => {/* silent */});
+  }, [leagueId]);
 
   // Lock body scroll while the draft workspace is open so iOS rubber-band
   // scrolling can't reveal the app background behind the fixed modal.
@@ -8830,7 +8848,11 @@ function MockDraftPage() {
   const filteredPlayers = React.useMemo(() => {
     const query = playerSearch.trim().toLowerCase();
     return (activeSession?.availablePlayers ?? [])
-      .filter((player) => positionFilter === "ALL" || player.position === positionFilter)
+      .filter((player) => {
+        if (positionFilter === "ALL") return true;
+        if (positionFilter === "WATCHED") return watchedPlayerIds.has(player.playerId);
+        return player.position === positionFilter;
+      })
       .filter((player) => {
         if (!query) {
           return true;
@@ -8841,7 +8863,7 @@ function MockDraftPage() {
           .includes(query);
       })
       .slice(0, 80);
-  }, [activeSession?.availablePlayers, playerSearch, positionFilter]);
+  }, [activeSession?.availablePlayers, playerSearch, positionFilter, watchedPlayerIds]);
   const userRoster = React.useMemo(() => {
     if (!activeSession) {
       return [];
@@ -9441,6 +9463,20 @@ function MockDraftPage() {
                         </button>
                       );
                     })}
+                    {watchedPlayerIds.size > 0 && (
+                      <button
+                        onClick={() => setPositionFilter(positionFilter === "WATCHED" ? "ALL" : "WATCHED")}
+                        className={cn(
+                          "flex items-center gap-0.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors",
+                          positionFilter === "WATCHED"
+                            ? "border-amber-600 bg-amber-500 text-white dark:border-amber-400 dark:bg-amber-500 dark:text-white"
+                            : "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-400 dark:hover:bg-amber-950/50",
+                        )}
+                      >
+                        <Star className="size-2.5 fill-current" aria-hidden="true" />
+                        Watched
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -9461,6 +9497,7 @@ function MockDraftPage() {
                           activeSession.currentPick && player.adpPick !== null
                             ? player.adpPick - activeSession.currentPick
                             : null;
+                        const isWatched = watchedPlayerIds.has(player.playerId);
                         return (
                           <tr key={player.playerId}>
                             <td className="py-1 pl-2 pr-3">
@@ -9474,6 +9511,9 @@ function MockDraftPage() {
                                 >
                                   Draft
                                 </Button>
+                                {isWatched && (
+                                  <Star className="size-3 shrink-0 fill-amber-400 text-amber-400" aria-label="Watched" />
+                                )}
                                 <PlayerCell
                                   imageUrl={player.imageUrl}
                                   name={player.playerName}
@@ -12239,6 +12279,167 @@ function DashboardDecisionList({
       ) : (
         <p className="text-sm text-zinc-600 dark:text-zinc-400">{emptyText}</p>
       )}
+    </div>
+  );
+}
+
+function WatchlistSection({ leagueId }: { leagueId: string | null }) {
+  const [watchlist, setWatchlist] = React.useState<WatchlistEntry[]>([]);
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const [searchResults, setSearchResults] = React.useState<WatchlistSearchResult[]>([]);
+  const [isSearching, setIsSearching] = React.useState(false);
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    getWatchlist(leagueId)
+      .then(setWatchlist)
+      .catch(() => {/* silent */});
+  }, [leagueId]);
+
+  React.useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!leagueId || searchQuery.trim().length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    debounceRef.current = setTimeout(() => {
+      setIsSearching(true);
+      searchWatchlistPlayers(leagueId, searchQuery.trim())
+        .then(setSearchResults)
+        .catch(() => setSearchResults([]))
+        .finally(() => setIsSearching(false));
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [leagueId, searchQuery]);
+
+  const watchedIds = React.useMemo(() => new Set(watchlist.map((w) => w.playerId)), [watchlist]);
+
+  async function handleAdd(result: WatchlistSearchResult) {
+    if (!leagueId) return;
+    try {
+      const entry = await addToWatchlist(leagueId, result.playerId);
+      setWatchlist((prev) => {
+        if (prev.some((w) => w.playerId === entry.playerId)) return prev;
+        return [...prev, entry];
+      });
+    } catch {
+      toast.error("Failed to add player to watchlist.");
+    }
+  }
+
+  async function handleRemove(playerId: string) {
+    if (!leagueId) return;
+    try {
+      await removeFromWatchlist(leagueId, playerId);
+      setWatchlist((prev) => prev.filter((w) => w.playerId !== playerId));
+    } catch {
+      toast.error("Failed to remove player from watchlist.");
+    }
+  }
+
+  if (!leagueId) return null;
+
+  return (
+    <div className="space-y-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
+      <div className="flex items-center gap-2">
+        <Star className="size-4 text-amber-500" aria-hidden="true" />
+        <span className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">Player Watchlist</span>
+        {watchlist.length > 0 && (
+          <span className="ml-auto text-xs text-zinc-500">{watchlist.length} watched</span>
+        )}
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
+        <Input
+          className="h-8 pl-7 text-sm"
+          placeholder="Search players to watch…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        {searchQuery && (
+          <button
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+            onClick={() => { setSearchQuery(""); setSearchResults([]); }}
+          >
+            <X className="size-3.5" aria-hidden="true" />
+          </button>
+        )}
+      </div>
+
+      {/* Search results */}
+      {(searchResults.length > 0 || isSearching) && (
+        <div className="rounded-md border border-zinc-200 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+          {isSearching && (
+            <p className="px-3 py-2 text-xs text-zinc-500">Searching…</p>
+          )}
+          {!isSearching && searchResults.length === 0 && searchQuery.trim().length >= 2 && (
+            <p className="px-3 py-2 text-xs text-zinc-500">No players found.</p>
+          )}
+          {searchResults.map((result) => {
+            const isWatched = watchedIds.has(result.playerId);
+            return (
+              <div
+                key={result.playerId}
+                className="flex items-center gap-2 border-b border-zinc-100 px-3 py-2 last:border-0 dark:border-zinc-800"
+              >
+                <PlayerCell
+                  imageUrl={result.imageUrl}
+                  name={result.playerName}
+                  nflTeam={result.nflTeam}
+                  position={result.position}
+                />
+                {result.adpPick != null && (
+                  <span className="ml-auto shrink-0 text-xs text-zinc-500">
+                    ADP {Math.round(result.adpPick)}
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  variant={isWatched ? "outline" : "default"}
+                  className="h-6 shrink-0 px-2 text-[10px]"
+                  onClick={() => isWatched ? handleRemove(result.playerId) : handleAdd(result)}
+                >
+                  {isWatched ? "Remove" : "Watch"}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Watchlist */}
+      {watchlist.length === 0 && !searchQuery ? (
+        <p className="text-xs text-zinc-500">Search for players above to build your watchlist.</p>
+      ) : watchlist.length > 0 ? (
+        <div className="space-y-1">
+          {watchlist.map((entry) => (
+            <div
+              key={entry.playerId}
+              className="flex items-center gap-2 rounded-md border border-zinc-100 bg-zinc-50 px-2.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-900"
+            >
+              <Star className="size-3 shrink-0 fill-amber-400 text-amber-400" aria-hidden="true" />
+              <PlayerCell
+                imageUrl={entry.imageUrl}
+                name={entry.playerName}
+                nflTeam={entry.nflTeam}
+                position={entry.position}
+              />
+              <button
+                className="ml-auto shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                onClick={() => void handleRemove(entry.playerId)}
+                title="Remove from watchlist"
+              >
+                <X className="size-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
