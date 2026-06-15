@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import UniqueConstraint
@@ -29,6 +30,7 @@ class User(TimestampMixin, table=True):
     role: str = Field(default="user", index=True, max_length=40)
     is_active: bool = Field(default=True, index=True)
     avatar_data_url: str | None = Field(default=None)
+    last_login_at: datetime | None = Field(default=None)
 
     optimizer_settings: list["OptimizerSettings"] = Relationship(back_populates="user")
     manual_overrides: list["ManualOverride"] = Relationship(back_populates="user")

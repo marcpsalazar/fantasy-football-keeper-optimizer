@@ -4750,6 +4750,20 @@ function UserManagementPanel() {
         ),
       },
       {
+        accessorKey: "lastLoginAt",
+        header: "Last Login",
+        cell: ({ getValue }) => {
+          const val = getValue<string | null>();
+          if (!val) return <span className="text-zinc-400">Never</span>;
+          const d = new Date(val);
+          return (
+            <span title={d.toISOString()}>
+              {d.toLocaleDateString()} {d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          );
+        },
+      },
+      {
         id: "actions",
         header: "Actions",
         cell: ({ row }) => {

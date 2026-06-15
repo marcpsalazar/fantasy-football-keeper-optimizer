@@ -49,7 +49,9 @@ export type AuthUser = {
   teamName: string | null;
 };
 
-export type AdminUser = AuthUser;
+export type AdminUser = AuthUser & {
+  lastLoginAt: string | null;
+};
 
 export type UserForm = {
   email: string;
@@ -2875,6 +2877,7 @@ function mapAuthUser(row: ApiRow): AuthUser {
 function mapAdminUser(row: ApiRow): AdminUser {
   return {
     ...mapAuthUser(row),
+    lastLoginAt: text(row.last_login_at) || null,
   };
 }
 

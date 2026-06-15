@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Literal
 import uuid
 
@@ -121,6 +122,7 @@ def admin_user_payload(session: Session, user: User) -> dict[str, Any]:
         **(user_payload(user, session) or {}),
         "team_id": str(assigned_team.id) if assigned_team else None,
         "team_name": assigned_team.name if assigned_team else None,
+        "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
     }
 
 
@@ -135,6 +137,10 @@ def login(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive")
+    user.last_login_at = datetime.now(timezone.utc)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
     set_session_cookie(response, user)
     return {"user": user_payload(user, session)}
 
