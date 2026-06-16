@@ -1361,6 +1361,7 @@ def _player_context(player: Player, adp: ADPEntry | None) -> dict[str, Any]:
         "name": player.full_name,
         "position": _normalize_position(player.position),
         "nfl_team": player.nfl_team,
+        "injury_status": player.injury_status,
         "adp_pick": adp.adp_pick if adp else None,
         "adp_round": adp.adp_round if adp else None,
         "risk": adp.risk if adp else None,

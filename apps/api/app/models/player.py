@@ -32,6 +32,7 @@ class Player(TimestampMixin, table=True):
     nfl_team: str | None = Field(default=None, index=True, max_length=10)
     birth_date: date | None = Field(default=None)
     image_url: str | None = Field(default=None, max_length=500)
+    injury_status: str | None = Field(default=None, max_length=20)
 
     keeper_candidates: list["KeeperCandidate"] = Relationship(back_populates="player")
     draft_picks: list["DraftPick"] = Relationship(back_populates="player")

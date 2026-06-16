@@ -52,6 +52,7 @@ def _apply_lightweight_sqlite_migrations() -> None:
             ("ceiling_projection", "FLOAT"),
             ("draftsharks_3d_value", "FLOAT"),
         ],
+        "players": [("injury_status", "VARCHAR(20)")],
     }
     inspector = inspect(engine)
     with engine.begin() as connection:

@@ -40,20 +40,26 @@ def create_app() -> FastAPI:
                 )
 
         adp_refresh_task: asyncio.Task[None] | None = None
+        player_status_task: asyncio.Task[None] | None = None
         if settings.adp_auto_refresh_enabled:
-            from app.services.adp_scheduler import weekly_adp_refresh_loop
+            from app.services.adp_scheduler import (
+                daily_player_status_refresh_loop,
+                weekly_adp_refresh_loop,
+            )
 
             adp_refresh_task = asyncio.create_task(weekly_adp_refresh_loop(settings))
+            player_status_task = asyncio.create_task(daily_player_status_refresh_loop(settings))
 
         try:
             yield
         finally:
-            if adp_refresh_task is not None:
-                adp_refresh_task.cancel()
-                try:
-                    await adp_refresh_task
-                except asyncio.CancelledError:
-                    pass
+            for task in (adp_refresh_task, player_status_task):
+                if task is not None:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
 
     api = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 

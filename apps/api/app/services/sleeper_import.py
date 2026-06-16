@@ -121,7 +121,7 @@ def _parse_birth_date(raw: Any) -> date | None:
 
 
 def _build_player_lookup(players_db: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Returns sleeper_player_id → {full_name, position, nfl_team, birth_date}."""
+    """Returns sleeper_player_id → {full_name, position, nfl_team, birth_date, injury_status}."""
     result: dict[str, dict[str, Any]] = {}
     for pid, p in players_db.items():
         if not isinstance(p, dict):
@@ -134,12 +134,14 @@ def _build_player_lookup(players_db: dict[str, Any]) -> dict[str, dict[str, Any]
         pos = _normalize_position(str(p.get("position") or ""))
         if not pos:
             continue
+        raw_status = p.get("status")
         result[str(pid)] = {
             "full_name": full_name,
             "position": pos,
             "nfl_team": p.get("team") or None,
             "birth_date": _parse_birth_date(p.get("birth_date")),
             "image_url": f"https://sleepercdn.com/content/nfl/players/thumb/{pid}.jpg",
+            "injury_status": str(raw_status).strip() if raw_status else None,
         }
     return result
 
@@ -181,6 +183,7 @@ def _get_or_create_player(
     nfl_team: str | None,
     birth_date: date | None = None,
     image_url: str | None = None,
+    injury_status: str | None = None,
 ) -> Player:
     # Exact Sleeper ID match (fastest path after first import).
     player = session.exec(
@@ -193,6 +196,7 @@ def _get_or_create_player(
             player.birth_date = birth_date
         if image_url and player.image_url is None:
             player.image_url = image_url
+        player.injury_status = injury_status
         return player
 
     # Name + position fallback (matches rows created by CSV import).
@@ -220,6 +224,7 @@ def _get_or_create_player(
             player.birth_date = birth_date
         if image_url and player.image_url is None:
             player.image_url = image_url
+        player.injury_status = injury_status
         return player
 
     player = Player(
@@ -229,6 +234,7 @@ def _get_or_create_player(
         external_id=sleeper_id,
         birth_date=birth_date,
         image_url=image_url,
+        injury_status=injury_status,
     )
     session.add(player)
     session.flush()
@@ -422,6 +428,7 @@ def commit_sleeper_import(
             session, pid, info["full_name"], info["position"], info.get("nfl_team"),
             birth_date=info.get("birth_date"),
             image_url=info.get("image_url"),
+            injury_status=info.get("injury_status"),
         )
         pick_in_round = pick_no - (round_number - 1) * num_teams
 
@@ -474,6 +481,7 @@ def commit_sleeper_import(
                 session, str(pid), info["full_name"], info["position"], info.get("nfl_team"),
                 birth_date=info.get("birth_date"),
                 image_url=info.get("image_url"),
+                injury_status=info.get("injury_status"),
             )
 
             if str(pid) in reserve:
@@ -517,6 +525,46 @@ def commit_sleeper_import(
         roster_entries_upserted=entries_upserted,
         warnings=warnings,
     )
+
+
+def refresh_player_statuses_from_sleeper(session: Session, sleeper_players_url: str) -> int:
+    """Fetch current Sleeper player statuses and update injury_status on all matched Player rows.
+
+    Only updates players that already have an external_id (Sleeper player ID) set.
+    Returns the number of players updated.
+    """
+    req = urllib.request.Request(
+        sleeper_players_url,
+        headers={"User-Agent": "keeper-optimizer/1.0", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            players_db: dict[str, Any] = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise SleeperAPIError(f"Could not fetch Sleeper player statuses: {exc}") from exc
+
+    if not isinstance(players_db, dict):
+        raise SleeperAPIError("Unexpected response format from Sleeper players endpoint")
+
+    sleeper_status_by_id: dict[str, str | None] = {}
+    for pid, p in players_db.items():
+        if not isinstance(p, dict):
+            continue
+        raw_status = p.get("status")
+        sleeper_status_by_id[str(pid)] = str(raw_status).strip() if raw_status else None
+
+    players = session.exec(select(Player).where(Player.external_id.is_not(None))).all()
+    updated = 0
+    for player in players:
+        if player.external_id not in sleeper_status_by_id:
+            continue
+        new_status = sleeper_status_by_id[player.external_id]
+        if player.injury_status != new_status:
+            player.injury_status = new_status
+            updated += 1
+
+    session.commit()
+    return updated
 
 
 def _parse_season(season_str: Any, fallback: int) -> int:

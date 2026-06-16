@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     draftsharks_superflex_adp_url: str = "https://www.draftsharks.com/rankings/ppr-superflex"
     fantasy_football_calculator_adp_url: str = "https://fantasyfootballcalculator.com/api/v1/adp"
     sleeper_players_url: str = "https://api.sleeper.app/v1/players/nfl"
+    player_status_refresh_interval_hours: int = 24
     fantasy_nerds_api_key: str | None = None
     fantasy_nerds_adp_url: str = "https://api.fantasynerds.com/v1/nfl/adp"
     session_secret: str = "dev-session-secret-change-me"

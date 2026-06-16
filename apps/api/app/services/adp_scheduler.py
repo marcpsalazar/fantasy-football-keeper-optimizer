@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, date, datetime, timedelta
 
 from sqlmodel import Session, select
@@ -11,6 +12,9 @@ from app.models import ADPSnapshot, League
 from app.services.adp_refresh import ADPRefreshError, refresh_adp_from_api
 from app.services.adp_review import create_ai_adp_refresh_candidate
 from app.services.ai_adp import AIADPError
+from app.services.sleeper_import import SleeperAPIError, refresh_player_statuses_from_sleeper
+
+logger = logging.getLogger(__name__)
 
 
 async def weekly_adp_refresh_loop(settings: Settings) -> None:
@@ -23,6 +27,32 @@ async def weekly_adp_refresh_loop(settings: Settings) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
         await asyncio.to_thread(refresh_due_adp_snapshots, settings)
+
+
+async def daily_player_status_refresh_loop(settings: Settings) -> None:
+    """Refresh Sleeper injury_status for all known players on a daily cadence.
+
+    Runs independently of the weekly ADP refresh so that injury news surfaced
+    between ADP cycles is picked up without waiting for the next full ADP run.
+    """
+    if not settings.adp_auto_refresh_enabled:
+        return
+    if settings.adp_auto_refresh_on_startup:
+        await asyncio.to_thread(_run_player_status_refresh, settings)
+
+    interval_seconds = max(1, settings.player_status_refresh_interval_hours) * 60 * 60
+    while True:
+        await asyncio.sleep(interval_seconds)
+        await asyncio.to_thread(_run_player_status_refresh, settings)
+
+
+def _run_player_status_refresh(settings: Settings) -> None:
+    try:
+        with Session(engine) as session:
+            updated = refresh_player_statuses_from_sleeper(session, settings.sleeper_players_url)
+        logger.info("Sleeper player status refresh complete: %d players updated", updated)
+    except SleeperAPIError as exc:
+        logger.warning("Sleeper player status refresh failed: %s", exc)
 
 
 def refresh_due_adp_snapshots(settings: Settings) -> list[dict[str, object]]:
@@ -76,6 +106,11 @@ def refresh_due_adp_snapshots(settings: Settings) -> list[dict[str, object]]:
                     "imported": result.import_result.imported,
                 }
             )
+
+    # Always sync player statuses after an ADP run so that any injury changes
+    # captured by the ADP sources are also reflected in the Player table.
+    _run_player_status_refresh(settings)
+
     return refreshed
 
 
