@@ -528,10 +528,13 @@ def commit_sleeper_import(
 
 
 def refresh_player_statuses_from_sleeper(session: Session, sleeper_players_url: str) -> int:
-    """Fetch current Sleeper player statuses and update injury_status on all matched Player rows.
+    """Fetch current Sleeper player statuses and sync Player rows.
 
-    Only updates players that already have an external_id (Sleeper player ID) set.
-    Returns the number of players updated.
+    For players already in the DB (matched by external_id): updates injury_status and nfl_team.
+    For active Sleeper players on an NFL roster not yet in the DB: creates new Player records.
+    This ensures new signings and depth-chart starters (like recent free-agent pickups) appear
+    in mock drafts even before ADP sources rank them.
+    Returns the number of players updated (status/team changes on existing players).
     """
     req = urllib.request.Request(
         sleeper_players_url,
@@ -546,22 +549,74 @@ def refresh_player_statuses_from_sleeper(session: Session, sleeper_players_url: 
     if not isinstance(players_db, dict):
         raise SleeperAPIError("Unexpected response format from Sleeper players endpoint")
 
-    sleeper_status_by_id: dict[str, str | None] = {}
+    all_players = session.exec(select(Player)).all()
+    by_ext_id: dict[str, Player] = {p.external_id: p for p in all_players if p.external_id}
+    by_name_pos: dict[tuple[str, str], Player] = {(p.full_name, p.position): p for p in all_players}
+
+    updated = 0
     for pid, p in players_db.items():
         if not isinstance(p, dict):
             continue
+        sleeper_id = str(pid)
         raw_status = p.get("status")
-        sleeper_status_by_id[str(pid)] = str(raw_status).strip() if raw_status else None
+        injury_status = str(raw_status).strip() if raw_status else None
+        nfl_team = p.get("team") or None
 
-    players = session.exec(select(Player).where(Player.external_id.is_not(None))).all()
-    updated = 0
-    for player in players:
-        if player.external_id not in sleeper_status_by_id:
+        if sleeper_id in by_ext_id:
+            player = by_ext_id[sleeper_id]
+            changed = False
+            if player.injury_status != injury_status:
+                player.injury_status = injury_status
+                changed = True
+            if nfl_team and player.nfl_team != nfl_team:
+                player.nfl_team = nfl_team
+                changed = True
+            if changed:
+                updated += 1
             continue
-        new_status = sleeper_status_by_id[player.external_id]
-        if player.injury_status != new_status:
-            player.injury_status = new_status
-            updated += 1
+
+        # Only create new records for active players currently on an NFL roster.
+        if not p.get("active") or not nfl_team:
+            continue
+        raw_pos = str(p.get("position") or "")
+        pos = _normalize_position(raw_pos)
+        if pos not in _VALID_POSITIONS:
+            continue
+        first = (p.get("first_name") or "").strip()
+        last = (p.get("last_name") or "").strip()
+        full_name = p.get("full_name") or f"{first} {last}".strip()
+        if not full_name:
+            continue
+
+        image_url = f"https://sleepercdn.com/content/nfl/players/thumb/{sleeper_id}.jpg"
+
+        if (full_name, pos) in by_name_pos:
+            # Link Sleeper ID to existing CSV-imported player.
+            player = by_name_pos[(full_name, pos)]
+            if player.external_id is None:
+                player.external_id = sleeper_id
+                by_ext_id[sleeper_id] = player
+            if nfl_team and player.nfl_team != nfl_team:
+                player.nfl_team = nfl_team
+            if player.image_url is None:
+                player.image_url = image_url
+            if player.injury_status != injury_status:
+                player.injury_status = injury_status
+                updated += 1
+            continue
+
+        player = Player(
+            full_name=full_name,
+            position=pos,
+            nfl_team=nfl_team,
+            external_id=sleeper_id,
+            birth_date=_parse_birth_date(p.get("birth_date")),
+            image_url=image_url,
+            injury_status=injury_status,
+        )
+        session.add(player)
+        by_ext_id[sleeper_id] = player
+        by_name_pos[(full_name, pos)] = player
 
     session.commit()
     return updated
