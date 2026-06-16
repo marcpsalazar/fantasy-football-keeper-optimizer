@@ -9,6 +9,7 @@ import uuid
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.db.session import get_session
@@ -3956,12 +3957,12 @@ def search_watchlist_players(
     if active_snapshot:
         rows = session.exec(
             select(Player, ADPEntry)
-            .join(ADPEntry, ADPEntry.player_id == Player.id)
-            .where(
-                ADPEntry.snapshot_id == active_snapshot.id,
-                Player.full_name.ilike(query_str),
+            .outerjoin(
+                ADPEntry,
+                (ADPEntry.player_id == Player.id) & (ADPEntry.snapshot_id == active_snapshot.id),
             )
-            .order_by(ADPEntry.adp_pick.asc())
+            .where(Player.full_name.ilike(query_str))
+            .order_by(func.coalesce(ADPEntry.adp_pick, 9999).asc(), Player.full_name.asc())
             .limit(20)
         ).all()
         results = [
@@ -3971,7 +3972,7 @@ def search_watchlist_players(
                 "position": player.position,
                 "nfl_team": player.nfl_team,
                 "image_url": player.image_url,
-                "adp_pick": entry.adp_pick,
+                "adp_pick": entry.adp_pick if entry else None,
             }
             for player, entry in rows
         ]
