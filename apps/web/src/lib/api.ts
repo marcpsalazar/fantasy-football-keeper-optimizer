@@ -2929,8 +2929,8 @@ function mapLeagueMembership(row: ApiRow): LeagueMembership {
     userId: text(row.user_id),
     leagueId: text(row.league_id),
     role: role === "league_admin" ? "league_admin" : "member",
-    email: text(row.email),
-    alias: text(row.alias) || null,
+    email: text(row.user_email),
+    alias: text(row.user_alias) || null,
     avatarDataUrl: text(row.avatar_data_url) || null,
   };
 }
