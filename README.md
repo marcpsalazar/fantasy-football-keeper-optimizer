@@ -36,6 +36,18 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
   - **Season Analysis**: post-season decision quality report. Cross-references Final Keeper Selections, KeeperOutcomes, and Recommendations to categorize each player as Hit, Miss, Bust, Left on Table, Dodged, Below ADP, or Unknown. Shows league-level hit rate, bust rate, recommendation accuracy, and opportunity cost, with per-team expandable tables.
   - **Keeper History** (formerly Historical Keeper ROI Tracker): multi-year ROI tracking by season, team, and player. Admins import end-of-season outcomes via Sleeper auto-fetch (available to all leagues regardless of platform — no Sleeper account required) or CSV fallback. The Sleeper stats API cross-references keeper candidates by Sleeper player ID first, then by full name + NFL team composite.
 - **Player headshots**: player dialogs (keeper explanation modal and mock draft player detail) display the player's headshot sourced from the Sleeper CDN, with a team-color circle fallback showing the team abbreviation when no photo is available.
+- **Injury and roster status**: Sleeper's player database is synced daily, so each player's injury designation (Questionable, Doubtful, Out, IR, PUP) is shown throughout the app — in keeper recommendations, mock draft player lists, and the explanation modal. The risk penalty in the optimizer's scoring model reflects these designations.
+- **Keeper Tenure**: track consecutive keeper seasons per player to enforce multi-year keep limits. Admins import tenure history via CSV or manage records individually. Each keeper candidate displays a tenure badge (e.g. "yr 2/3") when limits are configured.
+- **Value Window**: the keeper explanation modal includes a multi-year projection section showing how a player's keeper value is expected to evolve over the next three seasons, based on position-specific aging curves. A green "Open" or red "Closing / Closed" badge summarizes whether it is still a good time to lock in the player.
+- **Player Watchlist**: in Mock Draft, any member can star players to add them to a personal watchlist for the current league. Watched players are highlighted in the available player list and collected in a persistent sidebar panel for quick one-click drafting.
+- **Keeper Card export**: a shareable PNG keeper card is available per team from the Team Outlook screen. The card shows the team name, selected keepers, positions, and cost rounds in a compact format.
+- **Commissioner Tools**: a dedicated sidebar view (league admin only) consolidating end-of-cycle admin tasks:
+  - **League Dates**: set keeper pick deadline, ADP lock date, regular season start, draft date, and keeper reveal date. Deadline and season start appear as countdowns in the app header.
+  - **Compliance Checker**: automatically verifies that every team's keeper selections are within league limits. Shows a per-team pass/fail breakdown.
+  - **Keeper Reveal**: controls the date on which keeper selections become visible to non-admin members. Before that date, member views are masked.
+  - **Reminder Emails**: send deadline reminder emails to all league members via a configured SMTP server.
+  - **Bulk Export**: download all team keeper card reports as a single ZIP archive.
+- **Progressive Web App (PWA)**: the web app is installable on mobile and desktop. The browser displays a native install prompt when the app is ready; once installed, it runs in a standalone window with an offline-friendly shell.
 - **Sleeper league import**: paste a Sleeper League ID to automatically pull teams, draft results, and final rosters — preview first, then commit.
 - **Yahoo Fantasy league import**: connect via Yahoo OAuth to automatically pull teams, draft results, and final rosters from a Yahoo Fantasy Sports league — preview first, then commit.
 - **ESPN Fantasy league import**: enter an ESPN League ID and season year to automatically pull teams, draft results, and final rosters from an ESPN Fantasy league — preview first, then commit. Public leagues need no credentials; private leagues require the `espn_s2` and `SWID` cookies from the user's browser session.
@@ -48,7 +60,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
   - Position draft limits enforced — Draft button disabled and roster tiles highlighted when a position cap is reached.
   - Pick timer (30 / 60 / 90 / 120 seconds) with auto-pick on expiry.
   - Completed mock history with letter grade, score, and recap. Side-by-side draft comparison. Rerun analysis on any completed session.
-- **AI keeper explanations**: click any player name in Keeper Recommendations to open a detail modal showing the player's headshot, position, and a plain-English explanation of why the optimizer recommended or passed on that player (short reason, value explanation, risk note, opportunity cost, decision badge). Responses are cached.
+- **AI keeper explanations**: click any player name in Keeper Recommendations to open a detail modal showing the player's headshot, position, and a plain-English explanation of why the optimizer recommended or passed on that player (short reason, value explanation, risk note, opportunity cost, decision badge). Responses are cached. The modal also includes a **Value Window** section that projects how the player's keeper value is expected to change over the next three seasons using position-specific aging curves, so you can judge whether locking in the player now or waiting is the better long-term play.
 - **AI scenario narratives**: click "Generate AI Analysis" in Scenario Comparison for a plain-English tradeoff summary across all five presets. Personalized for the signed-in user's assigned team when available.
 - **Composite ADP**: one-click "Update ADP" button builds a weighted-median board from DraftSharks + Fantasy Football Calculator and imports it directly.
 - **AI cost controls**: set a monthly token budget (`AI_MONTHLY_TOKEN_BUDGET`) to cap all AI spending. Platform admins can review token usage and estimated costs in the Admin AI Usage panel.
@@ -232,6 +244,18 @@ SCENARIO_NARRATIVE_AI_TIMEOUT_SECONDS=45
 PLAYER_SUMMARY_AI_ENABLED=false
 PLAYER_SUMMARY_MODEL=gpt-5.4-mini
 PLAYER_SUMMARY_AI_TIMEOUT_SECONDS=30
+
+# Email reminders (Commissioner Tools → Reminder Emails)
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM_EMAIL=noreply@keeperoptimizer.com
+SMTP_FROM_NAME=Keeper Optimizer
+SMTP_USE_TLS=true
+
+# URL used in OAuth callbacks and email links
+FRONTEND_URL=http://localhost:3000
 ```
 
 AI features are opt-in. All AI calls require `OPENAI_API_KEY` to be set. Each feature has its own enable flag:
@@ -565,6 +589,11 @@ statuses can carry risk penalties.
 Admins import final rosters from `Admin` -> `League Data Imports`. Players not included in final
 rosters will not be considered by the optimizer.
 
+Player injury and roster designations (Questionable, Doubtful, Out, IR, PUP) are pulled from
+Sleeper's public roster API once per day and are applied automatically. The optimizer applies a risk
+penalty to players with active injury designations. A colored status badge is shown wherever player
+names appear in the app.
+
 ### Admin
 
 Admins use `Admin` for account management, team management, shared league imports, league settings, and AI observability.
@@ -668,6 +697,27 @@ Bonus toggles:
 Click `Save Settings` when you intentionally change the model. Saving settings persists the new
 values, reruns the optimizer, clears selected scenario overrides, refreshes the workspace, and
 updates recommendations, draft impact, and outlooks.
+
+### Keeper Tenure
+
+`Keeper Tenure` is a panel within `Optimizer Settings` that enforces consecutive-keeper-season
+limits. Each record links a player to the number of seasons they have already been kept. When a
+player's tenure reaches the league's per-player cap, the optimizer marks them ineligible regardless
+of keeper value.
+
+Admin workflow:
+
+1. Open `Optimizer Settings` and scroll to the `Keeper Tenure` panel.
+2. Click `Upload CSV` and paste a CSV with columns `team`, `player`, `position`, `seasons_kept`.
+3. Click `Preview`, review matches, then click `Import`.
+4. Individual records can be deleted from the displayed table.
+5. `Clear All` removes every tenure record for the league when starting a new cycle.
+
+Each keeper candidate in `Keeper Recommendations` displays a tenure badge (e.g. "yr 2/3") when
+tenure data is present, so you can see at a glance how much keeper eligibility remains.
+
+Tenure records are auto-advanced when keepers are finalized: each player kept that season has their
+`seasons_kept` incremented automatically so the next cycle starts with accurate totals.
 
 Use settings before `Run Optimizer` when league rules or strategy changed. Examples:
 
@@ -788,6 +838,10 @@ Use `Team Outlook` for a plain-language summary by team. Each outlook summarizes
 recommended keepers, lost picks, draft capital, and risk notes. Export a team PDF when you need a
 shareable report for one manager.
 
+Each team card also has a `Download Keeper Card` button that generates a compact PNG image showing
+the team name, selected keepers, positions, and cost rounds — useful for sharing in a group chat or
+posting to a league Discord.
+
 Outlooks are summaries of the active selected keeper plan. The detailed math remains in `Keeper
 Recommendations`.
 
@@ -807,6 +861,57 @@ Use `Trade Analyzer` to model the keeper value impact of a proposed trade before
 6. Enable AI narrative (requires `KEEPER_EXPLANATION_AI_ENABLED=true`) for a plain-English verdict: `Good`, `Neutral`, or `Bad`, with a summary, key risk, and opportunity cost.
 
 The trade analyzer does not commit any changes. It is a modeling tool only.
+
+### Commissioner Tools
+
+Use `Commissioner Tools` (league admins only) to manage league-wide admin tasks that happen at the
+end of the keeper decision cycle.
+
+**League Dates:**
+Set key dates from the `League Dates` panel. Dates set here drive live countdown timers in the app
+header visible to all members.
+
+- **Keeper Pick Deadline**: the date by which all keepers must be submitted. Triggers a countdown in the header.
+- **ADP Lock Date**: defaults to 7 days before the keeper deadline (auto-filled when the deadline is set). After this date, the ADP snapshot is treated as locked.
+- **Regular Season Start**: drives the season countdown banner.
+- **Draft Date**: shown in the dashboard header.
+- **Keeper Reveal Date**: the date after which non-admin members can see keeper selections. Before this date, members see a masked view.
+
+Click `Save` to persist. Changes take effect immediately for all connected users.
+
+**Compliance Checker:**
+The compliance checker runs automatically when you open `Commissioner Tools`. It verifies that every
+team's keeper selections are within the configured keeper limits (max keepers, position caps, QB
+cap). Each team shows a green `Pass` or red `Fail` badge. Use this before sending the final keeper
+list to the draft platform.
+
+**Keeper Reveal:**
+After keepers are finalized, the reveal panel controls what non-admin members can see. Set the
+`Keeper Reveal Date` in League Dates; before that date, the `Keeper Reveal` page shows a
+placeholder instead of actual keeper picks. After the reveal date (or on manual reveal), all members
+see the finalized selections.
+
+**Reminder Emails:**
+The reminder panel sends deadline reminder emails to all league members. Requires SMTP credentials
+set on the API service:
+
+```text
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=user@example.com
+SMTP_PASSWORD=<password>
+SMTP_FROM_EMAIL=noreply@keeperoptimizer.com
+SMTP_FROM_NAME=Keeper Optimizer
+SMTP_USE_TLS=true
+```
+
+The SMTP status indicator shows whether the server is reachable before you send. Platform admins can
+test connectivity from this panel.
+
+**Bulk Export:**
+Click `Download All Reports` to generate a ZIP archive containing PNG keeper cards for every team in
+the league. Share the ZIP with your co-commissioner or post individual cards from the Team Outlook
+screen.
 
 ### Final Keepers
 
@@ -897,6 +1002,7 @@ the current ADP snapshot.
 - Use the position **chip filters** below the search box to narrow the available player list by position. Each chip shows how many of that position you have already drafted. Chips for positions at the roster cap are tinted rose.
 - Click a player row to open the player detail dialog, which shows the player's headshot, stats, and ADP edge. If `PLAYER_SUMMARY_AI_ENABLED=true`, an AI scouting note is also shown.
 - Click `Draft` to select a player. A short confetti burst confirms the pick.
+- Click the **star** icon next to any player to add or remove them from your **Watchlist**. Watched players are marked with a filled star in the player list and collected in a persistent `Watchlist` panel in the mock draft sidebar. The panel shows how many players are on your list and provides a direct `Draft` button for each watched player.
 - If a position's draft limit is reached, the `Draft` button for players of that position is grayed out and the corresponding roster tile turns red.
 - Bots pick automatically. AI bot picks are used when `MOCK_DRAFT_AI_ENABLED=true`; otherwise bots fall back to deterministic scoring. Set `MOCK_DRAFT_AI_MAX_AI_ROUND` to limit AI picks to early rounds (0 = unlimited).
 - `Pause` and `Resume` are available if you need to step away.
@@ -1067,6 +1173,29 @@ POST   /api/leagues/{league_id}/keeper-outcomes/import
 POST   /api/leagues/{league_id}/keeper-outcomes/sleeper-preview
 POST   /api/leagues/{league_id}/keeper-outcomes/sleeper-import
 GET    /api/leagues/{league_id}/keeper-history
+
+GET    /api/leagues/{league_id}/keeper-tenure
+POST   /api/leagues/{league_id}/keeper-tenure/preview
+POST   /api/leagues/{league_id}/keeper-tenure/import
+DELETE /api/leagues/{league_id}/keeper-tenure/{tenure_id}
+DELETE /api/leagues/{league_id}/keeper-tenure
+
+GET    /api/leagues/{league_id}/commissioner/compliance
+POST   /api/leagues/{league_id}/commissioner/reminders/send
+GET    /api/leagues/{league_id}/commissioner/reminders/smtp-status
+
+GET    /api/leagues/{league_id}/reveal
+GET    /api/leagues/{league_id}/news-impact
+GET    /api/leagues/{league_id}/exports/bulk
+GET    /api/leagues/{league_id}/exports/adp-current.csv
+GET    /api/leagues/{league_id}/teams/{team_id}/exports/keeper-card.png
+GET    /api/leagues/{league_id}/optimizer/results/{rec_id}/value-window
+
+GET    /api/leagues/{league_id}/draft-history
+GET    /api/leagues/{league_id}/watchlist
+POST   /api/leagues/{league_id}/watchlist
+DELETE /api/leagues/{league_id}/watchlist/{player_id}
+GET    /api/leagues/{league_id}/watchlist/search
 
 GET    /api/leagues/{league_id}/final-keepers
 GET    /api/leagues/{league_id}/final-keepers/prefill
