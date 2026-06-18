@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200" viewBox="0 0 600 200">
+  <defs>
+    <!-- Stadium light glow left -->
+    <radialGradient id="gl" cx="22%" cy="0%" r="55%">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.22"/>
+      <stop offset="60%" stop-color="#f59e0b" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#080c14" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Stadium light glow right -->
+    <radialGradient id="gr" cx="78%" cy="0%" r="55%">
+      <stop offset="0%" stop-color="#4f46e5" stop-opacity="0.18"/>
+      <stop offset="60%" stop-color="#4f46e5" stop-opacity="0.03"/>
+      <stop offset="100%" stop-color="#080c14" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Bottom fade -->
+    <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#080c14" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#080c14" stop-opacity="0.7"/>
+    </linearGradient>
+    <!-- Field perspective vanishing point at top-center -->
+    <linearGradient id="fieldLine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a3355" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#1a3355" stop-opacity="0.1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Base background -->
+  <rect width="600" height="200" fill="#080c14"/>
+
+  <!-- Perspective field lines converging to top-center (300, 0) -->
+  <g fill="none" stroke="url(#fieldLine)" stroke-width="1">
+    <line x1="300" y1="0" x2="0"   y2="200"/>
+    <line x1="300" y1="0" x2="60"  y2="200"/>
+    <line x1="300" y1="0" x2="120" y2="200"/>
+    <line x1="300" y1="0" x2="180" y2="200"/>
+    <line x1="300" y1="0" x2="240" y2="200"/>
+    <line x1="300" y1="0" x2="300" y2="200"/>
+    <line x1="300" y1="0" x2="360" y2="200"/>
+    <line x1="300" y1="0" x2="420" y2="200"/>
+    <line x1="300" y1="0" x2="480" y2="200"/>
+    <line x1="300" y1="0" x2="540" y2="200"/>
+    <line x1="300" y1="0" x2="600" y2="200"/>
+  </g>
+
+  <!-- Horizontal yard lines (perspective-foreshortened) -->
+  <g fill="none" stroke="#1a3355" stroke-width="0.8" opacity="0.7">
+    <line x1="45"  y1="200" x2="555" y2="200"/>
+    <line x1="80"  y1="170" x2="520" y2="170"/>
+    <line x1="115" y1="140" x2="485" y2="140"/>
+    <line x1="152" y1="110" x2="448" y2="110"/>
+    <line x1="190" y1="80"  x2="410" y2="80"/>
+    <line x1="228" y1="50"  x2="372" y2="50"/>
+    <line x1="260" y1="26"  x2="340" y2="26"/>
+  </g>
+
+  <!-- Gold hash marks on center line -->
+  <g stroke="#f59e0b" stroke-width="1.5" opacity="0.25">
+    <line x1="295" y1="140" x2="305" y2="140"/>
+    <line x1="295" y1="110" x2="305" y2="110"/>
+    <line x1="295" y1="80"  x2="305" y2="80"/>
+    <line x1="268" y1="50"  x2="278" y2="50"/>
+    <line x1="322" y1="50"  x2="332" y2="50"/>
+  </g>
+
+  <!-- Gold center field ring -->
+  <circle cx="300" cy="170" r="40" fill="none" stroke="#f59e0b" stroke-width="1" opacity="0.15"/>
+  <circle cx="300" cy="170" r="3"  fill="#f59e0b" opacity="0.3"/>
+
+  <!-- Stadium light glow overlays -->
+  <rect width="600" height="200" fill="url(#gl)"/>
+  <rect width="600" height="200" fill="url(#gr)"/>
+
+  <!-- Bottom dark fade for text readability -->
+  <rect width="600" height="200" fill="url(#fade)"/>
+
+  <!-- Subtle gold dot at vanishing point -->
+  <circle cx="300" cy="2" r="2" fill="#f59e0b" opacity="0.6"/>
+  <line x1="300" y1="0" x2="300" y2="12" stroke="#f59e0b" stroke-width="1" opacity="0.4"/>
+</svg>
