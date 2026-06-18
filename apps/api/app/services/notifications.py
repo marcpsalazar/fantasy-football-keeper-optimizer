@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import urllib.error
+import urllib.request
 import uuid
 
 from sqlmodel import Session, select
@@ -401,114 +404,172 @@ def send_keeper_deadline_reminders(
     if dry_run:
         return recipients
 
+    use_resend_api = (settings.smtp_host or "").lower() == "smtp.resend.com"
+    from_display = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+
+    # For SMTP mode: open one persistent connection for all recipients.
+    smtp_server: smtplib.SMTP | None = None
+    if not use_resend_api:
+        try:
+            smtp_server = smtplib.SMTP(settings.smtp_host, settings.smtp_port)  # type: ignore[arg-type]
+            if settings.smtp_use_tls:
+                smtp_server.starttls()
+            smtp_server.login(settings.smtp_username, settings.smtp_password)  # type: ignore[arg-type]
+        except (smtplib.SMTPException, OSError) as exc:
+            raise NotificationError(f"SMTP connection failed: {exc}") from exc
+
     errors: list[str] = []
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:  # type: ignore[arg-type]
-            if settings.smtp_use_tls:
-                server.starttls()
-            server.login(settings.smtp_username, settings.smtp_password)  # type: ignore[arg-type]
+        for email_addr, user, team, players in recipients_data:
+            owner_name = _resolve_owner_name(user, team)
+            team_name = team.name if team else league.name
+            player_names = [p.full_name for p in players if p.full_name]
+            player_image_map: dict[str, str | None] = {
+                p.full_name: p.image_url for p in players if p.full_name
+            }
 
-            for email_addr, user, team, players in recipients_data:
-                owner_name = _resolve_owner_name(user, team)
-                team_name = team.name if team else league.name
-                player_names = [p.full_name for p in players if p.full_name]
-                player_image_map: dict[str, str | None] = {
-                    p.full_name: p.image_url for p in players if p.full_name
-                }
+            news_items, matched_player_names = _select_news_for_team(all_news, player_names, count=3)
 
-                # Select and match news items
-                news_items, matched_player_names = _select_news_for_team(all_news, player_names, count=3)
+            strategy_headline: str | None = None
+            strategy_bullets: list[str] = []
+            featured_player_name: str | None = None
+            featured_player_position = ""
+            featured_player_nfl_team = ""
+            featured_player_image: str | None = None
 
-                # Build AI strategy
-                strategy_headline: str | None = None
-                strategy_bullets: list[str] = []
-                featured_player_name: str | None = None
-                featured_player_position = ""
-                featured_player_nfl_team = ""
-                featured_player_image: str | None = None
+            try:
+                from app.services import email_strategy_ai
+                if email_strategy_ai.is_enabled(settings):
+                    news_for_ai = [
+                        {"headline": item.headline, "source": item.source}
+                        for item in news_items
+                    ]
+                    player_dicts = [
+                        {
+                            "name": p.full_name,
+                            "position": p.position or "",
+                            "nfl_team": p.nfl_team or "",
+                            "injury_status": p.injury_status or "",
+                        }
+                        for p in players
+                    ]
+                    context = email_strategy_ai.build_strategy_context(
+                        owner_name=owner_name,
+                        team_name=team_name,
+                        league_name=league.name,
+                        season_year=league.season_year,
+                        scoring_format=league.scoring_format,
+                        keeper_pick_deadline=deadline_str,
+                        draft_date=draft_str,
+                        players=player_dicts,
+                        news_items=news_for_ai,
+                    )
+                    result = email_strategy_ai.generate_email_strategy(
+                        settings=settings,
+                        context=context,
+                    )
+                    strategy_headline = result.strategy_headline
+                    strategy_bullets = result.strategy_bullets
+                    featured_player_name = result.featured_player
+                    if featured_player_name:
+                        fp = next((p for p in players if p.full_name == featured_player_name), None)
+                        if fp:
+                            featured_player_position = fp.position or ""
+                            featured_player_nfl_team = fp.nfl_team or ""
+                            featured_player_image = fp.image_url
+            except Exception as exc:
+                logger.warning("Email strategy AI failed for %s: %s", email_addr, exc)
 
-                try:
-                    from app.services import email_strategy_ai
-                    if email_strategy_ai.is_enabled(settings):
-                        news_for_ai = [
-                            {"headline": item.headline, "source": item.source}
-                            for item in news_items
-                        ]
-                        player_dicts = [
-                            {
-                                "name": p.full_name,
-                                "position": p.position or "",
-                                "nfl_team": p.nfl_team or "",
-                                "injury_status": p.injury_status or "",
-                            }
-                            for p in players
-                        ]
-                        context = email_strategy_ai.build_strategy_context(
-                            owner_name=owner_name,
-                            team_name=team_name,
-                            league_name=league.name,
-                            season_year=league.season_year,
-                            scoring_format=league.scoring_format,
-                            keeper_pick_deadline=deadline_str,
-                            draft_date=draft_str,
-                            players=player_dicts,
-                            news_items=news_for_ai,
-                        )
-                        result = email_strategy_ai.generate_email_strategy(
-                            settings=settings,
-                            context=context,
-                        )
-                        strategy_headline = result.strategy_headline
-                        strategy_bullets = result.strategy_bullets
-                        featured_player_name = result.featured_player
-                        if featured_player_name:
-                            fp = next((p for p in players if p.full_name == featured_player_name), None)
-                            if fp:
-                                featured_player_position = fp.position or ""
-                                featured_player_nfl_team = fp.nfl_team or ""
-                                featured_player_image = fp.image_url
-                except Exception as exc:
-                    logger.warning("Email strategy AI failed for %s: %s", email_addr, exc)
+            html_body, text_body = _build_personalized_email(
+                owner_name=owner_name,
+                team_name=team_name,
+                league_name=league.name,
+                season_year=league.season_year,
+                deadline_str=deadline_str,
+                draft_str=draft_str,
+                app_url=app_url,
+                news_items=news_items,
+                matched_player_names=matched_player_names,
+                player_image_map=player_image_map,
+                strategy_headline=strategy_headline,
+                strategy_bullets=strategy_bullets,
+                featured_player_name=featured_player_name,
+                featured_player_position=featured_player_position,
+                featured_player_nfl_team=featured_player_nfl_team,
+                featured_player_image=featured_player_image,
+                league_id=league_id,
+            )
 
-                html_body, text_body = _build_personalized_email(
-                    owner_name=owner_name,
-                    team_name=team_name,
-                    league_name=league.name,
-                    season_year=league.season_year,
-                    deadline_str=deadline_str,
-                    draft_str=draft_str,
-                    app_url=app_url,
-                    news_items=news_items,
-                    matched_player_names=matched_player_names,
-                    player_image_map=player_image_map,
-                    strategy_headline=strategy_headline,
-                    strategy_bullets=strategy_bullets,
-                    featured_player_name=featured_player_name,
-                    featured_player_position=featured_player_position,
-                    featured_player_nfl_team=featured_player_nfl_team,
-                    featured_player_image=featured_player_image,
-                    league_id=league_id,
-                )
+            subject = f"[{league.name}] Keeper Pick Deadline — {deadline_str}"
 
-                subject = f"[{league.name}] Keeper Pick Deadline — {deadline_str}"
-                msg = MIMEMultipart("alternative")
-                msg["Subject"] = subject
-                msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
-                msg["To"] = email_addr
-                msg.attach(MIMEText(text_body, "plain"))
-                msg.attach(MIMEText(html_body, "html"))
-                try:
-                    server.sendmail(settings.smtp_from_email, [email_addr], msg.as_string())
-                except (smtplib.SMTPException, OSError) as exc:
-                    errors.append(f"{email_addr}: {exc}")
-
-    except (smtplib.SMTPException, OSError) as exc:
-        raise NotificationError(f"SMTP connection failed: {exc}") from exc
+            try:
+                if use_resend_api:
+                    _send_via_resend_api(
+                        api_key=settings.smtp_password,  # type: ignore[arg-type]
+                        from_display=from_display,
+                        to=email_addr,
+                        subject=subject,
+                        html=html_body,
+                        text=text_body,
+                    )
+                else:
+                    msg = MIMEMultipart("alternative")
+                    msg["Subject"] = subject
+                    msg["From"] = from_display
+                    msg["To"] = email_addr
+                    msg.attach(MIMEText(text_body, "plain"))
+                    msg.attach(MIMEText(html_body, "html"))
+                    smtp_server.sendmail(settings.smtp_from_email, [email_addr], msg.as_string())  # type: ignore[union-attr]
+            except (NotificationError, smtplib.SMTPException, OSError) as exc:
+                errors.append(f"{email_addr}: {exc}")
+    finally:
+        if smtp_server is not None:
+            try:
+                smtp_server.quit()
+            except Exception:
+                pass
 
     if errors:
         raise NotificationError(f"Some emails failed to send: {'; '.join(errors)}")
 
     return recipients
+
+
+def _send_via_resend_api(
+    *,
+    api_key: str,
+    from_display: str,
+    to: str,
+    subject: str,
+    html: str,
+    text: str,
+) -> None:
+    """Send one email via Resend's HTTPS API (port 443 — works on Railway)."""
+    payload = json.dumps({
+        "from": from_display,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+        "text": text,
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status not in (200, 201):
+                raise NotificationError(f"Resend API returned {resp.status}")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")
+        raise NotificationError(f"Resend API error {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise NotificationError(f"Resend API request failed: {exc}") from exc
 
 
 def _resolve_owner_name(user: User, team: Team | None) -> str:
