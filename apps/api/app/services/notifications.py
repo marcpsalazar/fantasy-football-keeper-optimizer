@@ -70,33 +70,47 @@ def _select_news_for_team(
 
 def _player_image_tag(image_url: str | None, player_name: str, size: int = 48) -> str:
     if not image_url:
+        initial = player_name[0].upper() if player_name else "#"
+        font_size = max(12, size // 2)
         return (
-            f'<div style="width:{size}px;height:{size}px;border-radius:50%;'
-            f'background:#334155;display:inline-flex;align-items:center;'
-            f'justify-content:center;font-size:18px;">🏈</div>'
+            f'<div style="width:{size}px;height:{size}px;border-radius:4px;background:#1a2236;'
+            f'border:1px solid #2d3f5a;text-align:center;line-height:{size}px;'
+            f'font-size:{font_size}px;font-weight:700;color:#4a6080;'
+            f'font-family:Arial,sans-serif;display:inline-block;">{initial}</div>'
         )
     return (
         f'<img src="{image_url}" alt="{player_name}" width="{size}" height="{size}" '
-        f'style="border-radius:50%;object-fit:cover;background:#334155;" />'
+        f'style="border-radius:4px;object-fit:cover;background:#1a2236;display:block;" />'
+    )
+
+
+def _section_label_html(text: str, color: str = "#94a3b8") -> str:
+    return (
+        f'<table cellpadding="0" cellspacing="0" style="margin-bottom:16px;">'
+        f'<tr>'
+        f'<td width="3" style="background:#f59e0b;font-size:0;line-height:0;">&nbsp;</td>'
+        f'<td style="padding-left:10px;font-size:10px;font-weight:800;letter-spacing:2.5px;'
+        f'color:{color};text-transform:uppercase;font-family:Arial,sans-serif;">{text}</td>'
+        f'</tr></table>'
     )
 
 
 def _news_item_html(item, matched_player_name: str, player_image_url: str | None) -> str:
-    img_tag = _player_image_tag(player_image_url, matched_player_name or "Player", size=44)
-    source_badge = (
-        f'<span style="font-size:11px;color:#94a3b8;background:#1e293b;'
-        f'padding:2px 7px;border-radius:10px;margin-left:8px;">{item.source}</span>'
+    img_tag = _player_image_tag(player_image_url, matched_player_name or "#", size=44)
+    source_tag = (
+        f'<span style="font-size:10px;font-weight:700;letter-spacing:1px;color:#4a6080;'
+        f'text-transform:uppercase;">{item.source}</span>'
         if item.source else ""
     )
     return f"""
 <tr>
-  <td style="padding:10px 0;border-bottom:1px solid #1e293b;">
+  <td style="padding:12px 0;border-bottom:1px solid #1a2236;">
     <table cellpadding="0" cellspacing="0" width="100%">
       <tr>
-        <td width="52" valign="top" style="padding-right:12px;">{img_tag}</td>
+        <td width="52" valign="top" style="padding-right:14px;">{img_tag}</td>
         <td valign="middle">
-          <a href="{item.link}" style="color:#e2e8f0;text-decoration:none;font-size:14px;line-height:1.5;font-weight:500;">{item.headline}</a>
-          <div style="margin-top:4px;">{source_badge}</div>
+          <a href="{item.link}" style="color:#e2e8f0;text-decoration:none;font-size:14px;line-height:1.5;font-weight:600;font-family:Arial,sans-serif;">{item.headline}</a>
+          <div style="margin-top:5px;">{source_tag}</div>
         </td>
       </tr>
     </table>
@@ -106,23 +120,23 @@ def _news_item_html(item, matched_player_name: str, player_image_url: str | None
 
 def _strategy_bullet_html(bullet: str) -> str:
     return (
-        f'<tr><td style="padding:5px 0 5px 8px;color:#cbd5e1;font-size:14px;line-height:1.5;">'
-        f'<span style="color:#a78bfa;margin-right:8px;">▸</span>{bullet}</td></tr>'
+        f'<tr><td style="padding:6px 0;color:#94a3b8;font-size:14px;line-height:1.6;'
+        f'font-family:Arial,sans-serif;border-bottom:1px solid #1a2236;">'
+        f'<span style="color:#f59e0b;margin-right:10px;font-weight:700;">—</span>{bullet}</td></tr>'
     )
 
 
 def _featured_player_html(player_name: str, position: str, nfl_team: str, image_url: str | None) -> str:
-    img_tag = _player_image_tag(image_url, player_name, size=64)
+    img_tag = _player_image_tag(image_url, player_name, size=60)
     return f"""
-<table cellpadding="0" cellspacing="0" style="background:#0f172a;border-radius:10px;padding:16px;margin-top:16px;width:100%;">
+<table cellpadding="0" cellspacing="0" style="margin-top:20px;width:100%;border-top:1px solid #2d3f5a;padding-top:16px;">
   <tr>
-    <td width="80" valign="middle" style="padding-right:16px;">{img_tag}</td>
+    <td width="4" style="background:#f59e0b;font-size:0;">&nbsp;</td>
+    <td width="72" valign="middle" style="padding-left:16px;padding-right:16px;">{img_tag}</td>
     <td valign="middle">
-      <div style="color:#f8fafc;font-size:16px;font-weight:700;">{player_name}</div>
-      <div style="color:#94a3b8;font-size:13px;margin-top:3px;">{position} &bull; {nfl_team}</div>
-      <div style="margin-top:6px;">
-        <span style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-size:11px;padding:3px 10px;border-radius:10px;font-weight:600;">Featured Player</span>
-      </div>
+      <div style="font-size:10px;font-weight:800;letter-spacing:2px;color:#f59e0b;text-transform:uppercase;margin-bottom:4px;">Key Player</div>
+      <div style="color:#f8fafc;font-size:16px;font-weight:700;font-family:Arial,sans-serif;">{player_name}</div>
+      <div style="color:#4a6080;font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-top:2px;">{position} &bull; {nfl_team}</div>
     </td>
   </tr>
 </table>"""
@@ -170,10 +184,10 @@ def _build_personalized_email(
         strategy_section = f"""
           <!-- Strategy Section -->
           <tr>
-            <td style="padding:0 40px 32px;">
-              <div style="background:#0f172a;border-radius:10px;padding:24px;">
-                <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#a78bfa;text-transform:uppercase;margin-bottom:8px;">&#x1F9E0; Strategy for {team_name}</div>
-                <div style="color:#f8fafc;font-size:17px;font-weight:700;line-height:1.4;margin-bottom:16px;">{strategy_headline}</div>
+            <td style="padding:28px 40px;">
+              <div style="background:#0d1117;border-top:3px solid #f59e0b;padding:24px;">
+                {_section_label_html(f"Strategy &mdash; {team_name}")}
+                <div style="color:#f8fafc;font-size:18px;font-weight:800;line-height:1.4;margin-bottom:20px;font-family:Arial,sans-serif;">{strategy_headline}</div>
                 <table cellpadding="0" cellspacing="0" width="100%">
                   {bullets_html}
                 </table>
@@ -189,84 +203,81 @@ def _build_personalized_email(
 
     html_body = f"""
 <html>
-<body style="margin:0;padding:0;background-color:#0f172a;font-family:'Segoe UI',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#0f172a;padding:40px 0;">
+<body style="margin:0;padding:0;background-color:#080c14;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#080c14;padding:40px 0;">
     <tr>
       <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#1e293b;border-radius:12px;overflow:hidden;max-width:600px;">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#111827;max-width:600px;">
+
+          <!-- Gold top bar -->
+          <tr><td style="background:#f59e0b;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
 
           <!-- Header -->
           <tr>
-            <td style="background:linear-gradient(135deg,#7c3aed,#4f46e5);padding:28px 40px;">
-              <table width="100%" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td>
-                    <div style="color:#ffffff;font-size:20px;font-weight:700;letter-spacing:0.5px;">Mayhem Fantasy Football Tools</div>
-                    <div style="color:#c4b5fd;font-size:13px;margin-top:4px;">mayhemfantasyfootballtools.com</div>
-                  </td>
-                  <td align="right" style="color:#e9d5ff;font-size:28px;">🏈</td>
-                </tr>
-              </table>
+            <td style="background:#0d1117;padding:28px 40px 24px;">
+              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#f59e0b;text-transform:uppercase;margin-bottom:6px;font-family:Arial,sans-serif;">Fantasy Football</div>
+              <div style="font-size:26px;font-weight:900;color:#ffffff;letter-spacing:1px;font-family:Arial,sans-serif;">MAYHEM</div>
+              <div style="font-size:11px;color:#2d3f5a;letter-spacing:1px;margin-top:4px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
             </td>
           </tr>
 
           <!-- Greeting -->
           <tr>
-            <td style="padding:28px 40px 0;">
-              <div style="color:#f8fafc;font-size:22px;font-weight:700;">Hey {owner_name}! 👋</div>
-              <div style="color:#94a3b8;font-size:14px;margin-top:4px;">{league_name} &bull; {season_year} Season</div>
+            <td style="background:#111827;padding:32px 40px 0;">
+              <div style="font-size:26px;font-weight:900;color:#f8fafc;letter-spacing:0.5px;font-family:Arial,sans-serif;">HEY, {owner_name.upper()}.</div>
+              <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#4a6080;text-transform:uppercase;margin-top:6px;font-family:Arial,sans-serif;">{league_name} &bull; {season_year} Season</div>
             </td>
           </tr>
 
           <!-- Divider -->
-          <tr><td style="padding:20px 40px 0;"><div style="border-top:1px solid #334155;"></div></td></tr>
+          <tr><td style="background:#111827;padding:24px 40px 0;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
 
           <!-- Section 1: Deadline -->
           <tr>
-            <td style="padding:24px 40px 0;">
-              <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#f87171;text-transform:uppercase;margin-bottom:12px;">&#x23F0; Keeper Deadline</div>
-              <p style="margin:0 0 10px;color:#cbd5e1;font-size:15px;line-height:1.6;">
-                Your keeper pick deadline for <strong style="color:#f8fafc;">{league_name}</strong> is coming up:
+            <td style="background:#111827;padding:24px 40px 0;">
+              {_section_label_html("Keeper Deadline")}
+              <p style="margin:0 0 16px;color:#94a3b8;font-size:14px;line-height:1.7;font-family:Arial,sans-serif;">
+                Your keeper pick deadline for <strong style="color:#f8fafc;">{league_name}</strong> is:
               </p>
-              <div style="background-color:#0f172a;border-left:4px solid #f87171;border-radius:6px;padding:14px 18px;margin:14px 0;">
-                <div style="color:#f87171;font-size:22px;font-weight:700;">{deadline_str}</div>
+              <div style="background:#0d1117;border-left:4px solid #f59e0b;padding:16px 20px;margin-bottom:16px;">
+                <div style="color:#f8fafc;font-size:22px;font-weight:900;font-family:Arial,sans-serif;">{deadline_str}</div>
               </div>
-              <p style="margin:0 0 20px;color:#cbd5e1;font-size:14px;">
-                Draft date: <strong style="color:#f8fafc;">{draft_str}</strong>
+              <p style="margin:0 0 24px;color:#4a6080;font-size:13px;font-weight:600;letter-spacing:1px;text-transform:uppercase;font-family:Arial,sans-serif;">
+                Draft &rarr; <span style="color:#94a3b8;">{draft_str}</span>
               </p>
-              <a href="{app_url}" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:8px;font-size:14px;font-weight:600;">
+              <a href="{app_url}" style="display:inline-block;background:#f59e0b;color:#0d1117;text-decoration:none;padding:14px 28px;font-size:13px;font-weight:800;letter-spacing:1px;text-transform:uppercase;font-family:Arial,sans-serif;">
                 Finalize My Keepers &rarr;
               </a>
             </td>
           </tr>
 
           <!-- Divider -->
-          <tr><td style="padding:24px 40px 0;"><div style="border-top:1px solid #334155;"></div></td></tr>
+          <tr><td style="background:#111827;padding:28px 40px 0;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
 
           <!-- Section 2: News -->
           <tr>
-            <td style="padding:24px 40px 0;">
-              <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#38bdf8;text-transform:uppercase;margin-bottom:16px;">&#x1F4F0; Your Players in the News</div>
+            <td style="background:#111827;padding:24px 40px 0;">
+              {_section_label_html("Players in the News")}
               <table cellpadding="0" cellspacing="0" width="100%">
-                {news_rows if news_rows else '<tr><td style="color:#64748b;font-size:14px;padding:8px 0;">No recent news found for your roster.</td></tr>'}
+                {news_rows if news_rows else '<tr><td style="color:#4a6080;font-size:13px;padding:8px 0;font-family:Arial,sans-serif;">No recent news for your roster.</td></tr>'}
               </table>
             </td>
           </tr>
 
           <!-- Divider -->
-          <tr><td style="padding:24px 40px 0;"><div style="border-top:1px solid #334155;"></div></td></tr>
+          <tr><td style="background:#111827;padding:28px 40px 0;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
 
           {strategy_section}
 
           <!-- Footer -->
           <tr>
-            <td style="padding:20px 40px 24px;border-top:1px solid #334155;text-align:center;">
-              <p style="margin:0 0 6px;color:#64748b;font-size:12px;">
-                Sent by your league commissioner via
-                <a href="https://mayhemfantasyfootballtools.com" style="color:#7c3aed;text-decoration:none;">Mayhem Fantasy Football Tools</a>
+            <td style="background:#0d1117;padding:20px 40px;text-align:center;border-top:3px solid #f59e0b;">
+              <p style="margin:0 0 6px;color:#2d3f5a;font-size:11px;font-family:Arial,sans-serif;">
+                Sent by your league commissioner &bull;
+                <a href="https://mayhemfantasyfootballtools.com" style="color:#4a6080;text-decoration:none;">Mayhem Fantasy Football Tools</a>
               </p>
-              <p style="margin:0;color:#475569;font-size:11px;">
-                <a href="{opt_out_url}" style="color:#475569;">Manage email preferences</a>
+              <p style="margin:0;font-family:Arial,sans-serif;">
+                <a href="{opt_out_url}" style="color:#2d3f5a;font-size:10px;letter-spacing:1px;text-transform:uppercase;text-decoration:none;">Manage Email Preferences</a>
               </p>
             </td>
           </tr>
