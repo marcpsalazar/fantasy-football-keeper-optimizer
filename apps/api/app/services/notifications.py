@@ -235,7 +235,7 @@ def _build_personalized_email(
           <!-- Hero SVG served from our own domain — always loads, no external CDN needed -->
           <tr>
             <td style="padding:0;background:#080c14;font-size:0;line-height:0;">
-              <img src="https://mayhemfantasyfootballtools.com/email/hero.svg"
+              <img src="https://mayhemfantasyfootballtools.com/email/hero.svg?v=3"
                    width="600" height="200" alt=""
                    style="display:block;width:100%;max-width:600px;height:auto;" />
             </td>
