@@ -34,7 +34,7 @@ def generate_email_strategy(
             "strategy_headline": {"type": "string", "maxLength": 120},
             "strategy_bullets": {
                 "type": "array",
-                "items": {"type": "string", "maxLength": 200},
+                "items": {"type": "string", "maxLength": 400},
                 "minItems": 2,
                 "maxItems": 4,
             },
@@ -68,7 +68,7 @@ def generate_email_strategy(
 
     return EmailStrategyResult(
         strategy_headline=str(data.get("strategy_headline") or "")[:120],
-        strategy_bullets=[str(b)[:200] for b in bullets[:4]],
+        strategy_bullets=[str(b)[:400] for b in bullets[:4]],
         featured_player=str(data["featured_player"])[:80] if data.get("featured_player") else None,
         token_usage=usage,
     )
