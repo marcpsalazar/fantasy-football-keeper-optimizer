@@ -198,7 +198,7 @@ def _build_personalized_email(
           <!-- Strategy Section -->
           <tr>
             <td style="padding:24px 40px 32px;background:#111827;">
-              <table cellpadding="0" cellspacing="0" width="100%" style="background-color:#0d1117;background-image:radial-gradient(circle,rgba(245,158,11,0.07) 1px,transparent 1px);background-size:18px 18px;border-top:3px solid #f59e0b;">
+              <table cellpadding="0" cellspacing="0" width="100%" class="strategy-panel" style="background-color:#0d1117;border-top:3px solid #f59e0b;">
                 <tr>
                   <td style="padding:24px;">
                     {_section_label_html(f"Strategy &mdash; {team_name}")}
@@ -222,6 +222,15 @@ def _build_personalized_email(
 
     html_body = f"""
 <html>
+<head>
+<style>
+  /* dot-grid pattern for strategy panel — supported in Gmail via <style> block */
+  .strategy-panel {{
+    background-image: radial-gradient(circle, rgba(245,158,11,0.10) 1px, transparent 1px) !important;
+    background-size: 18px 18px !important;
+  }}
+</style>
+</head>
 <body style="margin:0;padding:0;background-color:#080c14;font-family:Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#080c14;padding:40px 0;">
     <tr>
@@ -231,18 +240,21 @@ def _build_personalized_email(
           <!-- Gold top bar -->
           <tr><td style="background:#f59e0b;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
 
-          <!-- Hero header with stadium background image -->
+          <!-- Hero image as <img> content (CSS background-image stripped by Gmail) -->
           <tr>
-            <td style="background-color:#0d1117;background-image:url('https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=1200&q=80');background-size:cover;background-position:center top;padding:0;">
-              <table width="100%" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="background:linear-gradient(135deg,rgba(8,12,20,0.92) 0%,rgba(13,17,23,0.80) 100%);padding:36px 40px 32px;">
-                    <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#f59e0b;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
-                    <div style="font-size:32px;font-weight:900;color:#ffffff;letter-spacing:2px;font-family:Arial,sans-serif;">MAYHEM</div>
-                    <div style="font-size:11px;color:#4a6080;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
-                  </td>
-                </tr>
-              </table>
+            <td style="padding:0;background:#080c14;font-size:0;line-height:0;">
+              <img src="https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=600&h=200&fit=crop&crop=center&q=80"
+                   width="600" height="200" alt=""
+                   style="display:block;width:100%;max-width:600px;height:auto;opacity:0.55;" />
+            </td>
+          </tr>
+
+          <!-- Branding bar below image -->
+          <tr>
+            <td style="background:#0d1117;padding:22px 40px 26px;border-top:2px solid #1a2236;">
+              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#f59e0b;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
+              <div style="font-size:32px;font-weight:900;color:#ffffff;letter-spacing:2px;font-family:Arial,sans-serif;">MAYHEM</div>
+              <div style="font-size:11px;color:#4a6080;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
             </td>
           </tr>
 
