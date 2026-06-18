@@ -558,6 +558,7 @@ def _send_via_resend_api(
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            "User-Agent": "keeper-optimizer/1.0",
         },
         method="POST",
     )
