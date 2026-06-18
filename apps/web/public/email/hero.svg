@@ -1,78 +1,116 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="600" height="200" viewBox="0 0 600 200">
   <defs>
-    <!-- Bright gold light burst, top-left -->
-    <radialGradient id="gl" cx="18%" cy="0%" r="65%">
-      <stop offset="0%"   stop-color="#f59e0b" stop-opacity="0.70"/>
-      <stop offset="35%"  stop-color="#f59e0b" stop-opacity="0.25"/>
-      <stop offset="100%" stop-color="#0f2245"  stop-opacity="0"/>
+    <!-- Bright gold stadium light, top-left -->
+    <radialGradient id="gl" cx="15%" cy="0%" r="60%">
+      <stop offset="0%"   stop-color="#f59e0b" stop-opacity="0.85"/>
+      <stop offset="40%"  stop-color="#f59e0b" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#122452"  stop-opacity="0"/>
     </radialGradient>
-    <!-- Violet light burst, top-right -->
-    <radialGradient id="gr" cx="82%" cy="0%" r="65%">
-      <stop offset="0%"   stop-color="#818cf8" stop-opacity="0.60"/>
-      <stop offset="35%"  stop-color="#818cf8" stop-opacity="0.20"/>
-      <stop offset="100%" stop-color="#0f2245"  stop-opacity="0"/>
+    <!-- Vivid violet light, top-right -->
+    <radialGradient id="gr" cx="85%" cy="0%" r="60%">
+      <stop offset="0%"   stop-color="#818cf8" stop-opacity="0.75"/>
+      <stop offset="40%"  stop-color="#818cf8" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#122452"  stop-opacity="0"/>
     </radialGradient>
-    <!-- Bottom fade to email body color -->
+    <!-- Goal post glow -->
+    <radialGradient id="gp" cx="50%" cy="15%" r="25%">
+      <stop offset="0%"   stop-color="#f59e0b" stop-opacity="0.50"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Bottom fade to email body -->
     <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="40%" stop-color="#0f2245" stop-opacity="0"/>
+      <stop offset="45%" stop-color="#122452" stop-opacity="0"/>
       <stop offset="100%" stop-color="#080c14" stop-opacity="1"/>
     </linearGradient>
-    <!-- Perspective line: bright at top, dimmer at bottom -->
+    <!-- Perspective line gradient -->
     <linearGradient id="pl" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#6aaee8" stop-opacity="1.0"/>
-      <stop offset="100%" stop-color="#2a5888" stop-opacity="0.2"/>
+      <stop offset="0%"   stop-color="#7ac4f0" stop-opacity="1.0"/>
+      <stop offset="100%" stop-color="#2a5888" stop-opacity="0.15"/>
     </linearGradient>
   </defs>
 
-  <!-- Solid dark-navy base (clearly distinguishable from black) -->
-  <rect width="600" height="200" fill="#0f2245"/>
+  <!-- Solid navy base -->
+  <rect width="600" height="200" fill="#122452"/>
 
-  <!-- Perspective radial lines from vanishing point (300, 6) -->
+  <!-- Perspective radial lines from vanishing point (300, 30) -->
   <g stroke="url(#pl)" fill="none">
-    <line x1="300" y1="6" x2="0"   y2="200" stroke-width="1.4"/>
-    <line x1="300" y1="6" x2="50"  y2="200" stroke-width="1.3"/>
-    <line x1="300" y1="6" x2="110" y2="200" stroke-width="1.2"/>
-    <line x1="300" y1="6" x2="170" y2="200" stroke-width="1.1"/>
-    <line x1="300" y1="6" x2="230" y2="200" stroke-width="1.0"/>
-    <line x1="300" y1="6" x2="300" y2="200" stroke-width="1.0"/>
-    <line x1="300" y1="6" x2="370" y2="200" stroke-width="1.0"/>
-    <line x1="300" y1="6" x2="430" y2="200" stroke-width="1.1"/>
-    <line x1="300" y1="6" x2="490" y2="200" stroke-width="1.2"/>
-    <line x1="300" y1="6" x2="550" y2="200" stroke-width="1.3"/>
-    <line x1="300" y1="6" x2="600" y2="200" stroke-width="1.4"/>
+    <line x1="300" y1="30" x2="0"   y2="200" stroke-width="1.4"/>
+    <line x1="300" y1="30" x2="50"  y2="200" stroke-width="1.3"/>
+    <line x1="300" y1="30" x2="110" y2="200" stroke-width="1.2"/>
+    <line x1="300" y1="30" x2="170" y2="200" stroke-width="1.1"/>
+    <line x1="300" y1="30" x2="230" y2="200" stroke-width="1.0"/>
+    <line x1="300" y1="30" x2="300" y2="200" stroke-width="1.0"/>
+    <line x1="300" y1="30" x2="370" y2="200" stroke-width="1.0"/>
+    <line x1="300" y1="30" x2="430" y2="200" stroke-width="1.1"/>
+    <line x1="300" y1="30" x2="490" y2="200" stroke-width="1.2"/>
+    <line x1="300" y1="30" x2="550" y2="200" stroke-width="1.3"/>
+    <line x1="300" y1="30" x2="600" y2="200" stroke-width="1.4"/>
   </g>
 
-  <!-- Horizontal yard lines (perspective foreshortened, clearly visible) -->
-  <g stroke="#5a95cc" fill="none">
-    <line x1="264" y1="28"  x2="336" y2="28"  stroke-width="1.2" opacity="1.0"/>
-    <line x1="222" y1="52"  x2="378" y2="52"  stroke-width="1.2" opacity="0.9"/>
-    <line x1="176" y1="82"  x2="424" y2="82"  stroke-width="1.1" opacity="0.8"/>
-    <line x1="126" y1="118" x2="474" y2="118" stroke-width="1.1" opacity="0.7"/>
-    <line x1="72"  y1="158" x2="528" y2="158" stroke-width="1.0" opacity="0.55"/>
-    <line x1="14"  y1="196" x2="586" y2="196" stroke-width="1.0" opacity="0.35"/>
+  <!-- Horizontal yard lines -->
+  <g stroke="#6aaed8" fill="none">
+    <line x1="268" y1="50"  x2="332" y2="50"  stroke-width="1.3" opacity="1.0"/>
+    <line x1="228" y1="74"  x2="372" y2="74"  stroke-width="1.2" opacity="0.90"/>
+    <line x1="180" y1="104" x2="420" y2="104" stroke-width="1.2" opacity="0.80"/>
+    <line x1="128" y1="136" x2="472" y2="136" stroke-width="1.1" opacity="0.65"/>
+    <line x1="72"  y1="168" x2="528" y2="168" stroke-width="1.0" opacity="0.50"/>
+    <line x1="16"  y1="198" x2="584" y2="198" stroke-width="1.0" opacity="0.30"/>
   </g>
 
-  <!-- Gold hash marks (center, clearly visible) -->
-  <g stroke="#f59e0b" fill="none" stroke-width="2" opacity="0.7">
-    <line x1="291" y1="118" x2="309" y2="118"/>
-    <line x1="291" y1="82"  x2="309" y2="82"/>
-    <line x1="291" y1="52"  x2="309" y2="52"/>
-    <line x1="262" y1="28"  x2="274" y2="28"/>
-    <line x1="326" y1="28"  x2="338" y2="28"/>
+  <!-- Yard line numbers — left side -->
+  <g font-family="Arial,sans-serif" font-size="8" font-weight="700" fill="#f59e0b" text-anchor="end">
+    <text x="263" y="53"  opacity="0.80">50</text>
+    <text x="222" y="77"  opacity="0.70">40</text>
+    <text x="174" y="107" opacity="0.60">30</text>
+    <text x="122" y="139" opacity="0.50">20</text>
+    <text x="66"  y="171" opacity="0.40">10</text>
+  </g>
+  <!-- Yard line numbers — right side -->
+  <g font-family="Arial,sans-serif" font-size="8" font-weight="700" fill="#f59e0b" text-anchor="start">
+    <text x="337" y="53"  opacity="0.80">50</text>
+    <text x="378" y="77"  opacity="0.70">40</text>
+    <text x="426" y="107" opacity="0.60">30</text>
+    <text x="478" y="139" opacity="0.50">20</text>
+    <text x="534" y="171" opacity="0.40">10</text>
   </g>
 
-  <!-- Center circle -->
-  <circle cx="300" cy="168" r="30" fill="none" stroke="#5a95cc" stroke-width="1.2" opacity="0.6"/>
-  <circle cx="300" cy="168" r="4"  fill="#5a95cc" opacity="0.7"/>
+  <!-- Gold hash marks at center of each yard line -->
+  <g stroke="#f59e0b" fill="none" stroke-width="2" opacity="0.65">
+    <line x1="292" y1="50"  x2="308" y2="50"/>
+    <line x1="292" y1="74"  x2="308" y2="74"/>
+    <line x1="292" y1="104" x2="308" y2="104"/>
+    <line x1="292" y1="136" x2="308" y2="136"/>
+    <line x1="292" y1="168" x2="308" y2="168"/>
+  </g>
 
-  <!-- Vanishing point bright dot -->
-  <circle cx="300" cy="6" r="3" fill="#f59e0b" opacity="1.0"/>
-  <rect   x="299" y="6" width="2" height="20" fill="#f59e0b" opacity="0.5"/>
+  <!-- Center circle (midfield) -->
+  <circle cx="300" cy="176" r="26" fill="none" stroke="#6aaed8" stroke-width="1.2" opacity="0.55"/>
+  <circle cx="300" cy="176" r="3.5" fill="#6aaed8" opacity="0.60"/>
 
-  <!-- Stadium light glows (over lines) -->
+  <!-- ======================================== -->
+  <!-- FIELD GOAL POSTS — vanishing point view  -->
+  <!-- Uprights clip at top edge, crossbar y=30 -->
+  <!-- ======================================== -->
+
+  <!-- Goal post glow halo -->
+  <rect width="600" height="60" fill="url(#gp)"/>
+
+  <!-- Left upright (clips at top of SVG) -->
+  <line x1="274" y1="0" x2="274" y2="30" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
+  <!-- Right upright -->
+  <line x1="326" y1="0" x2="326" y2="30" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
+  <!-- Crossbar -->
+  <line x1="268" y1="30" x2="332" y2="30" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
+  <!-- Post stem down to vanishing point -->
+  <line x1="300" y1="30" x2="300" y2="50" stroke="#f59e0b" stroke-width="2.0" opacity="0.80"/>
+
+  <!-- Bright dot at post/vanishing junction -->
+  <circle cx="300" cy="30" r="3" fill="#f59e0b" opacity="1.0"/>
+
+  <!-- Stadium light glows (over everything) -->
   <rect width="600" height="200" fill="url(#gl)"/>
   <rect width="600" height="200" fill="url(#gr)"/>
 
-  <!-- Bottom fade to seamlessly merge with email body -->
+  <!-- Bottom fade -->
   <rect width="600" height="200" fill="url(#fade)"/>
 </svg>
