@@ -50,10 +50,13 @@ def create_app() -> FastAPI:
             adp_refresh_task = asyncio.create_task(weekly_adp_refresh_loop(settings))
             player_status_task = asyncio.create_task(daily_player_status_refresh_loop(settings))
 
+        from app.services.email_scheduler import email_reminder_loop
+        email_task: asyncio.Task[None] = asyncio.create_task(email_reminder_loop(settings))
+
         try:
             yield
         finally:
-            for task in (adp_refresh_task, player_status_task):
+            for task in (adp_refresh_task, player_status_task, email_task):
                 if task is not None:
                     task.cancel()
                     try:

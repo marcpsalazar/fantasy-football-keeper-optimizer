@@ -17,6 +17,8 @@ from app.db.session import get_session
 from app.models import (
     AppDefaultOptimizerSettings,
     KeeperRecommendation,
+    League,
+    LeagueMembership,
     ManualOverride,
     OptimizerSettings,
     Player,
@@ -157,6 +159,33 @@ def me(
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     return {"user": user_payload(user, session)}
+
+
+@router.get("/auth/me/league-memberships")
+def get_my_league_memberships(
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    memberships = session.exec(
+        select(LeagueMembership).where(LeagueMembership.user_id == user.id)
+    ).all()
+    league_ids = [m.league_id for m in memberships]
+    leagues = session.exec(select(League).where(League.id.in_(league_ids))).all()
+    league_map = {lg.id: lg for lg in leagues}
+    return {
+        "memberships": [
+            {
+                "league_id": str(m.league_id),
+                "league_name": league_map[m.league_id].name if m.league_id in league_map else "",
+                "season_year": league_map[m.league_id].season_year if m.league_id in league_map else None,
+                "email_opt_out": m.email_opt_out,
+            }
+            for m in memberships
+            if m.league_id in league_map
+        ]
+    }
 
 
 @router.patch("/auth/profile")

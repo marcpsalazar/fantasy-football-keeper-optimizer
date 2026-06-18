@@ -20,6 +20,7 @@ class LeagueMembership(TimestampMixin, table=True):
     league_id: uuid.UUID = Field(foreign_key="leagues.id", index=True)
     role: str = Field(default="member", index=True, max_length=40)
     avatar_data_url: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    email_opt_out: bool = Field(default=False)
 
     user: "User" = Relationship(back_populates="memberships")
     league: "League" = Relationship(back_populates="memberships")

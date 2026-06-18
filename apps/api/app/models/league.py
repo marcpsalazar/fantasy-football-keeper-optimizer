@@ -58,6 +58,9 @@ class League(TimestampMixin, table=True):
         sa_column=Column(JSON, nullable=False),
     )
     max_consecutive_keeper_seasons: int | None = Field(default=None)
+    email_enabled: bool = Field(default=False)
+    email_schedule: str = Field(default="none", max_length=20)
+    email_last_sent: datetime | None = Field(default=None)
 
     teams: list["Team"] = Relationship(back_populates="league")
     memberships: list["LeagueMembership"] = Relationship(back_populates="league")

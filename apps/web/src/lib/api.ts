@@ -144,6 +144,7 @@ export type LeagueMembership = {
   email: string;
   alias: string | null;
   avatarDataUrl: string | null;
+  emailOptOut: boolean;
 };
 
 export type LeagueCalendarSettings = {
@@ -2650,6 +2651,19 @@ export type ReminderResult = {
   dryRun: boolean;
 };
 
+export type EmailSettings = {
+  emailEnabled: boolean;
+  emailSchedule: "none" | "daily" | "weekly" | "monthly";
+  emailLastSent: string | null;
+};
+
+export type LeagueMembershipEmailPref = {
+  leagueId: string;
+  leagueName: string;
+  seasonYear: number | null;
+  emailOptOut: boolean;
+};
+
 export type RevealKeeperRow = {
   playerId: string;
   playerName: string;
@@ -2740,6 +2754,76 @@ export async function sendKeeperReminders(
     recipients: stringArray(data["recipients"]),
     dryRun: boolean(data["dry_run"]),
   };
+}
+
+export async function getEmailSettings(leagueId: string): Promise<EmailSettings> {
+  const data = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/commissioner/email-settings`,
+  );
+  return {
+    emailEnabled: boolean(data["email_enabled"]),
+    emailSchedule: (text(data["email_schedule"]) || "none") as EmailSettings["emailSchedule"],
+    emailLastSent: data["email_last_sent"] ? text(data["email_last_sent"]) : null,
+  };
+}
+
+export async function updateEmailSettings(
+  leagueId: string,
+  settings: Partial<{ emailEnabled: boolean; emailSchedule: string }>,
+): Promise<EmailSettings> {
+  const body: Record<string, unknown> = {};
+  if (settings.emailEnabled !== undefined) body["email_enabled"] = settings.emailEnabled;
+  if (settings.emailSchedule !== undefined) body["email_schedule"] = settings.emailSchedule;
+  const data = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/commissioner/email-settings`,
+    { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+  );
+  return {
+    emailEnabled: boolean(data["email_enabled"]),
+    emailSchedule: (text(data["email_schedule"]) || "none") as EmailSettings["emailSchedule"],
+    emailLastSent: data["email_last_sent"] ? text(data["email_last_sent"]) : null,
+  };
+}
+
+export async function setMemberEmailOptOut(
+  leagueId: string,
+  membershipId: string,
+  emailOptOut: boolean,
+): Promise<{ emailOptOut: boolean }> {
+  const data = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/members/${membershipId}/email-opt-out`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email_opt_out: emailOptOut }),
+    },
+  );
+  return { emailOptOut: boolean(data["email_opt_out"]) };
+}
+
+export async function getMyLeagueMemberships(): Promise<LeagueMembershipEmailPref[]> {
+  const data = await fetchJson<Record<string, unknown>>("/api/auth/me/league-memberships");
+  return array(data["memberships"]).map((m) => ({
+    leagueId: text(m["league_id"]),
+    leagueName: text(m["league_name"]),
+    seasonYear: nullableNumber(m["season_year"]),
+    emailOptOut: boolean(m["email_opt_out"]),
+  }));
+}
+
+export async function updateMemberEmailOptOut(
+  leagueId: string,
+  emailOptOut: boolean,
+): Promise<{ emailOptOut: boolean }> {
+  const data = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/members/me/email-opt-out`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email_opt_out: emailOptOut }),
+    },
+  );
+  return { emailOptOut: boolean(data["email_opt_out"]) };
 }
 
 export async function getKeeperReveal(leagueId: string): Promise<KeeperRevealResult> {
@@ -2932,6 +3016,7 @@ function mapLeagueMembership(row: ApiRow): LeagueMembership {
     email: text(row.user_email),
     alias: text(row.user_alias) || null,
     avatarDataUrl: text(row.avatar_data_url) || null,
+    emailOptOut: boolean(row.email_opt_out),
   };
 }
 

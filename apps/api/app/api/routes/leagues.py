@@ -258,6 +258,7 @@ def _membership_row(membership: LeagueMembership, user: User | None = None) -> d
         "user_alias": user.alias if user else None,
         "created_at": membership.created_at.isoformat() if membership.created_at else None,
         "updated_at": membership.updated_at.isoformat() if membership.updated_at else None,
+        "email_opt_out": membership.email_opt_out,
     }
 
 
@@ -3583,6 +3584,19 @@ class KeeperReminderRequest(BaseModel):
     dry_run: bool = False
 
 
+class EmailSettingsUpdateRequest(BaseModel):
+    email_enabled: bool | None = None
+    email_schedule: str | None = None  # none | daily | weekly | monthly
+
+
+class MemberEmailOptOutSetRequest(BaseModel):
+    email_opt_out: bool
+
+
+class MemberEmailOptOutRequest(BaseModel):
+    email_opt_out: bool
+
+
 @router.get("/leagues/{league_id}/commissioner/compliance")
 def get_compliance_report(
     league_id: uuid.UUID,
@@ -3634,6 +3648,103 @@ def get_smtp_status(
 ) -> dict[str, Any]:
     assert_league_admin(session, user, league_id)
     return notifications_svc.smtp_status()
+
+
+@router.get("/leagues/{league_id}/commissioner/email-settings")
+def get_email_settings(
+    league_id: uuid.UUID,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    league = session.get(League, league_id)
+    if league is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+    return {
+        "email_enabled": league.email_enabled,
+        "email_schedule": league.email_schedule,
+        "email_last_sent": league.email_last_sent.isoformat() if league.email_last_sent else None,
+    }
+
+
+@router.patch("/leagues/{league_id}/commissioner/email-settings")
+def update_email_settings(
+    league_id: uuid.UUID,
+    payload: EmailSettingsUpdateRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    league = session.get(League, league_id)
+    if league is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+
+    valid_schedules = {"none", "daily", "weekly", "monthly"}
+    if payload.email_schedule is not None and payload.email_schedule not in valid_schedules:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"email_schedule must be one of: {', '.join(sorted(valid_schedules))}",
+        )
+
+    if payload.email_enabled is not None:
+        league.email_enabled = payload.email_enabled
+    if payload.email_schedule is not None:
+        league.email_schedule = payload.email_schedule
+
+    session.add(league)
+    session.commit()
+    session.refresh(league)
+    return {
+        "email_enabled": league.email_enabled,
+        "email_schedule": league.email_schedule,
+        "email_last_sent": league.email_last_sent.isoformat() if league.email_last_sent else None,
+    }
+
+
+@router.patch("/leagues/{league_id}/members/me/email-opt-out")
+def update_member_email_opt_out(
+    league_id: uuid.UUID,
+    payload: MemberEmailOptOutRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    membership = session.exec(
+        select(LeagueMembership).where(
+            LeagueMembership.league_id == league_id,
+            LeagueMembership.user_id == user.id,
+        )
+    ).first()
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found")
+    membership.email_opt_out = payload.email_opt_out
+    session.add(membership)
+    session.commit()
+    return {"email_opt_out": membership.email_opt_out}
+
+
+@router.patch("/leagues/{league_id}/members/{membership_id}/email-opt-out")
+def update_member_email_override(
+    league_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    payload: MemberEmailOptOutSetRequest,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+    membership = session.exec(
+        select(LeagueMembership).where(
+            LeagueMembership.id == membership_id,
+            LeagueMembership.league_id == league_id,
+        )
+    ).first()
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found")
+    membership.email_opt_out = payload.email_opt_out
+    session.add(membership)
+    session.commit()
+    return {"email_opt_out": membership.email_opt_out}
 
 
 @router.get("/leagues/{league_id}/reveal")

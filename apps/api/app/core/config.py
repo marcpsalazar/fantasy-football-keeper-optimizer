@@ -66,9 +66,11 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_username: str | None = None
     smtp_password: str | None = None
-    smtp_from_email: str = "noreply@keeperoptimizer.com"
-    smtp_from_name: str = "Keeper Optimizer"
+    smtp_from_email: str = "noreply@mayhemfantasyfootballtools.com"
+    smtp_from_name: str = "Mayhem Fantasy Football Tools"
     smtp_use_tls: bool = True
+    email_strategy_ai_enabled: bool = False
+    email_strategy_ai_timeout_seconds: float = 45.0
 
     @property
     def use_secure_session_cookie(self) -> bool:

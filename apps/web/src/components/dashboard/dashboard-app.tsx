@@ -234,6 +234,11 @@ import {
   addToWatchlist,
   removeFromWatchlist,
   searchWatchlistPlayers,
+  getEmailSettings,
+  updateEmailSettings,
+  setMemberEmailOptOut,
+  type EmailSettings,
+  type LeagueMembershipEmailPref,
   type WatchlistEntry,
   type WatchlistSearchResult,
 } from "@/lib/api";
@@ -2471,6 +2476,14 @@ function ProfilePage() {
     newPassword: "",
     confirmPassword: "",
   });
+  const [emailPrefs, setEmailPrefs] = React.useState<import("@/lib/api").LeagueMembershipEmailPref[]>([]);
+  const [emailPrefsSaving, setEmailPrefsSaving] = React.useState<Record<string, boolean>>({});
+
+  React.useEffect(() => {
+    void import("@/lib/api").then(({ getMyLeagueMemberships }) =>
+      getMyLeagueMemberships().then(setEmailPrefs).catch(() => {})
+    );
+  }, []);
 
   React.useEffect(() => {
     setAlias(currentUser?.alias ?? "");
@@ -2628,6 +2641,58 @@ function ProfilePage() {
                 onUpload={async (dataUrl) => { await updateLeagueAvatarNow(league.id, dataUrl); }}
                 onRemove={async () => { await updateLeagueAvatarNow(league.id, null); }}
               />
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {emailPrefs.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Email Preferences</CardTitle>
+            <CardDescription>Choose which leagues you want to receive deadline reminder emails for.</CardDescription>
+          </CardHeader>
+          <CardContent className="divide-y divide-zinc-100">
+            {emailPrefs.map((pref) => (
+              <div key={pref.leagueId} className="flex items-center justify-between py-3">
+                <div>
+                  <p className="text-sm font-medium text-zinc-900">{pref.leagueName}</p>
+                  {pref.seasonYear ? (
+                    <p className="text-xs text-zinc-500">{pref.seasonYear} season</p>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2">
+                  {pref.emailOptOut ? (
+                    <span className="text-xs text-zinc-400">Opted out</span>
+                  ) : (
+                    <span className="text-xs text-emerald-600">Receiving emails</span>
+                  )}
+                  <Button
+                    disabled={emailPrefsSaving[pref.leagueId]}
+                    onClick={async () => {
+                      setEmailPrefsSaving((s) => ({ ...s, [pref.leagueId]: true }));
+                      try {
+                        const { updateMemberEmailOptOut } = await import("@/lib/api");
+                        const result = await updateMemberEmailOptOut(pref.leagueId, !pref.emailOptOut);
+                        setEmailPrefs((prev) =>
+                          prev.map((p) =>
+                            p.leagueId === pref.leagueId ? { ...p, emailOptOut: result.emailOptOut } : p
+                          )
+                        );
+                      } catch {
+                        // ignore
+                      } finally {
+                        setEmailPrefsSaving((s) => ({ ...s, [pref.leagueId]: false }));
+                      }
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    {pref.emailOptOut ? "Opt back in" : "Opt out"}
+                  </Button>
+                </div>
+              </div>
             ))}
           </CardContent>
         </Card>
@@ -14656,6 +14721,13 @@ function KeeperRevealPanel({
   );
 }
 
+const EMAIL_SCHEDULE_LABELS: Record<string, string> = {
+  none: "No schedule (manual only)",
+  daily: "Daily",
+  weekly: "Weekly",
+  monthly: "Monthly",
+};
+
 function ReminderEmailPanel({
   leagueId,
   league,
@@ -14664,17 +14736,42 @@ function ReminderEmailPanel({
   league: WorkspaceData["league"];
 }) {
   const [smtpStatus, setSmtpStatus] = React.useState<SmtpStatus | null>(null);
+  const [emailSettings, setEmailSettings] = React.useState<EmailSettings | null>(null);
+  const [members, setMembers] = React.useState<LeagueMembership[]>([]);
+  const [memberSaving, setMemberSaving] = React.useState<Record<string, boolean>>({});
+  const [settingsSaving, setSettingsSaving] = React.useState(false);
   const [sending, setSending] = React.useState(false);
   const [dryRunResult, setDryRunResult] = React.useState<string[] | null>(null);
   const [sentCount, setSentCount] = React.useState<number | null>(null);
   const [error, setError] = React.useState("");
+  const [settingsError, setSettingsError] = React.useState("");
 
   React.useEffect(() => {
     if (!leagueId) return;
     getSmtpStatus(leagueId)
       .then(setSmtpStatus)
       .catch(() => {/* smtp status is optional */});
+    getEmailSettings(leagueId)
+      .then(setEmailSettings)
+      .catch(() => {/* settings optional */});
+    getLeagueMemberships(leagueId)
+      .then(setMembers)
+      .catch(() => {});
   }, [leagueId]);
+
+  const handleSettingChange = async (patch: Partial<{ emailEnabled: boolean; emailSchedule: string }>) => {
+    if (!leagueId || !emailSettings) return;
+    setSettingsSaving(true);
+    setSettingsError("");
+    try {
+      const updated = await updateEmailSettings(leagueId, patch);
+      setEmailSettings(updated);
+    } catch (e) {
+      setSettingsError(e instanceof Error ? e.message : "Failed to save email settings.");
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
 
   const handleDryRun = async () => {
     if (!leagueId) return;
@@ -14701,6 +14798,9 @@ function ReminderEmailPanel({
     try {
       const result = await sendKeeperReminders(leagueId, false);
       setSentCount(result.sent);
+      if (emailSettings) {
+        setEmailSettings({ ...emailSettings, emailLastSent: new Date().toISOString() });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to send reminders.");
     } finally {
@@ -14717,12 +14817,23 @@ function ReminderEmailPanel({
       })
     : null;
 
+  const lastSentStr = emailSettings?.emailLastSent
+    ? new Date(emailSettings.emailLastSent).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "Never";
+
   return (
     <PagePanel
       title="Keeper Deadline Reminders"
-      description="Send reminder emails to all league members with linked accounts."
+      description="Send personalized reminder emails with player news and AI strategy to league members."
     >
-      <div className="space-y-4">
+      <div className="space-y-5">
+        {/* Deadline status */}
         {deadlineStr ? (
           <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
             Deadline: <strong>{deadlineStr}</strong>
@@ -14733,6 +14844,7 @@ function ReminderEmailPanel({
           </div>
         )}
 
+        {/* SMTP status */}
         {smtpStatus !== null && (
           <div className="flex items-center gap-2 text-sm">
             <span
@@ -14749,43 +14861,163 @@ function ReminderEmailPanel({
           </div>
         )}
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        {dryRunResult !== null && (
-          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm">
-            <p className="font-medium text-zinc-700">
-              Preview: {dryRunResult.length} recipient(s)
-            </p>
-            {dryRunResult.length > 0 && (
-              <ul className="mt-1 space-y-0.5 text-xs text-zinc-600">
-                {dryRunResult.map((email) => (
-                  <li key={email}>{email}</li>
+        {/* Email Settings */}
+        {emailSettings && (
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 space-y-4">
+            <p className="text-sm font-semibold text-zinc-800">Email Schedule Settings</p>
+
+            {/* Enabled toggle */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-zinc-700">Automatic emails enabled</p>
+                <p className="text-xs text-zinc-500">Allow scheduled sends based on the frequency below</p>
+              </div>
+              <button
+                aria-pressed={emailSettings.emailEnabled}
+                className={cn(
+                  "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none",
+                  emailSettings.emailEnabled ? "bg-violet-600" : "bg-zinc-300",
+                  settingsSaving && "opacity-50 pointer-events-none",
+                )}
+                onClick={() => void handleSettingChange({ emailEnabled: !emailSettings.emailEnabled })}
+                type="button"
+              >
+                <span
+                  className={cn(
+                    "pointer-events-none inline-block size-5 rounded-full bg-white shadow transform transition-transform",
+                    emailSettings.emailEnabled ? "translate-x-5" : "translate-x-0",
+                  )}
+                />
+              </button>
+            </div>
+
+            {/* Schedule frequency */}
+            <div className="space-y-1.5">
+              <Label className="text-sm text-zinc-700">Send frequency</Label>
+              <select
+                className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
+                disabled={settingsSaving}
+                onChange={(e) => void handleSettingChange({ emailSchedule: e.target.value })}
+                value={emailSettings.emailSchedule}
+              >
+                {Object.entries(EMAIL_SCHEDULE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
                 ))}
-              </ul>
-            )}
+              </select>
+            </div>
+
+            {/* Last sent */}
+            <p className="text-xs text-zinc-400">Last sent: {lastSentStr}</p>
+            {settingsError && <p className="text-sm text-red-600">{settingsError}</p>}
           </div>
         )}
-        {sentCount !== null && (
-          <p className="text-sm text-emerald-700 font-medium">
-            Reminders sent to {sentCount} member(s).
-          </p>
+
+        {/* Per-member email preferences */}
+        {members.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-zinc-800">Member Email Preferences</p>
+            <div className="rounded-lg border border-zinc-200 overflow-hidden">
+              {/* Header */}
+              <div className="grid grid-cols-[1fr_80px_80px] gap-2 bg-zinc-50 px-3 py-2 border-b border-zinc-200">
+                <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Member</span>
+                <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide text-center">Opt In</span>
+                <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide text-center">Opt Out</span>
+              </div>
+              {/* Rows */}
+              {members.map((m) => (
+                <div key={m.id} className="grid grid-cols-[1fr_80px_80px] gap-2 items-center px-3 py-2.5 border-b border-zinc-100 last:border-0">
+                  <div>
+                    <p className="text-sm font-medium text-zinc-800">{m.alias ?? m.email}</p>
+                    {m.alias && <p className="text-xs text-zinc-400">{m.email}</p>}
+                  </div>
+                  <div className="flex justify-center">
+                    <input
+                      checked={!m.emailOptOut}
+                      className="size-4 accent-violet-600 cursor-pointer disabled:cursor-not-allowed"
+                      disabled={memberSaving[m.id]}
+                      onChange={async () => {
+                        if (!leagueId || m.emailOptOut === false) return;
+                        setMemberSaving((s) => ({ ...s, [m.id]: true }));
+                        try {
+                          const result = await setMemberEmailOptOut(leagueId, m.id, false);
+                          setMembers((prev) =>
+                            prev.map((mb) => mb.id === m.id ? { ...mb, emailOptOut: result.emailOptOut } : mb)
+                          );
+                        } catch { /* ignore */ } finally {
+                          setMemberSaving((s) => ({ ...s, [m.id]: false }));
+                        }
+                      }}
+                      type="radio"
+                      name={`email-pref-${m.id}`}
+                    />
+                  </div>
+                  <div className="flex justify-center">
+                    <input
+                      checked={m.emailOptOut}
+                      className="size-4 accent-violet-600 cursor-pointer disabled:cursor-not-allowed"
+                      disabled={memberSaving[m.id]}
+                      onChange={async () => {
+                        if (!leagueId || m.emailOptOut === true) return;
+                        setMemberSaving((s) => ({ ...s, [m.id]: true }));
+                        try {
+                          const result = await setMemberEmailOptOut(leagueId, m.id, true);
+                          setMembers((prev) =>
+                            prev.map((mb) => mb.id === m.id ? { ...mb, emailOptOut: result.emailOptOut } : mb)
+                          );
+                        } catch { /* ignore */ } finally {
+                          setMemberSaving((s) => ({ ...s, [m.id]: false }));
+                        }
+                      }}
+                      type="radio"
+                      name={`email-pref-${m.id}`}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
 
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={handleDryRun} disabled={sending || !leagueId}>
-            Preview Recipients
-          </Button>
-          <Button
-            onClick={handleSend}
-            disabled={sending || !leagueId || !smtpStatus?.configured || !deadlineStr}
-          >
-            {sending ? "Sending…" : "Send Reminders"}
-          </Button>
+        {/* Manual send */}
+        <div className="space-y-3">
+          <p className="text-sm font-semibold text-zinc-800">Manual Send</p>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          {dryRunResult !== null && (
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm">
+              <p className="font-medium text-zinc-700">
+                Preview: {dryRunResult.length} recipient(s)
+              </p>
+              {dryRunResult.length > 0 && (
+                <ul className="mt-1 space-y-0.5 text-xs text-zinc-600">
+                  {dryRunResult.map((emailAddr) => (
+                    <li key={emailAddr}>{emailAddr}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {sentCount !== null && (
+            <p className="text-sm text-emerald-700 font-medium">
+              Reminders sent to {sentCount} member(s).
+            </p>
+          )}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleDryRun} disabled={sending || !leagueId}>
+              Preview Recipients
+            </Button>
+            <Button
+              onClick={handleSend}
+              disabled={sending || !leagueId || !smtpStatus?.configured || !deadlineStr}
+            >
+              {sending ? "Sending…" : "Send Now"}
+            </Button>
+          </div>
+          {!smtpStatus?.configured && (
+            <p className="text-xs text-zinc-400">
+              Email sending is disabled until SMTP is configured on the server.
+            </p>
+          )}
         </div>
-        {!smtpStatus?.configured && (
-          <p className="text-xs text-zinc-400">
-            Email sending is disabled until SMTP is configured on the server.
-          </p>
-        )}
       </div>
     </PagePanel>
   );
