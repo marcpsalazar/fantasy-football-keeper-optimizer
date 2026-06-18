@@ -63,7 +63,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
 - **AI keeper explanations**: click any player name in Keeper Recommendations to open a detail modal showing the player's headshot, position, and a plain-English explanation of why the optimizer recommended or passed on that player (short reason, value explanation, risk note, opportunity cost, decision badge). Responses are cached. The modal also includes a **Value Window** section that projects how the player's keeper value is expected to change over the next three seasons using position-specific aging curves, so you can judge whether locking in the player now or waiting is the better long-term play.
 - **AI scenario narratives**: click "Generate AI Analysis" in Scenario Comparison for a plain-English tradeoff summary across all five presets. Personalized for the signed-in user's assigned team when available.
 - **Composite ADP**: one-click "Update ADP" button builds a weighted-median board from DraftSharks + Fantasy Football Calculator and imports it directly.
-- **AI cost controls**: set a monthly token budget (`AI_MONTHLY_TOKEN_BUDGET`) to cap all AI spending. Platform admins can review token usage and estimated costs in the Admin AI Usage panel.
+- **AI cost controls**: set a monthly token budget (`AI_MONTHLY_TOKEN_BUDGET`) to cap all AI spending. Platform admins can review token usage and estimated costs in the `Admin` menu → `AI Usage`.
 
 ## Stack
 
@@ -80,11 +80,11 @@ Three role tiers control access:
 
 | Role | Scope | Capabilities |
 |---|---|---|
-| `platform_admin` | Global | Manage all leagues and all users; access Admin panel for every league; review AI usage |
-| `league_admin` | Per-league | Manage one league's teams, imports, ADP, and memberships |
+| `platform_admin` | Global | Manage all leagues; access hidden **Admin** menu (AI Usage + ADP Input); see User Management inside Commissioner Tools |
+| `league_admin` | Per-league | Full access to **Commissioner Tools**: teams, imports, ADP, members, keeper rules, dates, compliance, and bulk export |
 | `member` | Per-league | View league data, run optimizer, use mock draft, export reports |
 
-Platform admins are created by seeding or by direct DB assignment. League admins are assigned per-league from `Admin` → `Members`. A platform admin always has league admin privileges in every league without needing an explicit membership.
+Platform admins are created by seeding or by direct DB assignment. League admins are assigned per-league from `Commissioner Tools` → `Members`. A platform admin always has league admin privileges in every league without needing an explicit membership. Only platform admins see the **Admin** navigation item; league admins and members do not.
 
 ## Repository Layout
 
@@ -265,7 +265,7 @@ AI features are opt-in. All AI calls require `OPENAI_API_KEY` to be set. Each fe
 - `SCENARIO_NARRATIVE_AI_ENABLED=true` — scenario comparison narratives are generated on demand and cached.
 - `PLAYER_SUMMARY_AI_ENABLED=true` — player detail summaries in the mock draft player dialog are generated on demand and cached.
 
-Set `AI_MONTHLY_TOKEN_BUDGET` to a positive integer (total tokens) to enforce a monthly spending cap across all AI features. When the budget is exceeded, all AI calls are blocked until the next calendar month. Platform admins can review usage in `Admin` → `AI Usage`.
+Set `AI_MONTHLY_TOKEN_BUDGET` to a positive integer (total tokens) to enforce a monthly spending cap across all AI features. When the budget is exceeded, all AI calls are blocked until the next calendar month. Platform admins can review usage in the `Admin` menu → `AI Usage`.
 
 AI-synthesized ADP is also opt-in. Set `ADP_PROVIDER=ai_synthesized`,
 `ADP_AUTO_REFRESH_ENABLED=true`, and `OPENAI_API_KEY` on the API service to refresh ADP weekly.
@@ -549,7 +549,7 @@ Open the web app and sign in with an account created by an admin. The user menu 
 shows your role and assigned team. Open `View Profile` from that menu to upload or remove a profile
 image, review your assigned team, or change your password.
 
-League admins and platform admins see the `Admin` navigation item. Regular members do not see admin-only controls.
+Only platform admins see the `Admin` navigation item. League admins see `Commissioner Tools`. Regular members see neither.
 
 After signing in, the league selector at the top of the sidebar shows all leagues you belong to. Select a league to switch the active workspace. Platform admins can access any league without an explicit membership.
 
@@ -577,7 +577,7 @@ Use `Draft Results` to verify the original draft board. This table determines ke
 players who were drafted by the same team that still rosters them. Missing picks, duplicate picks,
 or incorrect teams can make keeper values wrong.
 
-Admins import draft results from `Admin` -> `League Data Imports`. Paste the CSV, click `Preview`,
+Admins import draft results from `Commissioner Tools` → `League Data Imports`. Paste the CSV, click `Preview`,
 review errors and warnings, then click `Import` once the preview is valid.
 
 ### Final Rosters
@@ -586,7 +586,7 @@ Use `Final Rosters` to confirm every team's current keeper candidates. Roster st
 the model: starters receive more status credit, while injured, suspended, questionable, or similar
 statuses can carry risk penalties.
 
-Admins import final rosters from `Admin` -> `League Data Imports`. Players not included in final
+Admins import final rosters from `Commissioner Tools` → `League Data Imports`. Players not included in final
 rosters will not be considered by the optimizer.
 
 Player injury and roster designations (Questionable, Doubtful, Out, IR, PUP) are pulled from
@@ -596,54 +596,15 @@ names appear in the app.
 
 ### Admin
 
-Admins use `Admin` for account management, team management, shared league imports, league settings, and AI observability.
+`Admin` is visible only to platform admins. It contains two panels:
 
-`Users` (platform admin only) lets admins create accounts, set global roles (`user` or `platform_admin`), activate or deactivate users, view generated credentials, reset passwords, edit users, and delete users.
+`AI Usage` shows a log of recent AI requests with token counts, estimated cost, feature type, and whether the monthly budget is currently exceeded. Use this to monitor spending when AI features are enabled.
 
-`Managed Teams` lets admins add teams, edit team names and draft slots, assign teams to users, set fallback owner names, and delete teams.
-
-`Members` lets league admins add or remove league members and set per-league roles (`league_admin` or `member`).
-
-`League Data Imports` handles draft results and final rosters. The import workflow is always:
-
-1. Paste CSV data.
-2. Click `Preview`.
-3. Review row counts, errors, and warnings.
-4. Fix CSV issues if needed.
-5. Click `Import` once the preview is valid.
-
-Preview validation catches missing headers, missing required values, invalid positions, invalid
-numeric picks or ADP values, duplicate draft picks, duplicate player rows, and missing teams.
-Missing teams are warnings because the import path can create missing teams automatically.
-
-`Import from Sleeper` pulls teams, draft results, and final rosters from a live Sleeper league:
-
-1. Paste the Sleeper League ID (found in the Sleeper URL, e.g. `sleeper.com/leagues/123456789`).
-2. Select the season year.
-3. Click `Preview` to validate the import — the panel shows which teams, draft picks, and roster entries will be created.
-4. Click `Import` to commit.
-
-`Import from Yahoo Fantasy` pulls teams, draft results, final rosters, and league settings from a Yahoo Fantasy Sports league via OAuth:
-
-1. Click `Connect Yahoo Account` and authorize access. You will be redirected back to the app.
-2. Select your Yahoo league from the dropdown (or paste the league key manually).
-3. Optionally check `Also import league settings` to sync scoring format and roster slots.
-4. Click `Preview`, review the summary, then click `Import`.
-
-`Import from ESPN Fantasy` pulls teams, draft results, and final rosters from an ESPN Fantasy league:
-
-1. Enter your ESPN League ID (found in the ESPN URL, e.g. `fantasy.espn.com/football/league?leagueId=123456`).
-2. Enter the season year.
-3. For private leagues, expand "Private league?" and enter your `espn_s2` and `SWID` cookies (find them in browser DevTools → Application → Cookies on `fantasy.espn.com`).
-4. Click `Preview` to validate, then click `Import` to commit.
-
-`Roster Settings` lets admins configure the mock draft round count, allowed positions, roster slot counts, position caps, and bench limits for the league.
-
-`AI Usage` (platform admin only) shows a log of recent AI requests with token counts, estimated cost, feature type, and whether the monthly budget is currently exceeded. Use this to monitor spending when AI features are enabled.
+`ADP Input` lets you build a composite ADP board from configured sources and import it directly into the active snapshot, or paste a custom ADP CSV manually. See [ADP Input and ADP Preview](#adp-input-and-adp-preview) for the full workflow.
 
 ### ADP Input and ADP Preview
 
-Admins manage ADP from the `Admin` screen. The ADP snapshot is the market baseline used by the
+Platform admins manage ADP from the `Admin` screen. The ADP snapshot is the market baseline used by the
 optimizer, so refresh or import ADP before running recommendations for a new decision cycle.
 
 Use `Import Composite ADP` to build and import the configured composite ADP directly into the
@@ -864,8 +825,60 @@ The trade analyzer does not commit any changes. It is a modeling tool only.
 
 ### Commissioner Tools
 
-Use `Commissioner Tools` (league admins only) to manage league-wide admin tasks that happen at the
-end of the keeper decision cycle.
+`Commissioner Tools` is visible to league admins (and platform admins). It consolidates all
+league-level administration into a single view.
+
+**League Management:**
+Add, edit, delete, and assign teams to application users.
+
+**Draft Format:**
+Switch between snake (pick-cost) and auction (salary-cost) keeper valuation.
+
+**League Settings:**
+Configure the mock draft round count, allowed positions, roster slot counts, position caps, and bench limits for the league.
+
+**League Data Imports:**
+Handles draft results, final rosters, season outcomes, and platform imports. The CSV import workflow is always:
+
+1. Paste CSV data.
+2. Click `Preview`.
+3. Review row counts, errors, and warnings.
+4. Fix CSV issues if needed.
+5. Click `Import` once the preview is valid.
+
+Preview validation catches missing headers, missing required values, invalid positions, invalid
+numeric picks or ADP values, duplicate draft picks, duplicate player rows, and missing teams.
+Missing teams are warnings because the import path can create missing teams automatically.
+
+`Import from Sleeper` pulls teams, draft results, and final rosters from a live Sleeper league:
+
+1. Paste the Sleeper League ID (found in the Sleeper URL, e.g. `sleeper.com/leagues/123456789`).
+2. Select the season year.
+3. Click `Preview` to validate the import — the panel shows which teams, draft picks, and roster entries will be created.
+4. Click `Import` to commit.
+
+`Import from Yahoo Fantasy` pulls teams, draft results, final rosters, and league settings from a Yahoo Fantasy Sports league via OAuth:
+
+1. Click `Connect Yahoo Account` and authorize access. You will be redirected back to the app.
+2. Select your Yahoo league from the dropdown (or paste the league key manually).
+3. Optionally check `Also import league settings` to sync scoring format and roster slots.
+4. Click `Preview`, review the summary, then click `Import`.
+
+`Import from ESPN Fantasy` pulls teams, draft results, and final rosters from an ESPN Fantasy league:
+
+1. Enter your ESPN League ID (found in the ESPN URL, e.g. `fantasy.espn.com/football/league?leagueId=123456`).
+2. Enter the season year.
+3. For private leagues, expand "Private league?" and enter your `espn_s2` and `SWID` cookies (find them in browser DevTools → Application → Cookies on `fantasy.espn.com`).
+4. Click `Preview` to validate, then click `Import` to commit.
+
+**League Members:**
+Add or remove league members and set per-league roles (`league_admin` or `member`).
+
+**Keeper Rules:**
+Set league-level keeper eligibility constraints, including the maximum number of consecutive seasons a team may keep the same player.
+
+**Keeper Tenure History:**
+Upload a CSV to backfill consecutive-seasons data per player. See [Keeper Tenure](#keeper-tenure) for the full workflow.
 
 **League Dates:**
 Set key dates from the `League Dates` panel. Dates set here drive live countdown timers in the app
@@ -913,6 +926,11 @@ Click `Download All Reports` to generate a ZIP archive containing PNG keeper car
 the league. Share the ZIP with your co-commissioner or post individual cards from the Team Outlook
 screen.
 
+**User Management** (platform admin only):
+Create accounts, set global roles (`user` or `platform_admin`), activate or deactivate users, view
+generated credentials, reset passwords, edit users, and delete users. This panel is hidden from
+league admins.
+
 ### Final Keepers
 
 Use `Final Keepers` after the keeper deadline to record each team's official selections and publish them to all league members.
@@ -946,7 +964,7 @@ The grid uses the same Sleeper-style layout as Mock Draft and Draft Impact:
 - **White cells** with a dimmed pick number are available picks.
 - A **Forfeited Picks Summary** below the grid lists every forfeited pick — overall pick number, round, team, kept player, and position.
 
-The round count is derived from Roster Settings under Admin (`slots` total). If rounds look wrong, check the roster slot configuration. The board reflects whatever `cost_round` and `cost_pick` were recorded on each keeper selection in Final Keepers.
+The round count is derived from League Settings under Commissioner Tools (`slots` total). If rounds look wrong, check the roster slot configuration. The board reflects whatever `cost_round` and `cost_pick` were recorded on each keeper selection in Final Keepers.
 
 ### Season Analysis
 
@@ -962,7 +980,7 @@ League summary cards show:
 
 Expand a team card to see a decision table for every keeper candidate, with category badges color-coded: Hit (green), Miss (amber), Bust (red), Left on Table (blue), Dodged (gray).
 
-Requires season outcomes to be imported. See the Admin section for Sleeper auto-fetch and CSV import.
+Requires season outcomes to be imported. See Commissioner Tools → League Data Imports for Sleeper auto-fetch and CSV import.
 
 ### Keeper History
 
@@ -973,9 +991,9 @@ Three sections:
 - **Team ROI**: expandable cards per manager showing their keeper track record across seasons.
 - **Player History**: expandable cards per recurring keeper candidate — how often they were kept and whether they paid off.
 
-**Importing season outcomes (Admin only):**
+**Importing season outcomes (league admin only):**
 
-1. Open `Admin` → `Season Outcomes`.
+1. Open `Commissioner Tools` → `League Data Imports` → `Season Outcomes`.
 2. Select **Auto-fetch from Sleeper** (recommended): choose the season year and scoring format, click `Fetch & Preview` to match keeper candidates against Sleeper's global stats database, then click `Import` to commit.
 3. Alternatively, select **Upload CSV** and paste a CSV with columns `team`, `player`, `position`, `finish_rank`, `fantasy_points`.
 
@@ -1013,7 +1031,7 @@ the current ADP snapshot.
 - Completed mocks are saved to history. Select two or more from history to compare side-by-side.
 - `Rerun Analysis` is available on any completed session to regenerate the post-draft grade and feedback.
 
-**League roster settings** control the mock draft round count, allowed positions, slot counts, position caps, and bench limits. Admins can edit these from `Roster Settings` under `Admin`.
+**League roster settings** control the mock draft round count, allowed positions, slot counts, position caps, and bench limits. Admins can edit these from `League Settings` under `Commissioner Tools`.
 
 ## Scoring Model
 

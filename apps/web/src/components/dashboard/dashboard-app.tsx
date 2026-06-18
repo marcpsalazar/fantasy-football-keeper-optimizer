@@ -270,6 +270,7 @@ type NavItem = {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   adminOnly?: boolean;
+  platformAdminOnly?: boolean;
 };
 
 const navItems: NavItem[] = [
@@ -290,7 +291,7 @@ const navItems: NavItem[] = [
   { id: "rosters", label: "Final Rosters", icon: ListChecks },
   { id: "settings", label: "Optimizer Settings", icon: SlidersHorizontal },
   { id: "commissioner-tools", label: "Commissioner Tools", icon: Wrench, adminOnly: true },
-  { id: "admin", label: "Admin", icon: ShieldCheck, adminOnly: true },
+  { id: "admin", label: "Admin", icon: ShieldCheck, platformAdminOnly: true },
 ];
 
 const navGroups: { label: string | null; ids: ViewId[] }[] = [
@@ -414,9 +415,9 @@ const screenGuides: ScreenGuide[] = [
   {
     title: "Admin",
     icon: ShieldCheck,
-    bestFor: "Managing users, team assignments, league data imports, and ADP snapshots.",
-    howToRead: "Admins import league source data here — from Sleeper, Yahoo Fantasy, or ESPN (platform imports), or by pasting CSV directly. ADP is the market baseline; lower ADP picks mean earlier, more expensive players. Roster Settings controls mock draft round count and position slot configuration.",
-    watchFor: "Preview before import. Platform imports (Sleeper, Yahoo, ESPN) require a valid league ID and season year; private ESPN leagues also need espn_s2 and SWID cookies. Missing ADP makes scores unreliable. Always run the optimizer after any import.",
+    bestFor: "Platform-admin-only controls: AI token usage monitoring and ADP snapshot management.",
+    howToRead: "AI Usage shows token consumption, request counts, and estimated cost by feature for the current month — use this to track spending when AI features are enabled. ADP Input lets you build and import a composite ADP board or paste a custom CSV snapshot directly.",
+    watchFor: "This menu is only visible to platform admins. AI Usage is read-only; to change AI behavior, update the feature flags in the API environment variables. Always run the optimizer after importing a new ADP snapshot.",
     view: "admin",
     adminOnly: true,
   },
@@ -465,7 +466,7 @@ const screenGuides: ScreenGuide[] = [
     icon: Bot,
     bestFor: "Practicing your draft with keepers already locked in, AI bots filling other teams, and a live strategy coach guiding your picks.",
     howToRead: "Your team's currently recommended keepers are already accounted for before the draft starts — they do not appear in the available player pool and their picks are forfeited on the board. All other teams are controlled by AI bots. Each bot has a personality (Balanced, Aggressive, Value Hunter, etc.) that shapes its drafting style and a difficulty level (Easy, Medium, Hard) that controls how optimally it executes that style. The Strategy Coach generates an AI plan before the draft starts, showing position priorities, specific player targets, and per-round guidance that updates as picks are made. When it is your pick, a Best Available card highlights the top player by ADP value with a direct Draft button. The position chip row below the search box filters the available player list and shows how many of each position you have already drafted.",
-    watchFor: "Run the optimizer and confirm your keeper recommendations before starting a Mock Draft. Any keeper changes made in Recommendations or via Settings after a session was created will only appear in new sessions — already-created sessions retain the keeper context they were built with. If you want to test how a different keeper strategy affects your draft, update settings, save them, then create a new Mock Draft session.",
+    watchFor: "Run the optimizer and confirm your keeper recommendations before starting a Mock Draft. Any keeper changes made in Recommendations or via Settings after a session was created will only appear in new sessions — already-created sessions retain the keeper context they were built with. If you want to test how a different keeper strategy affects your draft, update settings, save them, then create a new Mock Draft session. League roster settings (round count, position slots, caps) are configured under Commissioner Tools.",
     view: "mock-draft",
   },
   {
@@ -482,7 +483,7 @@ const screenGuides: ScreenGuide[] = [
     icon: ClipboardList,
     bestFor: "Seeing the full draft pick grid after keepers are finalized — which picks are forfeited and which remain available in each round.",
     howToRead: "Each cell shows the overall pick number. Red cells are forfeited by a keeper — the kept player's name and position are shown inline. Available picks are shown by pick number only. Columns are fixed by draft slot so each team's picks stay in the same column across rounds.",
-    watchFor: "The board is computed from Final Keeper Selections. If pick numbers look wrong, check that keeper cost rounds and pick numbers were entered correctly in Final Keepers. The round count comes from Roster Settings under Admin.",
+    watchFor: "The board is computed from Final Keeper Selections. If pick numbers look wrong, check that keeper cost rounds and pick numbers were entered correctly in Final Keepers. The round count comes from League Settings under Commissioner Tools.",
     view: "draft-board",
   },
   {
@@ -490,7 +491,7 @@ const screenGuides: ScreenGuide[] = [
     icon: BarChart2,
     bestFor: "Post-season review of keeper decision quality — who hit, who busted, what value was left on the table, and how well the optimizer's recommendations performed.",
     howToRead: "League summary cards show hit rate, bust rate, left-on-table count, and recommendation accuracy. Expand a team card to see every keeper decision categorized as Hit, Miss, Bust, Left on Table, Dodged, or Below ADP, with finish rank and fantasy points alongside the original ADP projection.",
-    watchFor: "Requires season outcomes to be imported first. Ask a league admin to run Sleeper auto-fetch or upload a CSV from the Admin section. Analysis is only meaningful once FinalKeeperSelections are recorded — without them, the Hit/Miss/Left on Table distinction cannot be made.",
+    watchFor: "Requires season outcomes to be imported first. Ask a league admin to run Sleeper auto-fetch or upload a CSV from Commissioner Tools → League Data Imports. Analysis is only meaningful once FinalKeeperSelections are recorded — without them, the Hit/Miss/Left on Table distinction cannot be made.",
     view: "season-analysis",
   },
   {
@@ -504,9 +505,9 @@ const screenGuides: ScreenGuide[] = [
   {
     title: "Commissioner Tools",
     icon: Wrench,
-    bestFor: "League commissioners who need to send deadline reminders, verify all teams are within keeper rules, control when keeper selections are revealed, and bundle all team reports into a single download.",
-    howToRead: "Compliance Checker runs automatically when you open the page — a green 'All Teams Pass' badge means every team is within limits. Keeper Reveal shows what each team will see before and after the reveal date. Reminder Emails requires SMTP configuration on the server.",
-    watchFor: "Run the optimizer first so the compliance checker has recommendation data. Set a reveal date before finalization to create pre-draft anticipation. SMTP credentials must be set on the server before email sending is enabled.",
+    bestFor: "All league admin tasks: managing teams, members, imports, league settings, keeper rules, compliance, reveal, reminders, and bulk export.",
+    howToRead: "League Management, Draft Format, League Settings, League Data Imports (Sleeper / Yahoo / ESPN / CSV), League Members, Keeper Rules, and Keeper Tenure are all here. Below those, Commissioner Dates sets deadlines and reveal date, Compliance Checker verifies every team is within limits, Keeper Reveal controls member visibility, Reminder Emails sends deadline notices, and Bulk Export bundles all keeper card PNGs into a ZIP.",
+    watchFor: "Run the optimizer after any import so the compliance checker has fresh data. Always preview imports before committing. Set the reveal date before finalization so the keeper reveal works as expected. SMTP credentials must be configured on the server before email sending is enabled.",
     view: "commissioner-tools",
     adminOnly: true,
   },
@@ -515,7 +516,7 @@ const screenGuides: ScreenGuide[] = [
 const workflowSteps: WorkflowStep[] = [
   {
     title: "Confirm the source data",
-    text: "Check teams, draft results, final rosters, and ADP before trusting recommendations. Admins can pull data automatically from Sleeper, Yahoo Fantasy, or ESPN via the platform import panels in Admin, or paste CSV directly. Always run the optimizer after any import.",
+    text: "Check teams, draft results, final rosters, and ADP before trusting recommendations. Admins can pull data automatically from Sleeper, Yahoo Fantasy, or ESPN via the import panels in Commissioner Tools, or paste CSV directly. Always run the optimizer after any import.",
     view: "dashboard",
   },
   {
@@ -833,8 +834,12 @@ export function DashboardApp() {
   const isLeagueAdmin = isPlatformAdmin || activeLeagueMembership?.leagueRole === "league_admin";
   const isAdmin = isPlatformAdmin;
   const visibleNavItems = React.useMemo(
-    () => navItems.filter((item) => !item.adminOnly || isLeagueAdmin),
-    [isLeagueAdmin],
+    () => navItems.filter((item) => {
+      if (item.platformAdminOnly) return isPlatformAdmin;
+      if (item.adminOnly) return isLeagueAdmin;
+      return true;
+    }),
+    [isLeagueAdmin, isPlatformAdmin],
   );
   const activeItem = visibleNavItems.find((item) => item.id === activeView) ?? visibleNavItems[0];
   const activeLabel = activeView === "profile" ? "Profile" : activeItem.label;
@@ -1115,10 +1120,10 @@ export function DashboardApp() {
   }, [authChecked, authRequired, currentUser, refreshData]);
 
   React.useEffect(() => {
-    if (!isLeagueAdmin && !isPlatformAdmin && activeView === "admin") {
+    if (!isPlatformAdmin && activeView === "admin") {
       setActiveView("dashboard");
     }
-  }, [activeView, isLeagueAdmin, isPlatformAdmin]);
+  }, [activeView, isPlatformAdmin]);
 
   const requireLeagueId = React.useCallback(() => {
     if (workspaceData.source !== "api" || !workspaceData.league?.id) {
@@ -1939,14 +1944,10 @@ export function DashboardApp() {
             {activeView === "teams" && <TeamsPage />}
             {activeView === "draft" && <DraftResultsPage />}
             {activeView === "rosters" && <FinalRostersPage />}
-            {activeView === "admin" && isLeagueAdmin && (
+            {activeView === "admin" && isPlatformAdmin && (
               <AdminPage
                 adpCsvText={adpCsvText}
-                draftCsvText={draftCsvText}
-                rosterCsvText={rosterCsvText}
                 setAdpCsvText={setAdpCsvText}
-                setDraftCsvText={setDraftCsvText}
-                setRosterCsvText={setRosterCsvText}
               />
             )}
             {activeView === "settings" && (
@@ -1963,7 +1964,14 @@ export function DashboardApp() {
             {activeView === "final-keepers" && <FinalKeepersPage />}
             {activeView === "draft-board" && <DraftBoardPage />}
             {activeView === "season-analysis" && <SeasonAnalysisPage />}
-            {activeView === "commissioner-tools" && isLeagueAdmin && <CommissionerToolsPage />}
+            {activeView === "commissioner-tools" && isLeagueAdmin && (
+              <CommissionerToolsPage
+                draftCsvText={draftCsvText}
+                rosterCsvText={rosterCsvText}
+                setDraftCsvText={setDraftCsvText}
+                setRosterCsvText={setRosterCsvText}
+              />
+            )}
           </div>
         </section>
       </div>
@@ -3541,177 +3549,38 @@ function FinalRostersPage() {
 
 function AdminPage({
   adpCsvText,
-  draftCsvText,
-  rosterCsvText,
   setAdpCsvText,
-  setDraftCsvText,
-  setRosterCsvText,
 }: {
   adpCsvText: string;
-  draftCsvText: string;
-  rosterCsvText: string;
   setAdpCsvText: (value: string) => void;
-  setDraftCsvText: (value: string) => void;
-  setRosterCsvText: (value: string) => void;
 }) {
-  const { isLeagueAdmin, isPlatformAdmin } = useDashboard();
   return (
     <div className="space-y-5">
-      {isLeagueAdmin ? (
-        <>
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-              <Users className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">League Management</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Add, edit, delete, and assign teams to application users.
-              </p>
-            </div>
-          </div>
-          <LeagueManagementPanel />
+      <div className="flex items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+          <Bot className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-zinc-950">AI Usage</h2>
+          <p className="mt-1 text-sm text-zinc-600">
+            Token consumption, request counts, and active feature flags for the current month.
+          </p>
+        </div>
+      </div>
+      <AIUsagePanel />
 
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-              <SlidersHorizontal className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">Draft Format</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Switch between snake (pick-cost) and auction (salary-cost) keeper valuation.
-              </p>
-            </div>
-          </div>
-          <DraftFormatPanel />
-
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-              <SlidersHorizontal className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">League Settings</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Configure roster slots, bench limits, and draftable position caps.
-              </p>
-            </div>
-          </div>
-          <LeagueRosterSettingsPanel />
-
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-              <Upload className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">League Data Imports</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Upload draft results and final rosters used by the optimizer.
-              </p>
-            </div>
-          </div>
-          <AdminDataImports
-            draftCsvText={draftCsvText}
-            rosterCsvText={rosterCsvText}
-            setDraftCsvText={setDraftCsvText}
-            setRosterCsvText={setRosterCsvText}
-          />
-
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-              <CalendarDays className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">ADP Input</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Build, import, and review the league&apos;s active market snapshot.
-              </p>
-            </div>
-          </div>
-          <ADPInputPage csvText={adpCsvText} setCsvText={setAdpCsvText} />
-
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-              <Users className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">League Members</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Add or remove members and manage their league roles.
-              </p>
-            </div>
-          </div>
-          <LeagueMembersPanel />
-
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-              <SlidersHorizontal className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">Keeper Rules</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Set league-level keeper eligibility constraints, including the maximum number of consecutive seasons a team may keep the same player.
-              </p>
-            </div>
-          </div>
-          <KeeperRulesPanel />
-
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-              <Upload className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">Keeper Tenure History</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Upload a CSV to backfill how many consecutive seasons each player has been kept by a team. This data drives the consecutive-seasons eligibility rule.
-              </p>
-            </div>
-          </div>
-          <KeeperTenurePanel />
-
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-rose-700 text-white">
-              <Trash2 className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">Danger Zone</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Permanently delete this league and all associated data.
-              </p>
-            </div>
-          </div>
-          <DeleteLeaguePanel />
-        </>
-      ) : null}
-
-      {isPlatformAdmin ? (
-        <>
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-              <Users className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">User Management</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Create accounts, reset passwords, and assign teams.
-              </p>
-            </div>
-          </div>
-          <UserManagementPanel />
-
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
-              <Bot className="size-5" aria-hidden="true" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-zinc-950">AI Usage</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Token consumption, request counts, and active feature flags for the current month.
-              </p>
-            </div>
-          </div>
-          <AIUsagePanel />
-        </>
-      ) : null}
+      <div className="flex items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+          <CalendarDays className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-zinc-950">ADP Input</h2>
+          <p className="mt-1 text-sm text-zinc-600">
+            Build, import, and review the league&apos;s active market snapshot.
+          </p>
+        </div>
+      </div>
+      <ADPInputPage csvText={adpCsvText} setCsvText={setAdpCsvText} />
     </div>
   );
 }
@@ -13524,7 +13393,7 @@ function SeasonAnalysisPage() {
     return (
       <PagePanel title="Season Analysis" description="End-of-season review comparing keeper recommendations vs. actual selections vs. performance.">
         <p className="text-sm text-zinc-500">
-          No season outcome data yet. Import season outcomes via the Admin section to unlock this analysis.
+          No season outcome data yet. Import season outcomes via Commissioner Tools → League Data Imports to unlock this analysis.
         </p>
       </PagePanel>
     );
@@ -14355,29 +14224,41 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
   );
 }
 
-function CommissionerToolsPage() {
-  const { activeLeagueId, data, refreshData } = useDashboard();
+function CommissionerToolsPage({
+  draftCsvText,
+  rosterCsvText,
+  setDraftCsvText,
+  setRosterCsvText,
+}: {
+  draftCsvText: string;
+  rosterCsvText: string;
+  setDraftCsvText: (value: string) => void;
+  setRosterCsvText: (value: string) => void;
+}) {
+  const { activeLeagueId, data, refreshData, isPlatformAdmin } = useDashboard();
   const league = data.league;
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-violet-700 text-white">
-          <Wrench className="size-5" aria-hidden="true" />
-        </div>
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-zinc-950">Commissioner Tools</h2>
-          <p className="mt-1 text-sm text-zinc-600">
-            Draft date, keeper reveal, compliance checker, reminders, and bulk export.
-          </p>
-        </div>
-      </div>
-
+      <LeagueManagementPanel />
+      <DraftFormatPanel />
+      <LeagueRosterSettingsPanel />
+      <AdminDataImports
+        draftCsvText={draftCsvText}
+        rosterCsvText={rosterCsvText}
+        setDraftCsvText={setDraftCsvText}
+        setRosterCsvText={setRosterCsvText}
+      />
+      <LeagueMembersPanel />
+      <KeeperRulesPanel />
+      <KeeperTenurePanel />
       <CommissionerDatesPanel league={league} leagueId={activeLeagueId} refreshData={refreshData} />
       <ComplianceCheckerPanel leagueId={activeLeagueId} />
       <KeeperRevealPanel leagueId={activeLeagueId} league={league} />
       <ReminderEmailPanel leagueId={activeLeagueId} league={league} />
       <BulkExportPanel leagueId={activeLeagueId} league={league} />
+      {isPlatformAdmin && <UserManagementPanel />}
+      <DeleteLeaguePanel />
     </div>
   );
 }
