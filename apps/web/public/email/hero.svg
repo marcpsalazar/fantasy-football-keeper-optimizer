@@ -1,113 +1,166 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="600" height="200" viewBox="0 0 600 200">
   <defs>
-    <!-- Bright gold stadium light, top-left -->
     <radialGradient id="gl" cx="15%" cy="0%" r="60%">
       <stop offset="0%"   stop-color="#f59e0b" stop-opacity="0.85"/>
       <stop offset="40%"  stop-color="#f59e0b" stop-opacity="0.30"/>
       <stop offset="100%" stop-color="#122452"  stop-opacity="0"/>
     </radialGradient>
-    <!-- Vivid violet light, top-right -->
     <radialGradient id="gr" cx="85%" cy="0%" r="60%">
       <stop offset="0%"   stop-color="#818cf8" stop-opacity="0.75"/>
       <stop offset="40%"  stop-color="#818cf8" stop-opacity="0.25"/>
       <stop offset="100%" stop-color="#122452"  stop-opacity="0"/>
     </radialGradient>
-    <!-- Goal post glow -->
-    <radialGradient id="gp" cx="50%" cy="15%" r="25%">
-      <stop offset="0%"   stop-color="#f59e0b" stop-opacity="0.50"/>
+    <!-- Goal post glow halo -->
+    <radialGradient id="gp" cx="50%" cy="32%" r="18%">
+      <stop offset="0%"   stop-color="#f59e0b" stop-opacity="0.55"/>
       <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
     </radialGradient>
-    <!-- Bottom fade to email body -->
+    <!-- Bottom fade -->
     <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="45%" stop-color="#122452" stop-opacity="0"/>
+      <stop offset="55%" stop-color="#122452" stop-opacity="0"/>
       <stop offset="100%" stop-color="#080c14" stop-opacity="1"/>
     </linearGradient>
-    <!-- Perspective line gradient -->
+    <!-- Perspective line gradient: bright near vanish, fades down -->
     <linearGradient id="pl" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%"   stop-color="#7ac4f0" stop-opacity="1.0"/>
-      <stop offset="100%" stop-color="#2a5888" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#2a5888" stop-opacity="0.12"/>
     </linearGradient>
   </defs>
 
-  <!-- Solid navy base -->
+  <!-- Base -->
   <rect width="600" height="200" fill="#122452"/>
 
-  <!-- Perspective radial lines from vanishing point (300, 30) -->
+  <!--
+    Vanishing point: (300, 65) = far end zone / goal line
+    Field half-width at y = 300 * (y-65) / 135  [full at y=200]
+
+    FULL FIELD LAYOUT (end-zone-to-end-zone perspective):
+      y=65  : far goal line + posts (vanishing point)
+      y=75  : far 10 yd line
+      y=82  : far 20 yd line
+      y=91  : far 30 yd line
+      y=101 : far 40 yd line
+      y=113 : 50 yd line  [MIDFIELD — visual center]
+      y=128 : near 40 yd line
+      y=148 : near 30 yd line
+      y=168 : near 20 yd line
+      y=188 : near 10 yd line
+  -->
+
+  <!-- Perspective radial lines from vanishing point (300, 65) -->
   <g stroke="url(#pl)" fill="none">
-    <line x1="300" y1="30" x2="0"   y2="200" stroke-width="1.4"/>
-    <line x1="300" y1="30" x2="50"  y2="200" stroke-width="1.3"/>
-    <line x1="300" y1="30" x2="110" y2="200" stroke-width="1.2"/>
-    <line x1="300" y1="30" x2="170" y2="200" stroke-width="1.1"/>
-    <line x1="300" y1="30" x2="230" y2="200" stroke-width="1.0"/>
-    <line x1="300" y1="30" x2="300" y2="200" stroke-width="1.0"/>
-    <line x1="300" y1="30" x2="370" y2="200" stroke-width="1.0"/>
-    <line x1="300" y1="30" x2="430" y2="200" stroke-width="1.1"/>
-    <line x1="300" y1="30" x2="490" y2="200" stroke-width="1.2"/>
-    <line x1="300" y1="30" x2="550" y2="200" stroke-width="1.3"/>
-    <line x1="300" y1="30" x2="600" y2="200" stroke-width="1.4"/>
+    <line x1="300" y1="65" x2="0"   y2="200" stroke-width="1.4"/>
+    <line x1="300" y1="65" x2="55"  y2="200" stroke-width="1.3"/>
+    <line x1="300" y1="65" x2="110" y2="200" stroke-width="1.2"/>
+    <line x1="300" y1="65" x2="165" y2="200" stroke-width="1.1"/>
+    <line x1="300" y1="65" x2="230" y2="200" stroke-width="1.0"/>
+    <line x1="300" y1="65" x2="300" y2="200" stroke-width="1.0"/>
+    <line x1="300" y1="65" x2="370" y2="200" stroke-width="1.0"/>
+    <line x1="300" y1="65" x2="435" y2="200" stroke-width="1.1"/>
+    <line x1="300" y1="65" x2="490" y2="200" stroke-width="1.2"/>
+    <line x1="300" y1="65" x2="545" y2="200" stroke-width="1.3"/>
+    <line x1="300" y1="65" x2="600" y2="200" stroke-width="1.4"/>
   </g>
 
-  <!-- Horizontal yard lines -->
-  <g stroke="#6aaed8" fill="none">
-    <line x1="268" y1="50"  x2="332" y2="50"  stroke-width="1.3" opacity="1.0"/>
-    <line x1="228" y1="74"  x2="372" y2="74"  stroke-width="1.2" opacity="0.90"/>
-    <line x1="180" y1="104" x2="420" y2="104" stroke-width="1.2" opacity="0.80"/>
-    <line x1="128" y1="136" x2="472" y2="136" stroke-width="1.1" opacity="0.65"/>
-    <line x1="72"  y1="168" x2="528" y2="168" stroke-width="1.0" opacity="0.50"/>
-    <line x1="16"  y1="198" x2="584" y2="198" stroke-width="1.0" opacity="0.30"/>
+  <!-- === FAR HALF yard lines (compressed near vanishing point) === -->
+  <!-- far 10 yd: y=75, hw=22 -->
+  <line x1="278" y1="75" x2="322" y2="75" stroke="#6aaed8" stroke-width="1.0" opacity="0.85"/>
+  <!-- far 20 yd: y=82, hw=38 -->
+  <line x1="262" y1="82" x2="338" y2="82" stroke="#6aaed8" stroke-width="1.0" opacity="0.80"/>
+  <!-- far 30 yd: y=91, hw=58 -->
+  <line x1="242" y1="91" x2="358" y2="91" stroke="#6aaed8" stroke-width="1.1" opacity="0.80"/>
+  <!-- far 40 yd: y=101, hw=80 -->
+  <line x1="220" y1="101" x2="380" y2="101" stroke="#6aaed8" stroke-width="1.1" opacity="0.85"/>
+
+  <!-- === MIDFIELD: 50 yd line: y=113, hw=107 === -->
+  <line x1="193" y1="113" x2="407" y2="113" stroke="#7ac4f0" stroke-width="1.5" opacity="1.0"/>
+
+  <!-- === NEAR HALF yard lines (expanding toward viewer) === -->
+  <!-- near 40 yd: y=128, hw=140 -->
+  <line x1="160" y1="128" x2="440" y2="128" stroke="#6aaed8" stroke-width="1.2" opacity="0.90"/>
+  <!-- near 30 yd: y=148, hw=185 -->
+  <line x1="115" y1="148" x2="485" y2="148" stroke="#6aaed8" stroke-width="1.2" opacity="0.80"/>
+  <!-- near 20 yd: y=168, hw=229 -->
+  <line x1="71"  y1="168" x2="529" y2="168" stroke="#6aaed8" stroke-width="1.1" opacity="0.68"/>
+  <!-- near 10 yd: y=188, hw=274 -->
+  <line x1="26"  y1="188" x2="574" y2="188" stroke="#6aaed8" stroke-width="1.0" opacity="0.45"/>
+
+  <!-- === YARD LINE NUMBERS (between sideline and hash marks, both sides) ===
+       Number x = 300 ± (hw * 2/3)  [1/3 in from each sideline]
+       Far half: small font (perspective foreshortening)
+       Near half: larger font
+  -->
+
+  <!-- Far half numbers -->
+  <g font-family="Arial,sans-serif" font-weight="800" fill="#f59e0b">
+    <!-- far 40 yd y=101, hw=80 → x = 300±53 → left=247, right=353 -->
+    <text x="247" y="105" font-size="7" text-anchor="end"   opacity="0.65">40</text>
+    <text x="353" y="105" font-size="7" text-anchor="start" opacity="0.65">40</text>
+    <!-- far 30 yd y=91, hw=58 → x = 300±39 → left=261, right=339 -->
+    <text x="261" y="95"  font-size="6" text-anchor="end"   opacity="0.55">30</text>
+    <text x="339" y="95"  font-size="6" text-anchor="start" opacity="0.55">30</text>
+    <!-- far 20 yd y=82, hw=38 → x = 300±25 → left=275, right=325 -->
+    <text x="275" y="86"  font-size="6" text-anchor="end"   opacity="0.45">20</text>
+    <text x="325" y="86"  font-size="6" text-anchor="start" opacity="0.45">20</text>
+    <!-- far 10 yd y=75, hw=22 → x = 300±15 → left=285, right=315 -->
+    <text x="285" y="79"  font-size="5" text-anchor="end"   opacity="0.35">10</text>
+    <text x="315" y="79"  font-size="5" text-anchor="start" opacity="0.35">10</text>
   </g>
 
-  <!-- Yard line numbers — left side -->
-  <g font-family="Arial,sans-serif" font-size="8" font-weight="700" fill="#f59e0b" text-anchor="end">
-    <text x="263" y="53"  opacity="0.80">50</text>
-    <text x="222" y="77"  opacity="0.70">40</text>
-    <text x="174" y="107" opacity="0.60">30</text>
-    <text x="122" y="139" opacity="0.50">20</text>
-    <text x="66"  y="171" opacity="0.40">10</text>
-  </g>
-  <!-- Yard line numbers — right side -->
-  <g font-family="Arial,sans-serif" font-size="8" font-weight="700" fill="#f59e0b" text-anchor="start">
-    <text x="337" y="53"  opacity="0.80">50</text>
-    <text x="378" y="77"  opacity="0.70">40</text>
-    <text x="426" y="107" opacity="0.60">30</text>
-    <text x="478" y="139" opacity="0.50">20</text>
-    <text x="534" y="171" opacity="0.40">10</text>
+  <!-- 50 yard line number — most prominent -->
+  <g font-family="Arial,sans-serif" font-weight="800" fill="#f59e0b">
+    <!-- hw=107 → x = 300±71 → left=229, right=371 -->
+    <text x="229" y="117" font-size="9" text-anchor="end"   opacity="0.90">50</text>
+    <text x="371" y="117" font-size="9" text-anchor="start" opacity="0.90">50</text>
   </g>
 
-  <!-- Gold hash marks at center of each yard line -->
-  <g stroke="#f59e0b" fill="none" stroke-width="2" opacity="0.65">
-    <line x1="292" y1="50"  x2="308" y2="50"/>
-    <line x1="292" y1="74"  x2="308" y2="74"/>
-    <line x1="292" y1="104" x2="308" y2="104"/>
-    <line x1="292" y1="136" x2="308" y2="136"/>
+  <!-- Near half numbers -->
+  <g font-family="Arial,sans-serif" font-weight="800" fill="#f59e0b">
+    <!-- near 40 yd y=128, hw=140 → x = 300±93 → left=207, right=393 -->
+    <text x="207" y="132" font-size="10" text-anchor="end"   opacity="0.80">40</text>
+    <text x="393" y="132" font-size="10" text-anchor="start" opacity="0.80">40</text>
+    <!-- near 30 yd y=148, hw=185 → x = 300±123 → left=177, right=423 -->
+    <text x="177" y="152" font-size="11" text-anchor="end"   opacity="0.70">30</text>
+    <text x="423" y="152" font-size="11" text-anchor="start" opacity="0.70">30</text>
+    <!-- near 20 yd y=168, hw=229 → x = 300±153 → left=147, right=453 -->
+    <text x="147" y="172" font-size="11" text-anchor="end"   opacity="0.55">20</text>
+    <text x="453" y="172" font-size="11" text-anchor="start" opacity="0.55">20</text>
+    <!-- near 10 yd y=188, hw=274 → x = 300±183 → left=117, right=483 -->
+    <text x="117" y="192" font-size="12" text-anchor="end"   opacity="0.40">10</text>
+    <text x="483" y="192" font-size="12" text-anchor="start" opacity="0.40">10</text>
+  </g>
+
+  <!-- Gold center hash marks on every yard line -->
+  <g stroke="#f59e0b" fill="none" stroke-width="1.8" opacity="0.60">
+    <line x1="294" y1="75"  x2="306" y2="75"/>
+    <line x1="294" y1="82"  x2="306" y2="82"/>
+    <line x1="294" y1="91"  x2="306" y2="91"/>
+    <line x1="294" y1="101" x2="306" y2="101"/>
+    <line x1="292" y1="113" x2="308" y2="113"/>
+    <line x1="292" y1="128" x2="308" y2="128"/>
+    <line x1="292" y1="148" x2="308" y2="148"/>
     <line x1="292" y1="168" x2="308" y2="168"/>
+    <line x1="292" y1="188" x2="308" y2="188"/>
   </g>
 
-  <!-- Center circle (midfield) -->
-  <circle cx="300" cy="176" r="26" fill="none" stroke="#6aaed8" stroke-width="1.2" opacity="0.55"/>
-  <circle cx="300" cy="176" r="3.5" fill="#6aaed8" opacity="0.60"/>
+  <!-- Center circle at midfield -->
+  <circle cx="300" cy="113" r="18" fill="none" stroke="#6aaed8" stroke-width="1.0" opacity="0.45"/>
 
-  <!-- ======================================== -->
-  <!-- FIELD GOAL POSTS — vanishing point view  -->
-  <!-- Uprights clip at top edge, crossbar y=30 -->
-  <!-- ======================================== -->
-
-  <!-- Goal post glow halo -->
-  <rect width="600" height="60" fill="url(#gp)"/>
-
-  <!-- Left upright (clips at top of SVG) -->
-  <line x1="274" y1="0" x2="274" y2="30" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
+  <!-- === FIELD GOAL POSTS at vanishing point ===
+       Crossbar at y=65, uprights clip above, stem down to 50-yd label -->
+  <rect width="600" height="200" fill="url(#gp)"/>
+  <!-- Left upright -->
+  <line x1="274" y1="0" x2="274" y2="65" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
   <!-- Right upright -->
-  <line x1="326" y1="0" x2="326" y2="30" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
+  <line x1="326" y1="0" x2="326" y2="65" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
   <!-- Crossbar -->
-  <line x1="268" y1="30" x2="332" y2="30" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
-  <!-- Post stem down to vanishing point -->
-  <line x1="300" y1="30" x2="300" y2="50" stroke="#f59e0b" stroke-width="2.0" opacity="0.80"/>
+  <line x1="268" y1="65" x2="332" y2="65" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
+  <!-- Stem from crossbar toward vanishing -->
+  <line x1="300" y1="65" x2="300" y2="78" stroke="#f59e0b" stroke-width="2.0" opacity="0.75"/>
+  <!-- Bright dot at crossbar center -->
+  <circle cx="300" cy="65" r="3" fill="#f59e0b" opacity="1.0"/>
 
-  <!-- Bright dot at post/vanishing junction -->
-  <circle cx="300" cy="30" r="3" fill="#f59e0b" opacity="1.0"/>
-
-  <!-- Stadium light glows (over everything) -->
+  <!-- Stadium light glows -->
   <rect width="600" height="200" fill="url(#gl)"/>
   <rect width="600" height="200" fill="url(#gr)"/>
 
