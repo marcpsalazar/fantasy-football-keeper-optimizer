@@ -7,12 +7,12 @@ import time
 from typing import Any, Literal
 import uuid
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.db.session import get_session
+from app.db.session import engine, get_session
 from app.core.config import get_settings
 from app.models import (
     ADPEntry,
@@ -3584,6 +3584,20 @@ class KeeperReminderRequest(BaseModel):
     dry_run: bool = False
 
 
+def _send_reminders_task(league_id: uuid.UUID) -> None:
+    """Background task: opens its own DB session so the request session is not needed."""
+    import logging
+    _log = logging.getLogger(__name__)
+    try:
+        with Session(engine) as session:
+            recipients = notifications_svc.send_keeper_deadline_reminders(session, league_id)
+        _log.info("Background email send complete for league %s: %d recipients", league_id, len(recipients))
+    except NotificationError as exc:
+        _log.warning("Background email send failed for league %s: %s", league_id, exc)
+    except Exception:
+        _log.exception("Unexpected error in background email send for league %s", league_id)
+
+
 class EmailSettingsUpdateRequest(BaseModel):
     email_enabled: bool | None = None
     email_schedule: str | None = None  # none | daily | weekly | monthly
@@ -3621,27 +3635,40 @@ def get_compliance_report(
 def send_keeper_reminders(
     league_id: uuid.UUID,
     payload: KeeperReminderRequest,
+    background_tasks: BackgroundTasks,
     user: User | None = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     assert_league_admin(session, user, league_id)
-    try:
-        recipients = notifications_svc.send_keeper_deadline_reminders(
-            session,
-            league_id,
-            dry_run=payload.dry_run,
+
+    if payload.dry_run:
+        # Dry run is fast (no SMTP, no AI) — run synchronously and return recipients
+        try:
+            recipients = notifications_svc.send_keeper_deadline_reminders(
+                session, league_id, dry_run=True
+            )
+        except NotificationError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        return {"sent": len(recipients), "recipients": recipients, "dry_run": True}
+
+    # Real send: validate fast preconditions now, then queue the work so the
+    # request returns immediately (AI + SMTP can take 30-90s per league).
+    if not notifications_svc._smtp_configured():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SMTP is not configured. Set SMTP_HOST, SMTP_USERNAME, and SMTP_PASSWORD.",
         )
-    except NotificationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).exception("Unexpected error sending reminders for league %s", league_id)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
-    return {
-        "sent": len(recipients),
-        "recipients": recipients,
-        "dry_run": payload.dry_run,
-    }
+    league = session.get(League, league_id)
+    if league is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+    if league.keeper_pick_deadline is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This league has no keeper pick deadline set.",
+        )
+
+    background_tasks.add_task(_send_reminders_task, league_id)
+    return {"queued": True, "dry_run": False, "message": "Emails are being sent in the background."}
 
 
 @router.get("/leagues/{league_id}/commissioner/reminders/smtp-status")

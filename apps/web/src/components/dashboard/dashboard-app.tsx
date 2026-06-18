@@ -14797,9 +14797,13 @@ function ReminderEmailPanel({
     setSentCount(null);
     try {
       const result = await sendKeeperReminders(leagueId, false);
-      setSentCount(result.sent);
-      if (emailSettings) {
-        setEmailSettings({ ...emailSettings, emailLastSent: new Date().toISOString() });
+      if (result.queued) {
+        setSentCount(-1); // sentinel for "queued" state
+        if (emailSettings) {
+          setEmailSettings({ ...emailSettings, emailLastSent: new Date().toISOString() });
+        }
+      } else {
+        setSentCount(result.sent);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to send reminders.");
@@ -14998,7 +15002,9 @@ function ReminderEmailPanel({
           )}
           {sentCount !== null && (
             <p className="text-sm text-emerald-700 font-medium">
-              Reminders sent to {sentCount} member(s).
+              {sentCount === -1
+                ? "Emails are being sent in the background."
+                : `Reminders sent to ${sentCount} member(s).`}
             </p>
           )}
           <div className="flex gap-2">

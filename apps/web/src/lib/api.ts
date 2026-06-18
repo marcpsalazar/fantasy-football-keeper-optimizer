@@ -2649,6 +2649,8 @@ export type ReminderResult = {
   sent: number;
   recipients: string[];
   dryRun: boolean;
+  queued?: boolean;
+  message?: string;
 };
 
 export type EmailSettings = {
@@ -2753,6 +2755,8 @@ export async function sendKeeperReminders(
     sent: number(data["sent"]),
     recipients: stringArray(data["recipients"]),
     dryRun: boolean(data["dry_run"]),
+    queued: data["queued"] ? boolean(data["queued"]) : undefined,
+    message: data["message"] ? text(data["message"]) : undefined,
   };
 }
 
