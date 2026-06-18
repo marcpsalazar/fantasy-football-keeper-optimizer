@@ -499,10 +499,10 @@ def send_keeper_deadline_reminders(
                 msg.attach(MIMEText(html_body, "html"))
                 try:
                     server.sendmail(settings.smtp_from_email, [email_addr], msg.as_string())
-                except smtplib.SMTPException as exc:
+                except (smtplib.SMTPException, OSError) as exc:
                     errors.append(f"{email_addr}: {exc}")
 
-    except smtplib.SMTPException as exc:
+    except (smtplib.SMTPException, OSError) as exc:
         raise NotificationError(f"SMTP connection failed: {exc}") from exc
 
     if errors:

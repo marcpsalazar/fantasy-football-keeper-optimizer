@@ -3633,6 +3633,10 @@ def send_keeper_reminders(
         )
     except NotificationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).exception("Unexpected error sending reminders for league %s", league_id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
     return {
         "sent": len(recipients),
         "recipients": recipients,
