@@ -31,7 +31,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
 - **Trade Analyzer**: model the keeper value impact of a proposed trade before agreeing to it. Supports player-for-player trades and draft pick swaps. Shows baseline vs. hypothetical keeper lineups, surplus delta, gained and lost players, and an optional AI narrative verdict.
 - **Opponent Keeper Intelligence**: surfaces probable keeper choices for every team in the league, derived from each team's optimizer recommendations. Visible in Mock Draft setup as an expandable panel showing opponent teams, their likely-kept players (name, position, ADP round, confidence), and a position breakdown. Probable keepers are also injected into the AI strategy plan context so the plan accounts for players likely off the board before pick 1.
 - **End-of-Season Analysis Suite**: a four-screen system for closing the loop on keeper decisions each year.
-  - **Final Keepers**: admin records the official keeper list for each team after the deadline. Admins can pre-fill from optimizer recommendations, adjust per team, then click Finalize & Lock to publish to all members. Non-admin members see a read-only view.
+  - **Final Keepers**: league members self-finalize their own team's keeper picks from the Keeper Recommendations board by clicking Finalize Keepers (left of the Team Filter). Once submitted, a Submitted badge appears on their card in Final Keepers. Members can Unfinalize before the keeper deadline. If a member misses the deadline, the commissioner can open Final Keepers and click Finalize for Team on that card. The board is hidden from non-admin members until the Keeper Reveal Date. When all teams are set, the commissioner clicks Finalize & Lock to publish the official list and lock all selections. Finalization is irreversible except by a platform admin.
   - **Final Draft Board**: auto-generated snake draft grid derived from Final Keeper Selections. Forfeited picks are highlighted in red with the kept player's name and position. Available picks show by overall pick number, with columns fixed by draft slot.
   - **Season Analysis**: post-season decision quality report. Cross-references Final Keeper Selections, KeeperOutcomes, and Recommendations to categorize each player as Hit, Miss, Bust, Left on Table, Dodged, Below ADP, or Unknown. Shows league-level hit rate, bust rate, recommendation accuracy, and opportunity cost, with per-team expandable tables.
   - **Keeper History** (formerly Historical Keeper ROI Tracker): multi-year ROI tracking by season, team, and player. Admins import end-of-season outcomes via Sleeper auto-fetch (available to all leagues regardless of platform — no Sleeper account required) or CSV fallback. The Sleeper stats API cross-references keeper candidates by Sleeper player ID first, then by full name + NFL team composite.
@@ -933,22 +933,27 @@ league admins.
 
 ### Final Keepers
 
-Use `Final Keepers` after the keeper deadline to record each team's official selections and publish them to all league members.
+Use `Final Keepers` to track per-team submission status and publish the official keeper list to all league members.
 
-**Admin workflow:**
+**Member workflow (self-service):**
 
-1. Open `Final Keepers` from the sidebar.
-2. Click `Pre-fill from Recommendations` to load the optimizer's current recommendations as a starting point.
-3. For each team, add or remove players as needed. Each chip shows the player's name, position, and keeper cost round.
-4. Click `Save` per team to persist changes.
-5. When all teams are confirmed, click `Finalize & Lock` to publish the selections and lock them from further changes.
+1. Open `Keeper Recommendations` from the sidebar.
+2. Review your team's recommended keepers. Use manual overrides if needed, then rerun the optimizer.
+3. Click `Finalize Keepers` (to the left of the Team Filter in the table toolbar). Your recommended keepers are copied to the Final Keepers board and your card shows a green **Submitted** badge.
+4. If you need to change your mind, click `Unfinalize` — available until the keeper deadline passes.
+
+**Commissioner workflow:**
+
+1. Open `Final Keepers` from the sidebar. The board is visible to admins at any time; non-admin members cannot see it until the Keeper Reveal Date set in League Dates.
+2. Each team card shows their submitted keepers and a **Submitted** badge if they self-finalized.
+3. For any team that has not submitted by the deadline, click `Finalize for Team` to copy their current recommendations into their selections on their behalf.
+4. Optionally click `Pre-fill from Recommendations` to bulk-populate all teams at once, or edit individual team chips and click `Save` per team.
+5. When all teams are confirmed, click `Finalize & Lock` to publish the official list, lock all selections, and populate the Final Draft Board.
 
 Once finalized:
-- All league members see the confirmed selections in a read-only view with a green confirmation banner.
+- All league members see the confirmed selections in a read-only view with a green confirmation banner (after the reveal date).
 - The Final Draft Board is automatically populated with the forfeited picks.
 - Finalization is irreversible except by a platform admin via `unfinalize`.
-
-Non-admin members see a read-only display; no save or finalize buttons are shown.
 
 ### Final Draft Board
 
@@ -1220,6 +1225,8 @@ GET    /api/leagues/{league_id}/final-keepers/prefill
 PUT    /api/leagues/{league_id}/final-keepers/{team_id}
 POST   /api/leagues/{league_id}/final-keepers/finalize
 POST   /api/leagues/{league_id}/final-keepers/unfinalize
+POST   /api/leagues/{league_id}/teams/{team_id}/self-finalize-keepers
+POST   /api/leagues/{league_id}/teams/{team_id}/self-unfinalize-keepers
 
 GET    /api/leagues/{league_id}/draft-board
 GET    /api/leagues/{league_id}/season-analysis

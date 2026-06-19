@@ -2147,6 +2147,8 @@ export type FinalKeeperTeam = {
   draftSlot: number | null;
   keepers: FinalKeeperSelectionRow[];
   forfeitedPicks: ForfeitedPick[];
+  teamKeepersFinalized: boolean;
+  teamKeepersFinalizedAt: string | null;
 };
 
 export type FinalKeepersResult = {
@@ -2194,6 +2196,8 @@ function mapFinalKeeperTeam(row: ApiRow): FinalKeeperTeam {
       round: (p.round as number) ?? null,
       playerId: text(p.player_id),
     })),
+    teamKeepersFinalized: Boolean(row.team_keepers_finalized),
+    teamKeepersFinalizedAt: (row.team_keepers_finalized_at as string) ?? null,
   };
 }
 
@@ -2271,6 +2275,31 @@ export async function finalizeKeepers(
     isFinalized: Boolean(payload.is_finalized),
     finalizedAt: text(payload.finalized_at),
   };
+}
+
+export async function selfFinalizeTeamKeepers(
+  leagueId: string,
+  teamId: string,
+): Promise<{ teamKeepersFinalized: boolean; teamKeepersFinalizedAt: string | null }> {
+  const payload = await fetchJson<ApiRow>(
+    `/api/leagues/${leagueId}/teams/${teamId}/self-finalize-keepers`,
+    { method: "POST" },
+  );
+  return {
+    teamKeepersFinalized: Boolean(payload.team_keepers_finalized),
+    teamKeepersFinalizedAt: (payload.team_keepers_finalized_at as string) ?? null,
+  };
+}
+
+export async function selfUnfinalizeTeamKeepers(
+  leagueId: string,
+  teamId: string,
+): Promise<{ teamKeepersFinalized: boolean }> {
+  const payload = await fetchJson<ApiRow>(
+    `/api/leagues/${leagueId}/teams/${teamId}/self-unfinalize-keepers`,
+    { method: "POST" },
+  );
+  return { teamKeepersFinalized: Boolean(payload.team_keepers_finalized) };
 }
 
 // ── Draft Board ───────────────────────────────────────────────────────────────

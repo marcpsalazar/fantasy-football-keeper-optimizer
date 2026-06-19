@@ -190,6 +190,8 @@ import {
   getFinalKeepersPrefill,
   setTeamFinalKeepers,
   finalizeKeepers,
+  selfFinalizeTeamKeepers,
+  selfUnfinalizeTeamKeepers,
   type KeeperHistory,
   type KeeperOutcomesPreviewResult,
   type TeamKeeperHistory,
@@ -432,9 +434,9 @@ const screenGuides: ScreenGuide[] = [
   {
     title: "Keeper Recommendations",
     icon: Trophy,
-    bestFor: "The primary decision screen for finalizing keeper selections.",
-    howToRead: "Recommended means selected by the optimizer within the current limits. Eligible means good enough to keep but not selected because another player ranked higher or a team or position limit was already reached. Excluded means the player failed a threshold, was manually excluded, or did not appear on a final roster. The collapsible Value vs. Cost chart above the table plots each keeper candidate by cost (round forfeited, X-axis) and value (rounds saved vs. ADP, Y-axis). Player headshots appear in the dots; use the team selector on the right to focus on one or more teams. If the optimizer has run since you last loaded the page, a blue banner at the top shows exactly which players entered or left the Recommended set.",
-    watchFor: "Use manual overrides sparingly — Force Keep and Exclude are best for context the model cannot know, such as a player who has since retired or been traded. Changes here do not require a Save Settings click, but the override takes effect on the next Run Optimizer or the next time you load a Mock Draft session.",
+    bestFor: "The primary decision screen for reviewing keeper recommendations — and for league members to officially submit their own team's keepers.",
+    howToRead: "Recommended means selected by the optimizer. Eligible means qualified but not selected due to a limit. Excluded means failed a threshold or was manually removed. The collapsible Value vs. Cost chart plots each candidate by cost (round forfeited, X-axis) and value (rounds saved vs. ADP, Y-axis) — use the My Team shortcut above the team list to focus the chart on your own team, or check individual teams with the checkboxes. The Finalize Keepers button sits to the left of the Team Filter in the table toolbar: clicking it locks your team's recommended keepers into the Final Keepers board. Once finalized, the button changes to Unfinalize (available until the keeper deadline). A blue What Changed banner appears at the top after an optimizer re-run whenever the Recommended set shifts.",
+    watchFor: "Finalize Keepers submits the current Recommended keepers for your team — review them first. The Unfinalize option disappears after the keeper deadline, so submit before that date. Manual overrides (Force Keep and Exclude) are best for real-world context the model cannot know; they take effect on the next Run Optimizer.",
     view: "recommendations",
   },
   {
@@ -472,9 +474,9 @@ const screenGuides: ScreenGuide[] = [
   {
     title: "Final Keepers",
     icon: KeyRound,
-    bestFor: "Recording the official keeper list for each team and publishing it to all league members before the draft.",
-    howToRead: "Admins can pre-fill from optimizer recommendations as a starting point, then adjust per team before locking. Members see a read-only view once keepers are finalized. The forfeited picks summary at the bottom shows which draft rounds each team is giving up.",
-    watchFor: "Once finalized, keeper selections are locked and visible to all members. Finalization is irreversible except by a platform admin. Confirm all teams are correct before clicking Finalize & Lock.",
+    bestFor: "Tracking which teams have submitted their keeper picks and giving commissioners one place to review, fill in, and ultimately lock the official list.",
+    howToRead: "Each team card shows their keepers and a green Submitted badge when the team owner has self-finalized from the Recommendations board. The board is hidden from non-admin members until the Keeper Reveal Date set in Commissioner Tools — after that date all members can view it. Commissioners can click Finalize for Team on any card where the owner missed the deadline, which copies that team's current recommendations into their selections. When every team is accounted for, click Finalize & Lock to publish the official list league-wide and populate the Final Draft Board.",
+    watchFor: "The board is not visible to members until the reveal date — if members report they cannot see it, check the date in Commissioner Tools → League Dates. Finalize & Lock is irreversible except by a platform admin. Confirm all teams are correct before locking.",
     view: "final-keepers",
     adminOnly: false,
   },
@@ -536,7 +538,7 @@ const workflowSteps: WorkflowStep[] = [
   },
   {
     title: "Finalize keeper selections",
-    text: "Once the keeper deadline is set, open Final Keepers. Admins pre-fill from optimizer recommendations, adjust per team, then click Finalize & Lock to publish the official list to all members. The Final Draft Board auto-generates from those selections, showing every forfeited pick on the snake grid.",
+    text: "League members submit their own team's keepers directly from Keeper Recommendations: review the list, then click Finalize Keepers (left of the Team Filter). This locks your picks into the Final Keepers board and shows a Submitted badge for your team. Members can Unfinalize before the keeper deadline if they need to make changes. If a member misses the deadline, the commissioner can open Final Keepers and click Finalize for Team on that card. When all teams are set, the commissioner clicks Finalize & Lock to publish the official list and auto-generate the Final Draft Board.",
     view: "final-keepers",
   },
   {
@@ -6371,6 +6373,7 @@ type OptimizerSettingsPageProps = OptimizerSettingsForm;
 function KeeperRecommendationsPage() {
   const {
     activeLeagueId,
+    currentUser,
     data,
     exportRecommendations,
     isLeagueAdmin,
@@ -6382,6 +6385,61 @@ function KeeperRecommendationsPage() {
   const prevRecsRef = React.useRef<KeeperRecommendation[]>(data.keeperRecommendations);
   const [recDelta, setRecDelta] = React.useState<{ gained: string[]; lost: string[] } | null>(null);
   const [chartCollapsed, setChartCollapsed] = React.useState(false);
+
+  // Per-team self-finalization state
+  const myTeamId = currentUser?.teamId ?? null;
+  const [teamFinalized, setTeamFinalized] = React.useState<boolean | null>(null);
+  const [finalizeLoading, setFinalizeLoading] = React.useState(false);
+  const [finalizeError, setFinalizeError] = React.useState<string | null>(null);
+
+  // Load finalization status from getFinalKeepers when user has a team
+  React.useEffect(() => {
+    if (!activeLeagueId || !myTeamId) return;
+    getFinalKeepers(activeLeagueId)
+      .then((result) => {
+        const myTeam = result.teams.find((t) => t.teamId === myTeamId);
+        setTeamFinalized(myTeam?.teamKeepersFinalized ?? false);
+      })
+      .catch(() => {
+        // If forbidden (before reveal date), treat as not finalized
+        setTeamFinalized(false);
+      });
+  }, [activeLeagueId, myTeamId]);
+
+  const keeperDeadline = data.league?.keeperPickDeadline ?? null;
+  const pastDeadline = keeperDeadline ? new Date() > new Date(keeperDeadline + "T23:59:59") : false;
+
+  const handleSelfFinalize = async () => {
+    if (!activeLeagueId || !myTeamId) return;
+    setFinalizeLoading(true);
+    setFinalizeError(null);
+    try {
+      await selfFinalizeTeamKeepers(activeLeagueId, myTeamId);
+      setTeamFinalized(true);
+      toast.success("Your keepers have been finalized.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to finalize keepers.";
+      setFinalizeError(msg);
+    } finally {
+      setFinalizeLoading(false);
+    }
+  };
+
+  const handleSelfUnfinalize = async () => {
+    if (!activeLeagueId || !myTeamId) return;
+    setFinalizeLoading(true);
+    setFinalizeError(null);
+    try {
+      await selfUnfinalizeTeamKeepers(activeLeagueId, myTeamId);
+      setTeamFinalized(false);
+      toast.success("Your keeper selection has been reopened.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to unfinalize keepers.";
+      setFinalizeError(msg);
+    } finally {
+      setFinalizeLoading(false);
+    }
+  };
 
   React.useEffect(() => {
     const prev = prevRecsRef.current;
@@ -6485,9 +6543,37 @@ function KeeperRecommendationsPage() {
           </div>
         }
       >
+        {finalizeError && (
+          <p className="mb-3 text-sm text-red-600">{finalizeError}</p>
+        )}
         <KeeperRecommendationsTable
           data={data.keeperRecommendations}
           draftFormat={data.league?.draftFormat ?? "snake"}
+          finalizeButton={
+            myTeamId && teamFinalized !== null ? (
+              teamFinalized ? (
+                <Button
+                  className="h-8 gap-1.5 px-3 text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white border-0 shadow-sm"
+                  disabled={finalizeLoading || pastDeadline}
+                  onClick={handleSelfUnfinalize}
+                  title={pastDeadline ? "The keeper deadline has passed" : undefined}
+                >
+                  <RotateCcw className="size-3.5" />
+                  {finalizeLoading ? "Saving…" : "Unfinalize"}
+                </Button>
+              ) : (
+                <Button
+                  className="h-8 gap-1.5 px-3 text-xs font-semibold shadow-sm ring-2 ring-emerald-400 ring-offset-1"
+                  disabled={finalizeLoading || pastDeadline}
+                  onClick={handleSelfFinalize}
+                  title={pastDeadline ? "The keeper deadline has passed" : undefined}
+                >
+                  <CheckCircle2 className="size-3.5" />
+                  {finalizeLoading ? "Saving…" : "Finalize Keepers"}
+                </Button>
+              )
+            ) : undefined
+          }
           minimumKeeperValue={data.settings.minimumKeeperValue}
           onOverride={setManualOverrideNow}
           resetSignal={tableDisplayResetSignal}
@@ -7564,17 +7650,29 @@ const POSITION_CELL_BG: Record<string, string> = {
 // ── Final Keepers Page ────────────────────────────────────────────────────────
 
 function FinalKeepersPage() {
-  const { activeLeagueId, isLeagueAdmin } = useDashboard();
+  const { activeLeagueId, data: dashData, isLeagueAdmin } = useDashboard();
   const [result, setResult] = React.useState<FinalKeepersResult | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
   const [saving, setSaving] = React.useState<string | null>(null); // team_id being saved
   const [finalizing, setFinalizing] = React.useState(false);
+  const [commissionerFinalizing, setCommissionerFinalizing] = React.useState<string | null>(null);
   // Per-team draft state: teamId -> current keeper list being edited
   const [edits, setEdits] = React.useState<Record<string, FinalKeeperSelectionRow[]>>({});
 
+  // Reveal date gating: non-admins cannot see the board until reveal date
+  const keeperRevealDate = dashData.league?.keeperRevealDate ?? null;
+  const keeperPickDeadline = dashData.league?.keeperPickDeadline ?? null;
+  const revealDatePassed = keeperRevealDate
+    ? new Date() >= new Date(keeperRevealDate + "T00:00:00")
+    : true;
+  const canViewBoard = isLeagueAdmin || revealDatePassed;
+  const pastDeadline = keeperPickDeadline
+    ? new Date() > new Date(keeperPickDeadline + "T23:59:59")
+    : false;
+
   const load = React.useCallback(async () => {
-    if (!activeLeagueId) return;
+    if (!activeLeagueId || !canViewBoard) return;
     setLoading(true);
     setError("");
     try {
@@ -7589,7 +7687,7 @@ function FinalKeepersPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeLeagueId]);
+  }, [activeLeagueId, canViewBoard]);
 
   React.useEffect(() => { void load(); }, [load]);
 
@@ -7645,12 +7743,50 @@ function FinalKeepersPage() {
     }
   };
 
+  const handleCommissionerFinalizeTeam = async (teamId: string) => {
+    if (!activeLeagueId) return;
+    setCommissionerFinalizing(teamId);
+    try {
+      await selfFinalizeTeamKeepers(activeLeagueId, teamId);
+      await load();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to finalize team.";
+      setError(msg);
+    } finally {
+      setCommissionerFinalizing(null);
+    }
+  };
+
   const handleRemoveKeeper = (teamId: string, playerId: string) => {
     setEdits((prev) => ({
       ...prev,
       [teamId]: (prev[teamId] ?? []).filter((k) => k.playerId !== playerId),
     }));
   };
+
+  // Non-admins before reveal date: show gating message
+  if (!canViewBoard) {
+    const revealDisplay = keeperRevealDate
+      ? new Date(keeperRevealDate + "T00:00:00").toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        })
+      : "a date to be announced";
+    return (
+      <PagePanel title="Final Keepers" description="Confirmed keeper selections for the upcoming draft.">
+        <div className="flex flex-col items-center gap-3 py-10 text-center">
+          <Lock className="size-8 text-zinc-300" />
+          <p className="text-sm font-medium text-zinc-600">
+            The keeper reveal is on {revealDisplay}.
+          </p>
+          <p className="text-sm text-zinc-400">
+            Check back then to see all finalized keeper selections.
+          </p>
+        </div>
+      </PagePanel>
+    );
+  }
 
   if (loading) {
     return (
@@ -7730,17 +7866,37 @@ function FinalKeepersPage() {
                   {team.ownerName && (
                     <span className="text-sm text-zinc-500">{team.ownerName}</span>
                   )}
+                  {team.teamKeepersFinalized && (
+                    <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
+                      <CheckCircle2 className="size-3" />
+                      Submitted
+                    </span>
+                  )}
                 </div>
-                {canEdit && isDirty && (
-                  <Button
-                    disabled={saving === team.teamId}
-                    onClick={() => handleSaveTeam(team.teamId)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    {saving === team.teamId ? "Saving…" : "Save"}
-                  </Button>
-                )}
+                <div className="flex items-center gap-2">
+                  {/* Commissioner can finalize a team's keepers if they haven't submitted by deadline */}
+                  {isLeagueAdmin && !isFinalized && !team.teamKeepersFinalized && pastDeadline && (
+                    <Button
+                      disabled={commissionerFinalizing === team.teamId}
+                      onClick={() => handleCommissionerFinalizeTeam(team.teamId)}
+                      size="sm"
+                      variant="outline"
+                      title="This team has not submitted their keepers — finalize on their behalf"
+                    >
+                      {commissionerFinalizing === team.teamId ? "Finalizing…" : "Finalize for Team"}
+                    </Button>
+                  )}
+                  {canEdit && isDirty && (
+                    <Button
+                      disabled={saving === team.teamId}
+                      onClick={() => handleSaveTeam(team.teamId)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      {saving === team.teamId ? "Saving…" : "Save"}
+                    </Button>
+                  )}
+                </div>
               </div>
 
               {teamEdits.length === 0 ? (
@@ -11277,6 +11433,7 @@ function KeeperRecommendationsTable({
   data,
   compact = false,
   draftFormat = "snake",
+  finalizeButton,
   minimumKeeperValue = 1,
   onOverride,
   resetSignal,
@@ -11286,6 +11443,7 @@ function KeeperRecommendationsTable({
   data: KeeperRecommendation[];
   compact?: boolean;
   draftFormat?: string;
+  finalizeButton?: React.ReactNode;
   minimumKeeperValue?: number;
   onOverride?: (
     teamId: string | undefined,
@@ -11526,6 +11684,7 @@ function KeeperRecommendationsTable({
       <DataTable
         columns={visibleColumns}
         data={data}
+        leftToolbar={finalizeButton}
         resetSignal={resetSignal}
         scrollBody={!compact}
         tableId="keeper-recommendations"
@@ -13999,13 +14158,15 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
                 All
               </button>
               <span className="text-zinc-200 dark:text-zinc-600">|</span>
-              <button
-                onClick={() => setSelectedTeamKeys(new Set())}
-                className="hover:text-zinc-600 dark:hover:text-zinc-200"
-                type="button"
-              >
-                None
-              </button>
+              {userTeamKey && (
+                <button
+                  onClick={() => setSelectedTeamKeys(new Set([userTeamKey]))}
+                  className="hover:text-zinc-600 dark:hover:text-zinc-200"
+                  type="button"
+                >
+                  My Team
+                </button>
+              )}
             </div>
           </div>
           {/* Mobile: wrap chips; Desktop: scrollable vertical list */}

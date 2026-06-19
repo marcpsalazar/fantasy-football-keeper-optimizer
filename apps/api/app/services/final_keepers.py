@@ -9,7 +9,7 @@ starting point. Admins can add, remove, or adjust before locking.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 import uuid
 
@@ -64,6 +64,8 @@ def get_league_final_keepers(session: Session, league_id: uuid.UUID) -> dict[str
             "draft_slot": team.draft_slot,
             "keepers": keepers,
             "forfeited_picks": forfeited,
+            "team_keepers_finalized": team.team_keepers_finalized,
+            "team_keepers_finalized_at": team.team_keepers_finalized_at.isoformat() if team.team_keepers_finalized_at else None,
         })
 
     return {
@@ -234,6 +236,154 @@ def unfinalize_league_keepers(
     league.keepers_finalized_by_user_id = None
     session.add(league)
     session.commit()
+
+
+def self_finalize_team_keepers(
+    session: Session,
+    league_id: uuid.UUID,
+    team_id: uuid.UUID,
+    user_id: uuid.UUID,
+    is_league_admin: bool = False,
+) -> dict[str, Any]:
+    """Copy the team's recommended keepers to FinalKeeperSelection and mark the team as finalized.
+
+    The team owner can call this before the keeper deadline; league admins can always call it.
+    """
+    league = _require_league(session, league_id)
+
+    if league.keepers_finalized:
+        raise FinalKeeperError("League keepers are already finalized by the admin")
+
+    team = session.get(Team, team_id)
+    if team is None or team.league_id != league_id:
+        raise FinalKeeperError("Team not found in this league")
+
+    if not is_league_admin and team.user_id != user_id:
+        raise FinalKeeperError("You do not own this team")
+
+    if not is_league_admin and league.keeper_pick_deadline:
+        if date.today() > league.keeper_pick_deadline:
+            raise FinalKeeperError("The keeper deadline has passed")
+
+    if team.team_keepers_finalized:
+        raise FinalKeeperError("Team keepers are already finalized")
+
+    # Pull recommended keepers for this team (Default scenario, is_recommended only)
+    raw_recs = session.exec(
+        select(KeeperRecommendation).where(
+            KeeperRecommendation.league_id == league_id,
+            KeeperRecommendation.team_id == team_id,
+            KeeperRecommendation.scenario_name == "Default",
+            KeeperRecommendation.is_recommended == True,  # noqa: E712
+        )
+    ).all()
+
+    # Deduplicate by player_id, keeping the row with the highest keeper_score
+    seen: dict[uuid.UUID, KeeperRecommendation] = {}
+    for rec in raw_recs:
+        existing = seen.get(rec.player_id)
+        if existing is None or (rec.keeper_score or 0) > (existing.keeper_score or 0):
+            seen[rec.player_id] = rec
+    recs = list(seen.values())
+
+    # Respect max_keepers; take top by score if over the limit
+    if len(recs) > league.max_keepers:
+        recs = sorted(recs, key=lambda r: -(r.keeper_score or 0))[: league.max_keepers]
+
+    # Replace any existing selections for this team
+    existing = session.exec(
+        select(FinalKeeperSelection).where(
+            FinalKeeperSelection.league_id == league_id,
+            FinalKeeperSelection.team_id == team_id,
+            FinalKeeperSelection.season_year == league.season_year,
+        )
+    ).all()
+    for row in existing:
+        session.delete(row)
+    session.flush()
+
+    player_ids = [r.player_id for r in recs]
+    players = (
+        {p.id: p for p in session.exec(select(Player).where(Player.id.in_(player_ids))).all()}
+        if player_ids
+        else {}
+    )
+
+    new_rows: list[FinalKeeperSelection] = []
+    for rec in recs:
+        if rec.player_id not in players:
+            continue
+        row = FinalKeeperSelection(
+            league_id=league_id,
+            team_id=team_id,
+            player_id=rec.player_id,
+            season_year=league.season_year,
+            cost_pick=rec.keeper_cost_pick,
+            cost_round=rec.keeper_cost_round,
+        )
+        session.add(row)
+        new_rows.append(row)
+
+    team.team_keepers_finalized = True
+    team.team_keepers_finalized_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    team.team_keepers_finalized_by_user_id = user_id
+    session.add(team)
+    session.commit()
+
+    return {
+        "team_keepers_finalized": True,
+        "team_keepers_finalized_at": team.team_keepers_finalized_at.isoformat(),
+        "keepers": [_selection_row(r, players) for r in new_rows],
+    }
+
+
+def self_unfinalize_team_keepers(
+    session: Session,
+    league_id: uuid.UUID,
+    team_id: uuid.UUID,
+    user_id: uuid.UUID,
+    is_league_admin: bool = False,
+) -> dict[str, Any]:
+    """Remove a team's final keeper selections and clear their self-finalized status.
+
+    The team owner can unfinalize before the keeper deadline; league admins can always do it.
+    """
+    league = _require_league(session, league_id)
+
+    if league.keepers_finalized:
+        raise FinalKeeperError("League keepers are already admin-locked and cannot be changed")
+
+    team = session.get(Team, team_id)
+    if team is None or team.league_id != league_id:
+        raise FinalKeeperError("Team not found in this league")
+
+    if not is_league_admin and team.user_id != user_id:
+        raise FinalKeeperError("You do not own this team")
+
+    if not is_league_admin and league.keeper_pick_deadline:
+        if date.today() > league.keeper_pick_deadline:
+            raise FinalKeeperError("The keeper deadline has passed; contact your commissioner to make changes")
+
+    if not team.team_keepers_finalized:
+        raise FinalKeeperError("Team keepers are not finalized")
+
+    existing = session.exec(
+        select(FinalKeeperSelection).where(
+            FinalKeeperSelection.league_id == league_id,
+            FinalKeeperSelection.team_id == team_id,
+            FinalKeeperSelection.season_year == league.season_year,
+        )
+    ).all()
+    for row in existing:
+        session.delete(row)
+
+    team.team_keepers_finalized = False
+    team.team_keepers_finalized_at = None
+    team.team_keepers_finalized_by_user_id = None
+    session.add(team)
+    session.commit()
+
+    return {"team_keepers_finalized": False}
 
 
 # ---------------------------------------------------------------------------

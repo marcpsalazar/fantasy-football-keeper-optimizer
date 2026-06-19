@@ -3018,7 +3018,13 @@ def get_final_keepers(
     user: User = Depends(require_current_user),
     session: Session = Depends(get_session),
 ) -> dict:
-    _require_league(session, league_id)
+    league = _require_league(session, league_id)
+    if not _is_league_admin(session, user, league_id):
+        if league.keeper_reveal_date and date.today() < league.keeper_reveal_date:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Final keepers are not revealed until {league.keeper_reveal_date.isoformat()}",
+            )
     return final_keepers_svc.get_league_final_keepers(session, league_id)
 
 
@@ -3092,6 +3098,42 @@ def unfinalize_keepers(
     except FinalKeeperError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     return {"is_finalized": False}
+
+
+@router.post("/leagues/{league_id}/teams/{team_id}/self-finalize-keepers")
+def self_finalize_team_keepers(
+    league_id: uuid.UUID,
+    team_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Team owner (or league admin on their behalf) finalizes their keeper selections."""
+    _require_league(session, league_id)
+    is_admin = _is_league_admin(session, user, league_id)
+    try:
+        return final_keepers_svc.self_finalize_team_keepers(
+            session, league_id, team_id, user.id, is_league_admin=is_admin
+        )
+    except FinalKeeperError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+
+@router.post("/leagues/{league_id}/teams/{team_id}/self-unfinalize-keepers")
+def self_unfinalize_team_keepers(
+    league_id: uuid.UUID,
+    team_id: uuid.UUID,
+    user: User = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Team owner unfinalizes their keepers (before deadline). League admin can do this anytime."""
+    _require_league(session, league_id)
+    is_admin = _is_league_admin(session, user, league_id)
+    try:
+        return final_keepers_svc.self_unfinalize_team_keepers(
+            session, league_id, team_id, user.id, is_league_admin=is_admin
+        )
+    except FinalKeeperError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
 
 @router.get("/leagues/{league_id}/draft-board")

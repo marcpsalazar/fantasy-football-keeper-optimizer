@@ -29,6 +29,7 @@ type DataTableProps<TData> = {
   data: TData[];
   emptyLabel?: string;
   fixedLayout?: boolean;
+  leftToolbar?: React.ReactNode;
   resetSignal?: number;
   scrollBody?: boolean;
   scrollBodyClassName?: string;
@@ -56,6 +57,7 @@ export function DataTable<TData>({
   data,
   emptyLabel = "No rows",
   fixedLayout = false,
+  leftToolbar,
   resetSignal = 0,
   scrollBody = false,
   scrollBodyClassName,
@@ -188,7 +190,9 @@ export function DataTable<TData>({
                   : "Showing all teams"}
               </p>
             </div>
-            <div className="relative shrink-0" ref={teamFilterRef}>
+            <div className="flex shrink-0 items-center gap-2">
+              {leftToolbar}
+            <div className="relative" ref={teamFilterRef}>
               <Button
                 className="h-8 gap-2 px-3 text-xs"
                 onClick={() => setIsTeamFilterOpen((current) => !current)}
@@ -266,6 +270,7 @@ export function DataTable<TData>({
                   </div>
                 </div>
               ) : null}
+            </div>
             </div>
           </div>
         </div>

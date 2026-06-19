@@ -87,6 +87,9 @@ class Team(TimestampMixin, table=True):
     name: str = Field(index=True, max_length=120)
     owner_name: str | None = Field(default=None, max_length=120)
     draft_slot: int | None = Field(default=None, index=True)
+    team_keepers_finalized: bool = Field(default=False)
+    team_keepers_finalized_at: datetime | None = Field(default=None)
+    team_keepers_finalized_by_user_id: uuid.UUID | None = Field(default=None)
 
     league: "League" = Relationship(back_populates="teams")
     user: "User" = Relationship(back_populates="teams")
