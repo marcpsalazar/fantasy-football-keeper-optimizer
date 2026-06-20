@@ -106,13 +106,18 @@ import {
   importCompositeAdpSnapshot,
   importCsv,
   getCurrentUser,
+  getUserLeagueMemberships,
+  adminListLeagues,
   listAdminUsers,
+  listLeagueTeams,
   listMyLeagues,
+  setUserLeagueTeam,
   listMockDrafts,
   loadWorkspaceData,
   loadScenarioSelections,
   login,
   logout,
+  register,
   mockWorkspaceData,
   fetchMockDraftPickRecommendation,
   makeMockDraftBotPick,
@@ -151,7 +156,10 @@ import {
   uploadLeagueAvatar,
   upsertLeagueMembership,
   updateTeam,
+  type AdminLeague,
   type AdminUser,
+  type LeagueTeam,
+  type UserLeagueMembership,
   type TeamForm,
   type AuthUser,
   type ComplianceResult,
@@ -293,7 +301,7 @@ const navItems: NavItem[] = [
   { id: "rosters", label: "Final Rosters", icon: ListChecks },
   { id: "settings", label: "Optimizer Settings", icon: SlidersHorizontal },
   { id: "commissioner-tools", label: "Commissioner Tools", icon: Wrench, adminOnly: true },
-  { id: "admin", label: "Admin", icon: ShieldCheck, platformAdminOnly: true },
+  { id: "admin", label: "Platform Admin", icon: ShieldCheck, platformAdminOnly: true },
 ];
 
 const navGroups: { label: string | null; ids: ViewId[] }[] = [
@@ -415,11 +423,11 @@ const screenGuides: ScreenGuide[] = [
     view: "rosters",
   },
   {
-    title: "Admin",
+    title: "Platform Admin",
     icon: ShieldCheck,
-    bestFor: "Platform-admin-only controls: AI token usage monitoring and ADP snapshot management.",
-    howToRead: "AI Usage shows token consumption, request counts, and estimated cost by feature for the current month — use this to track spending when AI features are enabled. ADP Input lets you build and import a composite ADP board or paste a custom CSV snapshot directly.",
-    watchFor: "This menu is only visible to platform admins. AI Usage is read-only; to change AI behavior, update the feature flags in the API environment variables. Always run the optimizer after importing a new ADP snapshot.",
+    bestFor: "Platform-admin-only controls: AI token usage monitoring, ADP snapshot management, user management, and league management.",
+    howToRead: "AI Usage shows token consumption, request counts, and estimated cost by feature for the current month — use this to track spending when AI features are enabled. ADP Input lets you build and import a composite ADP board or paste a custom CSV snapshot directly. User Management creates and manages platform accounts and per-league memberships. League Management lists every league on the platform — expand any row to see its members and their roles, or delete a league using the danger-indicated Delete button.",
+    watchFor: "This menu is only visible to platform admins. AI Usage is read-only; to change AI behavior, update the feature flags in the API environment variables. Always run the optimizer after importing a new ADP snapshot. League deletion is permanent and cascades to all associated data — confirm the correct league before proceeding.",
     view: "admin",
     adminOnly: true,
   },
@@ -493,7 +501,7 @@ const screenGuides: ScreenGuide[] = [
     icon: BarChart2,
     bestFor: "Post-season review of keeper decision quality — who hit, who busted, what value was left on the table, and how well the optimizer's recommendations performed.",
     howToRead: "League summary cards show hit rate, bust rate, left-on-table count, and recommendation accuracy. Expand a team card to see every keeper decision categorized as Hit, Miss, Bust, Left on Table, Dodged, or Below ADP, with finish rank and fantasy points alongside the original ADP projection.",
-    watchFor: "Requires season outcomes to be imported first. Ask a league admin to run Sleeper auto-fetch or upload a CSV from Commissioner Tools → League Data Imports. Analysis is only meaningful once FinalKeeperSelections are recorded — without them, the Hit/Miss/Left on Table distinction cannot be made.",
+    watchFor: "Requires season outcomes to be imported first. Ask a league commissioner to run Sleeper auto-fetch or upload a CSV from Commissioner Tools → League Data Imports. Analysis is only meaningful once FinalKeeperSelections are recorded — without them, the Hit/Miss/Left on Table distinction cannot be made.",
     view: "season-analysis",
   },
   {
@@ -507,7 +515,7 @@ const screenGuides: ScreenGuide[] = [
   {
     title: "Commissioner Tools",
     icon: Wrench,
-    bestFor: "All league admin tasks: managing teams, members, imports, league settings, keeper rules, compliance, reveal, reminders, and bulk export.",
+    bestFor: "All league commissioner tasks: managing teams, members, imports, league settings, keeper rules, compliance, reveal, reminders, and bulk export.",
     howToRead: "League Management, Draft Format, League Settings, League Data Imports (Sleeper / Yahoo / ESPN / CSV), League Members, Keeper Rules, and Keeper Tenure are all here. Below those, Commissioner Dates sets deadlines and reveal date, Compliance Checker verifies every team is within limits, Keeper Reveal controls member visibility, Reminder Emails sends deadline notices, and Bulk Export bundles all keeper card PNGs into a ZIP.",
     watchFor: "Run the optimizer after any import so the compliance checker has fresh data. Always preview imports before committing. Set the reveal date before finalization so the keeper reveal works as expected. SMTP credentials must be configured on the server before email sending is enabled.",
     view: "commissioner-tools",
@@ -719,7 +727,7 @@ const glossaryTerms: GlossaryTerm[] = [
   },
 ];
 
-type ApiStatus = "loading" | "live" | "mock" | "error";
+type ApiStatus = "loading" | "live" | "mock" | "no-league" | "error";
 type TeamScenarioSelection = Record<string, ScenarioComparison["scenarioName"]>;
 
 type DashboardContextValue = {
@@ -796,6 +804,7 @@ export function DashboardApp() {
   const [workspace, setWorkspace] = React.useState<WorkspaceData>(mockWorkspaceData);
   const [apiStatus, setApiStatus] = React.useState<ApiStatus>("loading");
   const [currentUser, setCurrentUser] = React.useState<AuthUser | null>(null);
+  const currentUserRef = React.useRef<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = React.useState(false);
   const [authRequired, setAuthRequired] = React.useState(false);
   const [isBusy, setIsBusy] = React.useState(false);
@@ -816,6 +825,9 @@ export function DashboardApp() {
   const [tableDisplayResetSignal, setTableDisplayResetSignal] = React.useState(0);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
   const userMenuRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
   React.useEffect(() => {
     if (!userMenuOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
@@ -923,6 +935,11 @@ export function DashboardApp() {
       ]);
       setUserLeagues(leagues);
       if (!loaded) {
+        const user = currentUserRef.current;
+        if (user && user.role !== "platform_admin") {
+          setApiStatus("no-league");
+          return;
+        }
         setWorkspace(mockWorkspaceData);
         setSettings(mockWorkspaceData.settings);
         setApiStatus("mock");
@@ -998,9 +1015,27 @@ export function DashboardApp() {
       try {
         const user = await login(email, password);
         setCurrentUser(user);
+        currentUserRef.current = user;
         setAuthRequired(false);
         await refreshData();
         toast.success(`Signed in as ${user.email}.`);
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [refreshData],
+  );
+
+  const registerNow = React.useCallback(
+    async (email: string, password: string, alias?: string) => {
+      setIsBusy(true);
+      try {
+        const user = await register(email, password, alias);
+        setCurrentUser(user);
+        currentUserRef.current = user;
+        setAuthRequired(false);
+        await refreshData();
+        toast.success(`Account created. Welcome!`);
       } finally {
         setIsBusy(false);
       }
@@ -1633,7 +1668,11 @@ export function DashboardApp() {
   }
 
   if (authRequired && !currentUser) {
-    return <LoginScreen isBusy={isBusy} onLogin={loginNow} />;
+    return <LoginScreen isBusy={isBusy} onLogin={loginNow} onRegister={registerNow} />;
+  }
+
+  if (currentUser && apiStatus === "no-league") {
+    return <NoLeagueScreen user={currentUser} onLogout={logoutNow} />;
   }
 
   return (
@@ -1821,7 +1860,7 @@ export function DashboardApp() {
                               ) : null}
                               {activeLeagueMembership ? (
                                 <Badge variant={isLeagueAdmin ? "success" : "info"}>
-                                  {isLeagueAdmin ? "League Admin" : "Member"}
+                                  {isLeagueAdmin ? "League Commissioner" : "Member"}
                                 </Badge>
                               ) : null}
                             </div>
@@ -1874,7 +1913,7 @@ export function DashboardApp() {
                                       <span className="ml-1 font-normal text-zinc-500">{league.seasonYear}</span>
                                     </p>
                                     <p className="text-[11px] text-zinc-400">
-                                      {league.leagueRole === "league_admin" ? "League Admin" : "Member"}
+                                      {league.leagueRole === "league_admin" ? "League Commissioner" : "Member"}
                                     </p>
                                   </div>
                                   {isActive ? (
@@ -2173,13 +2212,124 @@ function AuthShell({ status, title }: { status: string; title: string }) {
 function LoginScreen({
   isBusy,
   onLogin,
+  onRegister,
 }: {
   isBusy: boolean;
   onLogin: (email: string, password: string) => Promise<void>;
+  onRegister: (email: string, password: string, alias?: string) => Promise<void>;
 }) {
+  const [mode, setMode] = React.useState<"login" | "register">("login");
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [confirmPassword, setConfirmPassword] = React.useState("");
+  const [alias, setAlias] = React.useState("");
   const [error, setError] = React.useState("");
+
+  function reset() {
+    setEmail("");
+    setPassword("");
+    setConfirmPassword("");
+    setAlias("");
+    setError("");
+  }
+
+  if (mode === "register") {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f6f5f1] px-4 text-zinc-950 dark:bg-[#0f0f12] dark:text-zinc-50">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Create Account</CardTitle>
+            <CardDescription>Register to join a keeper league.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form
+              className="space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                setError("");
+                if (password !== confirmPassword) {
+                  setError("Passwords do not match.");
+                  return;
+                }
+                if (password.length < 8) {
+                  setError("Password must be at least 8 characters.");
+                  return;
+                }
+                void onRegister(email, password, alias || undefined).catch((err: unknown) => {
+                  const msg = err instanceof Error ? err.message : "";
+                  if (msg.includes("409") || msg.toLowerCase().includes("already")) {
+                    setError("An account with that email already exists.");
+                  } else {
+                    setError("Registration failed. Please try again.");
+                  }
+                });
+              }}
+            >
+              <div className="space-y-2">
+                <Label htmlFor="reg-email">Email</Label>
+                <Input
+                  autoComplete="email"
+                  id="reg-email"
+                  onChange={(event) => setEmail(event.target.value)}
+                  type="email"
+                  value={email}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reg-alias">Display name (optional)</Label>
+                <Input
+                  autoComplete="nickname"
+                  id="reg-alias"
+                  onChange={(event) => setAlias(event.target.value)}
+                  placeholder="How you'll appear in the app"
+                  type="text"
+                  value={alias}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reg-password">Password</Label>
+                <Input
+                  autoComplete="new-password"
+                  id="reg-password"
+                  onChange={(event) => setPassword(event.target.value)}
+                  type="password"
+                  value={password}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reg-confirm">Confirm password</Label>
+                <Input
+                  autoComplete="new-password"
+                  id="reg-confirm"
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  type="password"
+                  value={confirmPassword}
+                />
+              </div>
+              {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+              <Button
+                className="w-full"
+                disabled={isBusy || !email || !password || !confirmPassword}
+                type="submit"
+              >
+                Create Account
+              </Button>
+            </form>
+            <p className="mt-4 text-center text-sm text-zinc-500">
+              Already have an account?{" "}
+              <button
+                className="font-medium text-emerald-700 hover:underline dark:text-emerald-400"
+                onClick={() => { reset(); setMode("login"); }}
+                type="button"
+              >
+                Sign in
+              </button>
+            </p>
+          </CardContent>
+        </Card>
+      </main>
+    );
+  }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f6f5f1] px-4 text-zinc-950 dark:bg-[#0f0f12] dark:text-zinc-50">
@@ -2224,6 +2374,37 @@ function LoginScreen({
               Sign In
             </Button>
           </form>
+          <p className="mt-4 text-center text-sm text-zinc-500">
+            Don&apos;t have an account?{" "}
+            <button
+              className="font-medium text-emerald-700 hover:underline dark:text-emerald-400"
+              onClick={() => { reset(); setMode("register"); }}
+              type="button"
+            >
+              Create one
+            </button>
+          </p>
+        </CardContent>
+      </Card>
+    </main>
+  );
+}
+
+function NoLeagueScreen({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#f6f5f1] px-4 text-zinc-950 dark:bg-[#0f0f12] dark:text-zinc-50">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Welcome!</CardTitle>
+          <CardDescription>
+            You&apos;re signed in as <strong>{user.alias ?? user.email}</strong> but haven&apos;t
+            been added to a league yet. Ask your commissioner to add you.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" className="w-full" onClick={onLogout}>
+            Sign Out
+          </Button>
         </CardContent>
       </Card>
     </main>
@@ -3583,6 +3764,195 @@ function AdminPage({
         </div>
       </div>
       <ADPInputPage csvText={adpCsvText} setCsvText={setAdpCsvText} />
+
+      <div className="flex items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+          <Users className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-zinc-950">User Management</h2>
+          <p className="mt-1 text-sm text-zinc-600">
+            Create and manage platform accounts and league memberships.
+          </p>
+        </div>
+      </div>
+      <UserManagementPanel />
+
+      <div className="flex items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+          <ShieldCheck className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-zinc-950">League Management</h2>
+          <p className="mt-1 text-sm text-zinc-600">
+            View all leagues, their details, members, and delete leagues if needed.
+          </p>
+        </div>
+      </div>
+      <AllLeaguesPanel />
+    </div>
+  );
+}
+
+function AllLeaguesPanel() {
+  const [leagues, setLeagues] = React.useState<AdminLeague[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [expandedId, setExpandedId] = React.useState<string | null>(null);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setLoading(true);
+    adminListLeagues()
+      .then(setLeagues)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load leagues."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleDelete = React.useCallback(async (leagueId: string) => {
+    setDeletingId(leagueId);
+    try {
+      await deleteLeague(leagueId);
+      setLeagues((prev) => prev.filter((lg) => lg.id !== leagueId));
+      setConfirmDeleteId(null);
+      toast.success("League deleted.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed.");
+    } finally {
+      setDeletingId(null);
+    }
+  }, []);
+
+  if (loading) {
+    return <p className="text-sm text-zinc-500">Loading leagues...</p>;
+  }
+
+  if (error) {
+    return <p className="text-sm text-rose-700">{error}</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {leagues.length === 0 && (
+        <p className="text-sm text-zinc-500">No leagues found.</p>
+      )}
+      {leagues.map((lg) => {
+        const isExpanded = expandedId === lg.id;
+        const isConfirming = confirmDeleteId === lg.id;
+        const isDeleting = deletingId === lg.id;
+        return (
+          <Card key={lg.id} className="border border-zinc-200">
+            <CardHeader className="pb-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <CardTitle className="text-base">{lg.name}</CardTitle>
+                    <Badge variant="default" className="text-xs font-normal">
+                      {lg.seasonYear}
+                    </Badge>
+                    {lg.keepersFinalized && (
+                      <Badge className="text-xs bg-emerald-100 text-emerald-800 border-emerald-200">
+                        Finalized
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-zinc-500">
+                    <span className="capitalize">{lg.scoringFormat.replace(/_/g, " ")}</span>
+                    <span className="capitalize">{lg.draftType} draft</span>
+                    <span>{lg.teamCount} team{lg.teamCount !== 1 ? "s" : ""}</span>
+                    <span>{lg.memberCount} member{lg.memberCount !== 1 ? "s" : ""}</span>
+                    {lg.keeperPickDeadline && (
+                      <span>Deadline: {lg.keeperPickDeadline}</span>
+                    )}
+                    {lg.createdAt && (
+                      <span>Created: {lg.createdAt.slice(0, 10)}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs text-zinc-600"
+                    onClick={() => setExpandedId(isExpanded ? null : lg.id)}
+                  >
+                    {isExpanded ? "Hide members" : `Members (${lg.memberCount})`}
+                  </Button>
+                  {!isConfirming ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs text-rose-700 border-rose-300 hover:bg-rose-50 hover:text-rose-800"
+                      onClick={() => setConfirmDeleteId(lg.id)}
+                    >
+                      <Trash2 className="size-3.5 mr-1" aria-hidden="true" />
+                      Delete
+                    </Button>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-rose-700 font-medium">Confirm?</span>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="text-xs h-7 px-2"
+                        disabled={isDeleting}
+                        onClick={() => handleDelete(lg.id)}
+                      >
+                        {isDeleting ? "Deleting…" : "Yes, delete"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-xs h-7 px-2"
+                        onClick={() => setConfirmDeleteId(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardHeader>
+            {isExpanded && (
+              <CardContent className="pt-0">
+                {lg.members.length === 0 ? (
+                  <p className="text-xs text-zinc-400 italic">No members.</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-zinc-100">
+                        <th className="py-1.5 text-left text-xs font-medium text-zinc-500">Email</th>
+                        <th className="py-1.5 text-left text-xs font-medium text-zinc-500">Alias</th>
+                        <th className="py-1.5 text-left text-xs font-medium text-zinc-500">Role</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lg.members.map((m) => (
+                        <tr key={m.userId} className="border-b border-zinc-50 last:border-0">
+                          <td className="py-1.5 text-xs text-zinc-700">{m.email ?? "—"}</td>
+                          <td className="py-1.5 text-xs text-zinc-700">{m.alias ?? "—"}</td>
+                          <td className="py-1.5 text-xs">
+                            {m.role === "league_admin" ? (
+                              <Badge className="text-[10px] py-0 bg-amber-100 text-amber-800 border-amber-200">
+                                Commissioner
+                              </Badge>
+                            ) : (
+                              <Badge variant="default" className="text-[10px] py-0">
+                                Member
+                              </Badge>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </CardContent>
+            )}
+          </Card>
+        );
+      })}
     </div>
   );
 }
@@ -3680,7 +4050,7 @@ function LeagueMembersPanel() {
                       </td>
                       <td className="py-2 pr-4">
                         <Badge variant={member.role === "league_admin" ? "success" : "info"}>
-                          {member.role === "league_admin" ? "League Admin" : "Member"}
+                          {member.role === "league_admin" ? "League Commissioner" : "Member"}
                         </Badge>
                       </td>
                       <td className="py-2">
@@ -3775,7 +4145,7 @@ function LeagueMembersPanel() {
                     onChange={(e) => setAddRole(e.target.value as "league_admin" | "member")}
                   >
                     <option value="member">Member</option>
-                    <option value="league_admin">League Admin</option>
+                    <option value="league_admin">League Commissioner</option>
                   </select>
                 </div>
               </div>
@@ -4572,6 +4942,188 @@ const emptyUserForm: UserForm = {
   teamId: null,
 };
 
+function UserLeagueMembershipsSection({ userId }: { userId: string }) {
+  const { isBusy, removeLeagueMemberNow, updateLeagueMemberRoleNow, upsertLeagueMemberNow } = useDashboard();
+  const [allLeagues, setAllLeagues] = React.useState<LeagueWithRole[]>([]);
+  const [memberships, setMemberships] = React.useState<UserLeagueMembership[]>([]);
+  const [teamsByLeague, setTeamsByLeague] = React.useState<Record<string, LeagueTeam[]>>({});
+  const [pendingLeagueId, setPendingLeagueId] = React.useState("");
+  const [pendingRole, setPendingRole] = React.useState<"league_admin" | "member">("member");
+  const [busy, setBusy] = React.useState(false);
+
+  const load = React.useCallback(async () => {
+    const [leagues, mems] = await Promise.all([
+      listMyLeagues().catch(() => [] as LeagueWithRole[]),
+      getUserLeagueMemberships(userId).catch(() => [] as UserLeagueMembership[]),
+    ]);
+    setAllLeagues(leagues);
+    setMemberships(mems);
+    if (mems.length > 0) {
+      const teamResults = await Promise.all(
+        mems.map((m) => listLeagueTeams(m.leagueId).catch(() => [] as LeagueTeam[])),
+      );
+      const map: Record<string, LeagueTeam[]> = {};
+      mems.forEach((m, i) => { map[m.leagueId] = teamResults[i]; });
+      setTeamsByLeague(map);
+    }
+  }, [userId]);
+
+  React.useEffect(() => {
+    void load();
+  }, [load]);
+
+  const membershipMap = React.useMemo(
+    () => new Map(memberships.map((m) => [m.leagueId, m])),
+    [memberships],
+  );
+
+  const addToLeague = async () => {
+    if (!pendingLeagueId) return;
+    setBusy(true);
+    try {
+      await upsertLeagueMemberNow(pendingLeagueId, userId, pendingRole);
+      await load();
+      setPendingLeagueId("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeFromLeague = async (leagueId: string) => {
+    setBusy(true);
+    try {
+      await removeLeagueMemberNow(leagueId, userId);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeRole = async (leagueId: string, role: "league_admin" | "member") => {
+    setBusy(true);
+    try {
+      await updateLeagueMemberRoleNow(leagueId, userId, role);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeTeam = async (leagueId: string, teamId: string) => {
+    setBusy(true);
+    try {
+      await setUserLeagueTeam(userId, leagueId, teamId || null);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const nonMemberLeagues = allLeagues.filter((l) => !membershipMap.has(l.id));
+
+  return (
+    <div className="space-y-3 border-t border-zinc-200 pt-4">
+      <p className="text-sm font-medium text-zinc-700">League Memberships</p>
+
+      {memberships.length === 0 ? (
+        <p className="text-sm text-zinc-400">Not a member of any league.</p>
+      ) : (
+        <div className="space-y-3">
+          {memberships.map((m) => {
+            const leagueTeams = teamsByLeague[m.leagueId] ?? [];
+            return (
+              <div
+                key={m.leagueId}
+                className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm space-y-2"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 min-w-0 truncate font-medium">
+                    {m.leagueName}
+                    {m.seasonYear ? (
+                      <span className="ml-1 font-normal text-zinc-400">{m.seasonYear}</span>
+                    ) : null}
+                  </span>
+                  <select
+                    className="h-7 rounded border border-zinc-300 bg-white px-2 text-xs text-zinc-950 outline-none focus:border-emerald-600"
+                    disabled={busy || isBusy}
+                    onChange={(e) =>
+                      void changeRole(m.leagueId, e.target.value as "league_admin" | "member")
+                    }
+                    value={m.role}
+                  >
+                    <option value="member">Member</option>
+                    <option value="league_admin">League Commissioner</option>
+                  </select>
+                  <Button
+                    disabled={busy || isBusy}
+                    onClick={() => void removeFromLeague(m.leagueId)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <Trash2 className="size-3" aria-hidden="true" />
+                  </Button>
+                </div>
+                {leagueTeams.length > 0 && (
+                  <div className="flex items-center gap-2 pl-0.5">
+                    <span className="text-xs text-zinc-500 shrink-0">Team</span>
+                    <select
+                      className="h-7 flex-1 rounded border border-zinc-300 bg-white px-2 text-xs text-zinc-950 outline-none focus:border-emerald-600"
+                      disabled={busy || isBusy}
+                      onChange={(e) => void changeTeam(m.leagueId, e.target.value)}
+                      value={m.teamId ?? ""}
+                    >
+                      <option value="">Unassigned</option>
+                      {leagueTeams.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <select
+          className="h-9 flex-1 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+          disabled={busy || isBusy || nonMemberLeagues.length === 0}
+          onChange={(e) => setPendingLeagueId(e.target.value)}
+          value={pendingLeagueId}
+        >
+          <option value="">
+            {nonMemberLeagues.length === 0 ? "No more leagues to add" : "Add to a league…"}
+          </option>
+          {nonMemberLeagues.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}{l.seasonYear ? ` (${l.seasonYear})` : ""}
+            </option>
+          ))}
+        </select>
+        <select
+          className="h-9 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+          disabled={busy || isBusy || nonMemberLeagues.length === 0}
+          onChange={(e) => setPendingRole(e.target.value as "league_admin" | "member")}
+          value={pendingRole}
+        >
+          <option value="member">Member</option>
+          <option value="league_admin">League Commissioner</option>
+        </select>
+        <Button
+          disabled={busy || isBusy || !pendingLeagueId}
+          onClick={() => void addToLeague()}
+          size="sm"
+          type="button"
+        >
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function UserManagementPanel() {
   const {
     createUserNow,
@@ -4663,18 +5215,19 @@ function UserManagementPanel() {
         cell: ({ getValue }) => <Badge variant={getValue<string>() === "admin" ? "success" : "info"}>{getValue<string>()}</Badge>,
       },
       {
-        accessorKey: "teamName",
-        header: "Assigned Team",
-        cell: ({ row }) =>
-          row.original.teamName ? (
-            <TeamNameMark
-              name={row.original.teamName}
-              teamId={row.original.teamId}
-              user={currentUser}
-            />
-          ) : (
-            "Unassigned"
-          ),
+        id: "leagues",
+        header: "Leagues",
+        cell: ({ row }) => {
+          const ls = row.original.leagues;
+          if (!ls || ls.length === 0) return <span className="text-zinc-400">None</span>;
+          return (
+            <div className="flex flex-wrap gap-1">
+              {ls.map((l) => (
+                <Badge key={l.leagueId} variant="info">{l.leagueName}</Badge>
+              ))}
+            </div>
+          );
+        },
       },
       {
         accessorKey: "isActive",
@@ -4778,24 +5331,6 @@ function UserManagementPanel() {
                 value={form.alias}
               />
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="user-team">Assigned Team</Label>
-              <select
-                className="h-10 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none transition-colors focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-                id="user-team"
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, teamId: event.target.value || null }))
-                }
-                value={form.teamId ?? ""}
-              >
-                <option value="">Unassigned</option>
-                {data.teams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.name}
-                  </option>
-                ))}
-              </select>
-            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="user-role">Role</Label>
@@ -4840,6 +5375,7 @@ function UserManagementPanel() {
               ) : null}
             </div>
           </form>
+          {editingUserId ? <UserLeagueMembershipsSection userId={editingUserId} /> : null}
         </CardContent>
       </Card>
 
@@ -8028,7 +8564,7 @@ function KeeperHistoryPage() {
     return (
       <PagePanel title="Keeper History" description="Multi-year keeper ROI tracking by season, team, and player.">
         <p className="text-sm text-zinc-500">
-          No keeper outcome data yet. Ask your league admin to import Season Outcomes CSV in the
+          No keeper outcome data yet. Ask your league commissioner to import Season Outcomes CSV in the
           Admin section.
         </p>
       </PagePanel>
@@ -11260,14 +11796,15 @@ function DraftBoardPreview({
 }
 
 function ConnectionBadge({ status }: { status: ApiStatus }) {
-  const label = {
+  const label: Record<ApiStatus, string> = {
     error: "API Error",
     live: "API Live",
     loading: "Loading",
     mock: "Mock",
-  }[status];
+    "no-league": "No League",
+  };
   const variant = status === "live" ? "success" : status === "loading" ? "info" : "warning";
-  return <Badge variant={variant}>{label}</Badge>;
+  return <Badge variant={variant}>{label[status]}</Badge>;
 }
 
 function ScenarioNarrativePanel({
@@ -14385,6 +14922,97 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
   );
 }
 
+const CT_SECTIONS = [
+  {
+    id: "ct-league-setup",
+    icon: SlidersHorizontal,
+    label: "League Setup",
+    description: "League basics, roster rules, key dates, and membership.",
+  },
+  {
+    id: "ct-data-imports",
+    icon: Download,
+    label: "Data Imports",
+    description: "Import historical draft data and rosters from external platforms or CSV.",
+  },
+  {
+    id: "ct-keeper-rules",
+    icon: ShieldCheck,
+    label: "Keeper Rules & Compliance",
+    description: "Tenure limits, consecutive-season records, and keeper eligibility checks.",
+  },
+  {
+    id: "ct-season-actions",
+    icon: CalendarDays,
+    label: "Season Actions",
+    description: "Publish keeper reveals, send reminder emails, and export league data.",
+  },
+  {
+    id: "ct-danger-zone",
+    icon: Trash2,
+    label: "Danger Zone",
+    description: "Irreversible actions that affect the entire league.",
+  },
+] as const;
+
+function CommissionerTOC() {
+  const scrollTo = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Contents</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <nav className="flex flex-wrap gap-2">
+          {CT_SECTIONS.map(({ id, icon: Icon, label }) => (
+            <button
+              key={id}
+              className="flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:border-emerald-600 dark:hover:bg-emerald-950 dark:hover:text-emerald-300"
+              onClick={() => scrollTo(id)}
+              type="button"
+            >
+              <Icon className="size-4 shrink-0" aria-hidden="true" />
+              {label}
+            </button>
+          ))}
+        </nav>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CommissionerSection({
+  id,
+  icon: Icon,
+  title,
+  description,
+  children,
+}: {
+  id: string;
+  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-5 scroll-mt-6" id={id}>
+      <div className="flex items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-emerald-700 text-white">
+          <Icon className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">{title}</h2>
+          <p className="mt-0.5 text-sm text-zinc-600 dark:text-zinc-400">{description}</p>
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 function CommissionerToolsPage({
   draftCsvText,
   rosterCsvText,
@@ -14396,30 +15024,70 @@ function CommissionerToolsPage({
   setDraftCsvText: (value: string) => void;
   setRosterCsvText: (value: string) => void;
 }) {
-  const { activeLeagueId, data, refreshData, isPlatformAdmin } = useDashboard();
+  const { activeLeagueId, data, refreshData } = useDashboard();
   const league = data.league;
 
   return (
-    <div className="space-y-5">
-      <LeagueManagementPanel />
-      <DraftFormatPanel />
-      <LeagueRosterSettingsPanel />
-      <AdminDataImports
-        draftCsvText={draftCsvText}
-        rosterCsvText={rosterCsvText}
-        setDraftCsvText={setDraftCsvText}
-        setRosterCsvText={setRosterCsvText}
-      />
-      <LeagueMembersPanel />
-      <KeeperRulesPanel />
-      <KeeperTenurePanel />
-      <CommissionerDatesPanel league={league} leagueId={activeLeagueId} refreshData={refreshData} />
-      <ComplianceCheckerPanel leagueId={activeLeagueId} />
-      <KeeperRevealPanel leagueId={activeLeagueId} league={league} />
-      <ReminderEmailPanel leagueId={activeLeagueId} league={league} />
-      <BulkExportPanel leagueId={activeLeagueId} league={league} />
-      {isPlatformAdmin && <UserManagementPanel />}
-      <DeleteLeaguePanel />
+    <div className="space-y-10">
+      <CommissionerTOC />
+
+      <CommissionerSection
+        id="ct-league-setup"
+        icon={SlidersHorizontal}
+        title="League Setup"
+        description="League basics, roster rules, key dates, and membership."
+      >
+        <LeagueManagementPanel />
+        <DraftFormatPanel />
+        <LeagueRosterSettingsPanel />
+        <CommissionerDatesPanel league={league} leagueId={activeLeagueId} refreshData={refreshData} />
+        <LeagueMembersPanel />
+      </CommissionerSection>
+
+      <CommissionerSection
+        id="ct-data-imports"
+        icon={Download}
+        title="Data Imports"
+        description="Import historical draft data and rosters from external platforms or CSV."
+      >
+        <AdminDataImports
+          draftCsvText={draftCsvText}
+          rosterCsvText={rosterCsvText}
+          setDraftCsvText={setDraftCsvText}
+          setRosterCsvText={setRosterCsvText}
+        />
+      </CommissionerSection>
+
+      <CommissionerSection
+        id="ct-keeper-rules"
+        icon={ShieldCheck}
+        title="Keeper Rules & Compliance"
+        description="Tenure limits, consecutive-season records, and keeper eligibility checks."
+      >
+        <KeeperRulesPanel />
+        <KeeperTenurePanel />
+        <ComplianceCheckerPanel leagueId={activeLeagueId} />
+      </CommissionerSection>
+
+      <CommissionerSection
+        id="ct-season-actions"
+        icon={CalendarDays}
+        title="Season Actions"
+        description="Publish keeper reveals, send reminder emails, and export league data."
+      >
+        <KeeperRevealPanel leagueId={activeLeagueId} league={league} />
+        <ReminderEmailPanel leagueId={activeLeagueId} league={league} />
+        <BulkExportPanel leagueId={activeLeagueId} league={league} />
+      </CommissionerSection>
+
+      <CommissionerSection
+        id="ct-danger-zone"
+        icon={Trash2}
+        title="Danger Zone"
+        description="Irreversible actions that affect the entire league."
+      >
+        <DeleteLeaguePanel />
+      </CommissionerSection>
     </div>
   );
 }

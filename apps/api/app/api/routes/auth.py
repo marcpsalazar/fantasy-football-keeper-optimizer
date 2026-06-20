@@ -53,6 +53,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    alias: str | None = None
+
+
 class UserCreateRequest(BaseModel):
     email: str
     password: str
@@ -116,15 +122,23 @@ def user_payload(user: User | None, session: Session | None = None) -> dict[str,
     }
 
 
-def admin_user_payload(session: Session, user: User) -> dict[str, Any]:
-    assigned_team = session.exec(
-        select(Team).where(Team.user_id == user.id).order_by(Team.name)
-    ).first()
+def admin_user_payload(
+    session: Session,
+    user: User,
+    memberships: list[LeagueMembership] | None = None,
+    league_map: dict | None = None,
+) -> dict[str, Any]:
+    leagues_data: list[dict[str, Any]] = []
+    if memberships is not None and league_map is not None:
+        for m in memberships:
+            if m.league_id in league_map:
+                leagues_data.append(
+                    {"league_id": str(m.league_id), "league_name": league_map[m.league_id].name, "role": m.role}
+                )
     return {
         **(user_payload(user, session) or {}),
-        "team_id": str(assigned_team.id) if assigned_team else None,
-        "team_name": assigned_team.name if assigned_team else None,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+        "leagues": leagues_data,
     }
 
 
@@ -140,6 +154,35 @@ def login(
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive")
     user.last_login_at = datetime.now(timezone.utc)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    set_session_cookie(response, user)
+    return {"user": user_payload(user, session)}
+
+
+@router.post("/auth/register", status_code=status.HTTP_201_CREATED)
+def register(
+    payload: RegisterRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    email = payload.email.strip().lower()
+    if not email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required")
+    if not payload.password or len(payload.password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
+    existing = session.exec(select(User).where(User.email == email)).first()
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    user = User(
+        email=email,
+        alias=_clean_alias(payload.alias),
+        password_hash=hash_password(payload.password),
+        role="user",
+        is_active=True,
+        last_login_at=datetime.now(timezone.utc),
+    )
     session.add(user)
     session.commit()
     session.refresh(user)
@@ -259,7 +302,18 @@ def list_users(
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     users = session.exec(select(User).order_by(User.email)).all()
-    rows = [admin_user_payload(session, user) for user in users]
+    user_ids = [u.id for u in users]
+    all_memberships = (
+        session.exec(select(LeagueMembership).where(LeagueMembership.user_id.in_(user_ids))).all()
+        if user_ids else []
+    )
+    league_ids = list({m.league_id for m in all_memberships})
+    leagues = session.exec(select(League).where(League.id.in_(league_ids))).all() if league_ids else []
+    league_map = {lg.id: lg for lg in leagues}
+    membership_map: dict[uuid.UUID, list[LeagueMembership]] = {}
+    for m in all_memberships:
+        membership_map.setdefault(m.user_id, []).append(m)
+    rows = [admin_user_payload(session, u, membership_map.get(u.id, []), league_map) for u in users]
     return {"count": len(rows), "rows": rows}
 
 
@@ -307,6 +361,80 @@ def reset_user_password(
     session.commit()
     session.refresh(user)
     return admin_user_payload(session, user)
+
+
+@router.get("/admin/users/{user_id}/league-memberships")
+def get_user_league_memberships(
+    user_id: str,
+    _: User | None = Depends(require_platform_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    user = _require_user(session, user_id)
+    memberships = session.exec(
+        select(LeagueMembership).where(LeagueMembership.user_id == user.id)
+    ).all()
+    league_ids = [m.league_id for m in memberships]
+    leagues = session.exec(select(League).where(League.id.in_(league_ids))).all() if league_ids else []
+    league_map = {lg.id: lg for lg in leagues}
+    user_teams = session.exec(select(Team).where(Team.user_id == user.id)).all()
+    team_by_league: dict[uuid.UUID, Team] = {t.league_id: t for t in user_teams}
+    return {
+        "memberships": [
+            {
+                "league_id": str(m.league_id),
+                "league_name": league_map[m.league_id].name if m.league_id in league_map else "",
+                "season_year": league_map[m.league_id].season_year if m.league_id in league_map else None,
+                "role": m.role,
+                "team_id": str(team_by_league[m.league_id].id) if m.league_id in team_by_league else None,
+                "team_name": team_by_league[m.league_id].name if m.league_id in team_by_league else None,
+            }
+            for m in memberships
+            if m.league_id in league_map
+        ]
+    }
+
+
+class UserTeamAssignRequest(BaseModel):
+    team_id: str | None = None
+
+
+@router.put("/admin/users/{user_id}/leagues/{league_id}/team")
+def assign_user_league_team(
+    user_id: str,
+    league_id: str,
+    payload: UserTeamAssignRequest,
+    _: User | None = Depends(require_platform_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    user = _require_user(session, user_id)
+    try:
+        parsed_league_id = uuid.UUID(league_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid league ID") from exc
+    for team in session.exec(
+        select(Team).where(Team.user_id == user.id, Team.league_id == parsed_league_id)
+    ).all():
+        team.user_id = None
+        session.add(team)
+    if payload.team_id:
+        try:
+            parsed_team_id = uuid.UUID(payload.team_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid team ID") from exc
+        team = session.get(Team, parsed_team_id)
+        if team is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+        if team.league_id != parsed_league_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Team does not belong to this league")
+        team.user_id = user.id
+        session.add(team)
+    session.commit()
+    user_teams = session.exec(select(Team).where(Team.user_id == user.id, Team.league_id == parsed_league_id)).all()
+    assigned = user_teams[0] if user_teams else None
+    return {
+        "team_id": str(assigned.id) if assigned else None,
+        "team_name": assigned.name if assigned else None,
+    }
 
 
 @router.delete("/admin/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -519,6 +647,59 @@ def _default_settings_payload(settings: AppDefaultOptimizerSettings) -> dict[str
         "created_at": settings.created_at.isoformat(),
         "updated_at": settings.updated_at.isoformat(),
     }
+
+
+@router.get("/admin/leagues")
+def list_all_leagues(
+    _: User | None = Depends(require_platform_admin),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    leagues = session.exec(select(League).order_by(League.name)).all()
+    league_ids = [lg.id for lg in leagues]
+    memberships = (
+        session.exec(select(LeagueMembership).where(LeagueMembership.league_id.in_(league_ids))).all()
+        if league_ids else []
+    )
+    user_ids = list({m.user_id for m in memberships})
+    users = session.exec(select(User).where(User.id.in_(user_ids))).all() if user_ids else []
+    user_map = {u.id: u for u in users}
+    teams = (
+        session.exec(select(Team).where(Team.league_id.in_(league_ids))).all()
+        if league_ids else []
+    )
+    membership_by_league: dict[uuid.UUID, list[LeagueMembership]] = {}
+    for m in memberships:
+        membership_by_league.setdefault(m.league_id, []).append(m)
+    team_count_by_league: dict[uuid.UUID, int] = {}
+    for t in teams:
+        team_count_by_league[t.league_id] = team_count_by_league.get(t.league_id, 0) + 1
+
+    rows = []
+    for lg in leagues:
+        lg_members = membership_by_league.get(lg.id, [])
+        member_list = []
+        for m in sorted(lg_members, key=lambda x: (x.role != "league_admin", user_map.get(x.user_id, User()).email or "")):
+            u = user_map.get(m.user_id)
+            member_list.append({
+                "userId": str(m.user_id),
+                "email": u.email if u else None,
+                "alias": u.alias if u else None,
+                "role": m.role,
+            })
+        rows.append({
+            "id": str(lg.id),
+            "name": lg.name,
+            "seasonYear": lg.season_year,
+            "scoringFormat": lg.scoring_format,
+            "draftType": lg.draft_type,
+            "createdAt": lg.created_at.isoformat() if lg.created_at else None,
+            "teamCount": team_count_by_league.get(lg.id, 0),
+            "memberCount": len(lg_members),
+            "keepersFinalized": lg.keepers_finalized,
+            "keeperPickDeadline": lg.keeper_pick_deadline.isoformat() if lg.keeper_pick_deadline else None,
+            "members": member_list,
+        })
+    return {"count": len(rows), "rows": rows}
 
 
 @router.post("/admin/players/backfill-images")

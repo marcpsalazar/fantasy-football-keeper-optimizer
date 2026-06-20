@@ -34,14 +34,14 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
   - **Final Keepers**: league members self-finalize their own team's keeper picks from the Keeper Recommendations board by clicking Finalize Keepers (left of the Team Filter). Once submitted, a Submitted badge appears on their card in Final Keepers. Members can Unfinalize before the keeper deadline. If a member misses the deadline, the commissioner can open Final Keepers and click Finalize for Team on that card. The board is hidden from non-admin members until the Keeper Reveal Date. When all teams are set, the commissioner clicks Finalize & Lock to publish the official list and lock all selections. Finalization is irreversible except by a platform admin.
   - **Final Draft Board**: auto-generated snake draft grid derived from Final Keeper Selections. Forfeited picks are highlighted in red with the kept player's name and position. Available picks show by overall pick number, with columns fixed by draft slot.
   - **Season Analysis**: post-season decision quality report. Cross-references Final Keeper Selections, KeeperOutcomes, and Recommendations to categorize each player as Hit, Miss, Bust, Left on Table, Dodged, Below ADP, or Unknown. Shows league-level hit rate, bust rate, recommendation accuracy, and opportunity cost, with per-team expandable tables.
-  - **Keeper History** (formerly Historical Keeper ROI Tracker): multi-year ROI tracking by season, team, and player. Admins import end-of-season outcomes via Sleeper auto-fetch (available to all leagues regardless of platform — no Sleeper account required) or CSV fallback. The Sleeper stats API cross-references keeper candidates by Sleeper player ID first, then by full name + NFL team composite.
+  - **Keeper History** (formerly Historical Keeper ROI Tracker): multi-year ROI tracking by season, team, and player. Commissioners import end-of-season outcomes via Sleeper auto-fetch (available to all leagues regardless of platform — no Sleeper account required) or CSV fallback. The Sleeper stats API cross-references keeper candidates by Sleeper player ID first, then by full name + NFL team composite.
 - **Player headshots**: player dialogs (keeper explanation modal and mock draft player detail) display the player's headshot sourced from the Sleeper CDN, with a team-color circle fallback showing the team abbreviation when no photo is available.
 - **Injury and roster status**: Sleeper's player database is synced daily, so each player's injury designation (Questionable, Doubtful, Out, IR, PUP) is shown throughout the app — in keeper recommendations, mock draft player lists, and the explanation modal. The risk penalty in the optimizer's scoring model reflects these designations.
-- **Keeper Tenure**: track consecutive keeper seasons per player to enforce multi-year keep limits. Admins import tenure history via CSV or manage records individually. Each keeper candidate displays a tenure badge (e.g. "yr 2/3") when limits are configured.
+- **Keeper Tenure**: track consecutive keeper seasons per player to enforce multi-year keep limits. Commissioners import tenure history via CSV or manage records individually. Each keeper candidate displays a tenure badge (e.g. "yr 2/3") when limits are configured.
 - **Value Window**: the keeper explanation modal includes a multi-year projection section showing how a player's keeper value is expected to evolve over the next three seasons, based on position-specific aging curves. A green "Open" or red "Closing / Closed" badge summarizes whether it is still a good time to lock in the player.
 - **Player Watchlist**: in Mock Draft, any member can star players to add them to a personal watchlist for the current league. Watched players are highlighted in the available player list and collected in a persistent sidebar panel for quick one-click drafting.
 - **Keeper Card export**: a shareable PNG keeper card is available per team from the Team Outlook screen. The card shows the team name, selected keepers, positions, and cost rounds in a compact format.
-- **Commissioner Tools**: a dedicated sidebar view (league admin only) consolidating end-of-cycle admin tasks:
+- **Commissioner Tools**: a dedicated sidebar view (league commissioner only) consolidating end-of-cycle admin tasks:
   - **League Dates**: set keeper pick deadline, ADP lock date, regular season start, draft date, and keeper reveal date. Deadline and season start appear as countdowns in the app header.
   - **Compliance Checker**: automatically verifies that every team's keeper selections are within league limits. Shows a per-team pass/fail breakdown.
   - **Keeper Reveal**: controls the date on which keeper selections become visible to non-admin members. Before that date, member views are masked.
@@ -63,7 +63,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
 - **AI keeper explanations**: click any player name in Keeper Recommendations to open a detail modal showing the player's headshot, position, and a plain-English explanation of why the optimizer recommended or passed on that player (short reason, value explanation, risk note, opportunity cost, decision badge). Responses are cached. The modal also includes a **Value Window** section that projects how the player's keeper value is expected to change over the next three seasons using position-specific aging curves, so you can judge whether locking in the player now or waiting is the better long-term play.
 - **AI scenario narratives**: click "Generate AI Analysis" in Scenario Comparison for a plain-English tradeoff summary across all five presets. Personalized for the signed-in user's assigned team when available.
 - **Composite ADP**: one-click "Update ADP" button builds a weighted-median board from DraftSharks + Fantasy Football Calculator and imports it directly.
-- **AI cost controls**: set a monthly token budget (`AI_MONTHLY_TOKEN_BUDGET`) to cap all AI spending. Platform admins can review token usage and estimated costs in the `Admin` menu → `AI Usage`.
+- **AI cost controls**: set a monthly token budget (`AI_MONTHLY_TOKEN_BUDGET`) to cap all AI spending. Platform admins can review token usage and estimated costs in the `Platform Admin` menu → `AI Usage`.
 
 ## Stack
 
@@ -80,11 +80,11 @@ Three role tiers control access:
 
 | Role | Scope | Capabilities |
 |---|---|---|
-| `platform_admin` | Global | Manage all leagues; access hidden **Admin** menu (AI Usage + ADP Input); see User Management inside Commissioner Tools |
-| `league_admin` | Per-league | Full access to **Commissioner Tools**: teams, imports, ADP, members, keeper rules, dates, compliance, and bulk export |
+| `platform_admin` | Global | Manage all leagues; access hidden **Platform Admin** menu (AI Usage, ADP Input, User Management, League Management) |
+| `league_admin` | Per-league | Full access to **Commissioner Tools**: teams, imports, ADP, members, keeper rules, dates, compliance, and bulk export. Displays as **League Commissioner** in the UI. |
 | `member` | Per-league | View league data, run optimizer, use mock draft, export reports |
 
-Platform admins are created by seeding or by direct DB assignment. League admins are assigned per-league from `Commissioner Tools` → `Members`. A platform admin always has league admin privileges in every league without needing an explicit membership. Only platform admins see the **Admin** navigation item; league admins and members do not.
+Platform admins are created by seeding or by direct DB assignment. League commissioners are assigned per-league from `Commissioner Tools` → `Members`. A platform admin always has league admin privileges in every league without needing an explicit membership. Only platform admins see the **Platform Admin** navigation item; league commissioners and members do not.
 
 ## Repository Layout
 
@@ -265,7 +265,7 @@ AI features are opt-in. All AI calls require `OPENAI_API_KEY` to be set. Each fe
 - `SCENARIO_NARRATIVE_AI_ENABLED=true` — scenario comparison narratives are generated on demand and cached.
 - `PLAYER_SUMMARY_AI_ENABLED=true` — player detail summaries in the mock draft player dialog are generated on demand and cached.
 
-Set `AI_MONTHLY_TOKEN_BUDGET` to a positive integer (total tokens) to enforce a monthly spending cap across all AI features. When the budget is exceeded, all AI calls are blocked until the next calendar month. Platform admins can review usage in the `Admin` menu → `AI Usage`.
+Set `AI_MONTHLY_TOKEN_BUDGET` to a positive integer (total tokens) to enforce a monthly spending cap across all AI features. When the budget is exceeded, all AI calls are blocked until the next calendar month. Platform admins can review usage in the `Platform Admin` menu → `AI Usage`.
 
 AI-synthesized ADP is also opt-in. Set `ADP_PROVIDER=ai_synthesized`,
 `ADP_AUTO_REFRESH_ENABLED=true`, and `OPENAI_API_KEY` on the API service to refresh ADP weekly.
@@ -549,7 +549,7 @@ Open the web app and sign in with an account created by an admin. The user menu 
 shows your role and assigned team. Open `View Profile` from that menu to upload or remove a profile
 image, review your assigned team, or change your password.
 
-Only platform admins see the `Admin` navigation item. League admins see `Commissioner Tools`. Regular members see neither.
+Only platform admins see the `Platform Admin` navigation item. League commissioners see `Commissioner Tools`. Regular members see neither.
 
 After signing in, the league selector at the top of the sidebar shows all leagues you belong to. Select a league to switch the active workspace. Platform admins can access any league without an explicit membership.
 
@@ -594,17 +594,21 @@ Sleeper's public roster API once per day and are applied automatically. The opti
 penalty to players with active injury designations. A colored status badge is shown wherever player
 names appear in the app.
 
-### Admin
+### Platform Admin
 
-`Admin` is visible only to platform admins. It contains two panels:
+`Platform Admin` is visible only to platform admins. It contains four panels:
 
 `AI Usage` shows a log of recent AI requests with token counts, estimated cost, feature type, and whether the monthly budget is currently exceeded. Use this to monitor spending when AI features are enabled.
 
 `ADP Input` lets you build a composite ADP board from configured sources and import it directly into the active snapshot, or paste a custom ADP CSV manually. See [ADP Input and ADP Preview](#adp-input-and-adp-preview) for the full workflow.
 
+`User Management` creates and manages platform accounts, global roles, and per-league memberships. Create accounts, set roles (`user` or `platform_admin`), activate or deactivate users, reset passwords, and delete users.
+
+`League Management` lists every league on the platform with its season year, scoring format, draft type, team count, member count, and keeper deadline. Expand any league row to see its full member list with roles displayed as **League Commissioner** or **Member**. Use the danger-indicated `Delete` button to permanently remove a league and all of its associated data — this is irreversible.
+
 ### ADP Input and ADP Preview
 
-Platform admins manage ADP from the `Admin` screen. The ADP snapshot is the market baseline used by the
+Platform admins manage ADP from the `Platform Admin` screen. The ADP snapshot is the market baseline used by the
 optimizer, so refresh or import ADP before running recommendations for a new decision cycle.
 
 Use `Import Composite ADP` to build and import the configured composite ADP directly into the
@@ -825,7 +829,7 @@ The trade analyzer does not commit any changes. It is a modeling tool only.
 
 ### Commissioner Tools
 
-`Commissioner Tools` is visible to league admins (and platform admins). It consolidates all
+`Commissioner Tools` is visible to league commissioners (and platform admins). It consolidates all
 league-level administration into a single view.
 
 **League Management:**
@@ -872,7 +876,7 @@ Missing teams are warnings because the import path can create missing teams auto
 4. Click `Preview` to validate, then click `Import` to commit.
 
 **League Members:**
-Add or remove league members and set per-league roles (`league_admin` or `member`).
+Add or remove league members and set per-league roles (`League Commissioner` or `Member`).
 
 **Keeper Rules:**
 Set league-level keeper eligibility constraints, including the maximum number of consecutive seasons a team may keep the same player.
@@ -929,7 +933,7 @@ screen.
 **User Management** (platform admin only):
 Create accounts, set global roles (`user` or `platform_admin`), activate or deactivate users, view
 generated credentials, reset passwords, edit users, and delete users. This panel is hidden from
-league admins.
+league commissioners.
 
 ### Final Keepers
 
@@ -996,7 +1000,7 @@ Three sections:
 - **Team ROI**: expandable cards per manager showing their keeper track record across seasons.
 - **Player History**: expandable cards per recurring keeper candidate — how often they were kept and whether they paid off.
 
-**Importing season outcomes (league admin only):**
+**Importing season outcomes (league commissioner only):**
 
 1. Open `Commissioner Tools` → `League Data Imports` → `Season Outcomes`.
 2. Select **Auto-fetch from Sleeper** (recommended): choose the season year and scoring format, click `Fetch & Preview` to match keeper candidates against Sleeper's global stats database, then click `Import` to commit.
@@ -1136,6 +1140,7 @@ DELETE /api/admin/users/{user_id}
 GET    /api/admin/defaults/optimizer-settings
 PATCH  /api/admin/defaults/optimizer-settings
 GET    /api/admin/ai/usage
+GET    /api/admin/leagues
 
 POST   /api/leagues
 GET    /api/leagues

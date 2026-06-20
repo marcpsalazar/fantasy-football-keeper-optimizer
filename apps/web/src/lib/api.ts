@@ -51,6 +51,7 @@ export type AuthUser = {
 
 export type AdminUser = AuthUser & {
   lastLoginAt: string | null;
+  leagues: { leagueId: string; leagueName: string; role: string }[];
 };
 
 export type UserForm = {
@@ -570,6 +571,15 @@ export async function login(email: string, password: string): Promise<AuthUser> 
   return mapAuthUser(payload.user);
 }
 
+export async function register(email: string, password: string, alias?: string): Promise<AuthUser> {
+  const payload = await fetchJson<{ user: ApiRow }>("/api/auth/register", {
+    body: JSON.stringify({ email, password, alias: alias || null }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  return mapAuthUser(payload.user);
+}
+
 export async function logout(): Promise<void> {
   await fetchJson("/api/auth/logout", {
     body: JSON.stringify({}),
@@ -642,6 +652,96 @@ export async function deleteAdminUser(userId: string): Promise<void> {
     if (!response.ok) {
       throw new Error(`API ${response.status}: ${await response.text()}`);
     }
+  });
+}
+
+export type UserLeagueMembership = {
+  leagueId: string;
+  leagueName: string;
+  seasonYear: number | null;
+  role: "league_admin" | "member";
+  teamId: string | null;
+  teamName: string | null;
+};
+
+export async function getUserLeagueMemberships(userId: string): Promise<UserLeagueMembership[]> {
+  const payload = await fetchJson<{ memberships: ApiRow[] }>(
+    `/api/admin/users/${userId}/league-memberships`,
+  );
+  return payload.memberships.map((m) => ({
+    leagueId: String(m.league_id ?? ""),
+    leagueName: String(m.league_name ?? ""),
+    seasonYear: m.season_year != null ? Number(m.season_year) : null,
+    role: (m.role as "league_admin" | "member") ?? "member",
+    teamId: m.team_id != null ? String(m.team_id) : null,
+    teamName: m.team_name != null ? String(m.team_name) : null,
+  }));
+}
+
+export type AdminLeagueMember = {
+  userId: string;
+  email: string | null;
+  alias: string | null;
+  role: "league_admin" | "member";
+};
+
+export type AdminLeague = {
+  id: string;
+  name: string;
+  seasonYear: number;
+  scoringFormat: string;
+  draftType: string;
+  createdAt: string | null;
+  teamCount: number;
+  memberCount: number;
+  keepersFinalized: boolean;
+  keeperPickDeadline: string | null;
+  members: AdminLeagueMember[];
+};
+
+export async function adminListLeagues(): Promise<AdminLeague[]> {
+  const payload = await fetchJson<{ count: number; rows: ApiRow[] }>("/api/admin/leagues");
+  return payload.rows.map((r) => ({
+    id: String(r.id ?? ""),
+    name: String(r.name ?? ""),
+    seasonYear: Number(r.seasonYear ?? 0),
+    scoringFormat: String(r.scoringFormat ?? ""),
+    draftType: String(r.draftType ?? ""),
+    createdAt: r.createdAt != null ? String(r.createdAt) : null,
+    teamCount: Number(r.teamCount ?? 0),
+    memberCount: Number(r.memberCount ?? 0),
+    keepersFinalized: Boolean(r.keepersFinalized),
+    keeperPickDeadline: r.keeperPickDeadline != null ? String(r.keeperPickDeadline) : null,
+    members: Array.isArray(r.members)
+      ? (r.members as ApiRow[]).map((m) => ({
+          userId: String(m.userId ?? ""),
+          email: m.email != null ? String(m.email) : null,
+          alias: m.alias != null ? String(m.alias) : null,
+          role: (m.role as "league_admin" | "member") ?? "member",
+        }))
+      : [],
+  }));
+}
+
+export type LeagueTeam = { id: string; name: string };
+
+export async function listLeagueTeams(leagueId: string): Promise<LeagueTeam[]> {
+  const payload = await fetchTable(`/api/leagues/${leagueId}/teams`);
+  return payload.rows.map((row) => ({
+    id: String(row.id ?? ""),
+    name: String(row.name ?? ""),
+  }));
+}
+
+export async function setUserLeagueTeam(
+  userId: string,
+  leagueId: string,
+  teamId: string | null,
+): Promise<void> {
+  await fetchJson(`/api/admin/users/${userId}/leagues/${leagueId}/team`, {
+    body: JSON.stringify({ team_id: teamId }),
+    headers: { "content-type": "application/json" },
+    method: "PUT",
   });
 }
 
@@ -2995,6 +3095,13 @@ function mapAdminUser(row: ApiRow): AdminUser {
   return {
     ...mapAuthUser(row),
     lastLoginAt: text(row.last_login_at) || null,
+    leagues: Array.isArray(row.leagues)
+      ? (row.leagues as ApiRow[]).map((l) => ({
+          leagueId: String(l.league_id ?? ""),
+          leagueName: String(l.league_name ?? ""),
+          role: String(l.role ?? "member"),
+        }))
+      : [],
   };
 }
 
@@ -3005,7 +3112,6 @@ function userFormPayload(form: UserForm, includePassword: boolean): ApiRow {
     ...(includePassword || form.password ? { password: form.password } : {}),
     role: form.role,
     is_active: form.isActive,
-    team_id: form.teamId || null,
   };
 }
 
