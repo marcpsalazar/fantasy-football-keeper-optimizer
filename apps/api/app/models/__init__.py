@@ -9,6 +9,7 @@ from app.models.keeper_outcome import KeeperOutcome
 from app.models.keeper_tenure import KeeperTenure
 from app.models.league import League, Team
 from app.models.membership import LeagueMembership
+from app.models.messaging import Message, MessageRead
 from app.models.mock_draft import MockDraftAnalysis, MockDraftPick, MockDraftSession
 from app.models.oauth import YahooOAuthToken
 from app.models.optimizer import (
@@ -38,6 +39,8 @@ __all__ = [
     "League",
     "LeagueMembership",
     "ManualOverride",
+    "Message",
+    "MessageRead",
     "MockDraftAnalysis",
     "MockDraftPick",
     "MockDraftSession",

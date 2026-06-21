@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 from app.api.routes.auth import router as auth_router
 from app.api.routes.leagues import router as leagues_router
+from app.api.routes.messages import router as messages_router
 from app.api.routes.mock_drafts import router as mock_drafts_router
 from app.core.config import get_settings
 from app.models import User
@@ -80,6 +81,7 @@ def create_app() -> FastAPI:
 
     api.include_router(auth_router)
     api.include_router(leagues_router)
+    api.include_router(messages_router)
     api.include_router(mock_drafts_router)
 
     return api

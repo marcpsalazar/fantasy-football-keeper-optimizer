@@ -4404,3 +4404,97 @@ export async function searchWatchlistPlayers(
   );
   return payload.rows.map(mapWatchlistSearchResult);
 }
+
+// ---------------------------------------------------------------------------
+// Messaging
+// ---------------------------------------------------------------------------
+
+export type ChatMessage = {
+  id: string;
+  senderId: string;
+  senderEmail: string;
+  senderAlias: string | null;
+  senderAvatar: string | null;
+  content: string;
+  channelType: "dm" | "league";
+  leagueId: string | null;
+  recipientId: string | null;
+  createdAt: string;
+};
+
+function mapChatMessage(row: ApiRow): ChatMessage {
+  const channelType = text(row.channelType);
+  return {
+    id: text(row.id),
+    senderId: text(row.senderId),
+    senderEmail: text(row.senderEmail),
+    senderAlias: text(row.senderAlias) || null,
+    senderAvatar: text(row.senderAvatar) || null,
+    content: text(row.content),
+    channelType: channelType === "league" ? "league" : "dm",
+    leagueId: text(row.leagueId) || null,
+    recipientId: text(row.recipientId) || null,
+    createdAt: text(row.createdAt),
+  };
+}
+
+export async function getDirectMessages(otherUserId: string): Promise<ChatMessage[]> {
+  const response = await fetch(`${API_BASE_URL}/api/messages/direct/${otherUserId}`, {
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error(`API ${response.status}`);
+  const rows = (await response.json()) as ApiRow[];
+  return rows.map(mapChatMessage);
+}
+
+export async function getLeagueMessages(leagueId: string): Promise<ChatMessage[]> {
+  const response = await fetch(`${API_BASE_URL}/api/messages/league/${leagueId}`, {
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error(`API ${response.status}`);
+  const rows = (await response.json()) as ApiRow[];
+  return rows.map(mapChatMessage);
+}
+
+export async function getUnreadCounts(): Promise<Record<string, number>> {
+  const response = await fetch(`${API_BASE_URL}/api/messages/unread`, {
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error(`API ${response.status}`);
+  return response.json() as Promise<Record<string, number>>;
+}
+
+export async function markMessagesRead(conversationType: "dm" | "league", conversationId: string): Promise<void> {
+  await fetch(`${API_BASE_URL}/api/messages/read`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversationType, conversationId }),
+  });
+}
+
+export type MessagingContact = {
+  userId: string;
+  email: string;
+  alias: string | null;
+  avatarDataUrl: string | null;
+};
+
+export async function getMessagingContacts(): Promise<MessagingContact[]> {
+  const response = await fetch(`${API_BASE_URL}/api/messages/contacts`, {
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error(`API ${response.status}`);
+  return response.json() as Promise<MessagingContact[]>;
+}
+
+export function buildMessagingWsUrl(): string {
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+  if (apiBase) {
+    const wsBase = apiBase.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://");
+    return `${wsBase}/api/ws/messages`;
+  }
+  if (typeof window === "undefined") return "";
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/api/ws/messages`;
+}

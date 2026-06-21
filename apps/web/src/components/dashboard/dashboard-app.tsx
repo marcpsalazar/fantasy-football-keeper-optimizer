@@ -23,6 +23,7 @@ import {
   Lock,
   LogOut,
   ListChecks,
+  MessageCircle,
   Moon,
   PanelLeft,
   Pencil,
@@ -50,6 +51,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 
 import { DataTable, resetDataTableDisplaySettings } from "@/components/dashboard/data-table";
+import { MessagingOverlay } from "@/components/messaging/MessagingOverlay";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -100,6 +102,7 @@ import {
   getKeeperReveal,
   getNewsAlerts,
   getLeagueMemberships,
+  getMessagingContacts,
   getPlayerSummary,
   getSmtpStatus,
   hydrateTeams,
@@ -177,6 +180,7 @@ import {
   type LeagueCalendarSettings,
   type LeagueCreateForm,
   type LeagueMembership,
+  type MessagingContact,
   type LeagueRosterSettings,
   type LeagueWithRole,
   type ManualOverrideType,
@@ -521,6 +525,14 @@ const screenGuides: ScreenGuide[] = [
     view: "commissioner-tools",
     adminOnly: true,
   },
+  {
+    title: "League Messages",
+    icon: MessageCircle,
+    bestFor: "Real-time direct messages between league members and a shared league-wide channel — accessible from anywhere in the app without leaving your current screen.",
+    howToRead: "Click the emerald chat button fixed in the bottom-right corner to open the message panel. The panel shows two types of conversations: the League Chat channel (marked with a # badge) where all members can post, and individual Direct Message threads with each member. Select any conversation to load its history and start typing. Press Enter to send or Shift+Enter for a new line. Messages deliver instantly to anyone online at the same time; members who are offline will see them the next time they open the panel. A red badge on the chat button counts all unread messages across every conversation.",
+    watchFor: "The message panel is only available when you are signed in and have an active league selected. Direct messages are scoped to members of your leagues — you can only DM someone you share a league with. The league commissioner always appears in your DM list even if they have not been assigned a team.",
+    view: "guide",
+  },
 ];
 
 const workflowSteps: WorkflowStep[] = [
@@ -842,6 +854,7 @@ export function DashboardApp() {
   const [userLeagues, setUserLeagues] = React.useState<LeagueWithRole[]>([]);
   const [createLeagueModalOpen, setCreateLeagueModalOpen] = React.useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = React.useState(false);
+  const [leagueMembers, setLeagueMembers] = React.useState<MessagingContact[]>([]);
 
   const isPlatformAdmin = currentUser?.role === "platform_admin";
   const activeLeagueMembership = userLeagues.find((l) => l.id === activeLeagueId);
@@ -1161,6 +1174,14 @@ export function DashboardApp() {
       setActiveView("dashboard");
     }
   }, [activeView, isPlatformAdmin]);
+
+  React.useEffect(() => {
+    if (!activeLeagueId) {
+      setLeagueMembers([]);
+      return;
+    }
+    getMessagingContacts().then(setLeagueMembers).catch(() => {});
+  }, [activeLeagueId]);
 
   const requireLeagueId = React.useCallback(() => {
     if (workspaceData.source !== "api" || !workspaceData.league?.id) {
@@ -2017,6 +2038,14 @@ export function DashboardApp() {
         </section>
       </div>
     </main>
+    {currentUser && (
+      <MessagingOverlay
+        currentUser={currentUser}
+        leagueId={activeLeagueId}
+        leagueName={workspaceData.league?.name ?? null}
+        members={leagueMembers}
+      />
+    )}
     </DashboardContext.Provider>
   );
 }

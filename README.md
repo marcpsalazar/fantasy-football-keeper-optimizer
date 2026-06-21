@@ -47,6 +47,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
   - **Keeper Reveal**: controls the date on which keeper selections become visible to non-admin members. Before that date, member views are masked.
   - **Reminder Emails**: send deadline reminder emails to all league members via a configured SMTP server.
   - **Bulk Export**: download all team keeper card reports as a single ZIP archive.
+- **League Message Center**: a Facebook Messenger-style chat overlay fixed to the bottom-right corner of every screen. League members can send direct messages to each other and post to a shared league-wide channel. Messages deliver in real time to anyone online via WebSocket and persist so members can catch up later. A red badge on the chat button shows the total unread count. The commissioner always appears in every member's DM list even without a team assignment.
 - **Progressive Web App (PWA)**: the web app is installable on mobile and desktop. The browser displays a native install prompt when the app is ready; once installed, it runs in a standalone window with an offline-friendly shell.
 - **Sleeper league import**: paste a Sleeper League ID to automatically pull teams, draft results, and final rosters — preview first, then commit.
 - **Yahoo Fantasy league import**: connect via Yahoo OAuth to automatically pull teams, draft results, and final rosters from a Yahoo Fantasy Sports league — preview first, then commit.
@@ -1248,6 +1249,13 @@ GET    /api/leagues/{league_id}/exports/keeper-recommendations.csv
 GET    /api/leagues/{league_id}/exports/adp-template.csv
 GET    /api/leagues/{league_id}/exports/team-outlooks.pdf
 
+GET    /api/messages/contacts
+GET    /api/messages/direct/{other_user_id}
+GET    /api/messages/league/{league_id}
+GET    /api/messages/unread
+POST   /api/messages/read
+WS     /api/ws/messages
+
 POST   /api/mock-drafts
 GET    /api/mock-drafts/{session_id}
 PATCH  /api/mock-drafts/{session_id}
@@ -1354,6 +1362,22 @@ Or start the API with:
 ```bash
 CREATE_TABLES_ON_STARTUP=true uvicorn app.main:app --reload
 ```
+
+### League Messages
+
+The chat button in the bottom-right corner is available on every screen while signed in.
+
+**League Chat channel:**
+Click the chat button → select the channel marked with `#` to post a message visible to all league members. Messages appear in real time for anyone currently online.
+
+**Direct Messages:**
+Click any member name in the panel to open a private DM thread. You can message any member who shares a league with you, including the commissioner. Unread DMs show a badge on the sender's conversation row.
+
+**Unread badge:**
+The red badge on the chat button counts all unread messages across every conversation. It resets to zero as you open each conversation.
+
+**Real-time delivery:**
+Both the league channel and DMs use a persistent WebSocket connection. Messages sent while you are online appear instantly without refreshing. Messages sent while you are offline are waiting the next time you open the panel.
 
 ## Current Limitations
 
