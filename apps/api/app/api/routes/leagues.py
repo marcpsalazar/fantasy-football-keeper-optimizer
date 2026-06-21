@@ -3653,6 +3653,12 @@ class MemberEmailOptOutRequest(BaseModel):
     email_opt_out: bool
 
 
+class CustomCommissionerEmailRequest(BaseModel):
+    subject: str | None = None
+    body: str
+    recipient_ids: list[uuid.UUID] | None = None
+
+
 @router.get("/leagues/{league_id}/commissioner/compliance")
 def get_compliance_report(
     league_id: uuid.UUID,
@@ -3818,6 +3824,64 @@ def update_member_email_override(
     session.add(membership)
     session.commit()
     return {"email_opt_out": membership.email_opt_out}
+
+
+def _send_custom_email_task(
+    league_id: uuid.UUID,
+    subject: str | None,
+    body: str,
+    recipient_ids: list[uuid.UUID] | None,
+) -> None:
+    import logging
+    _log = logging.getLogger(__name__)
+    try:
+        with Session(engine) as session:
+            sent = notifications_svc.send_custom_commissioner_email(
+                session,
+                league_id,
+                subject=subject,
+                body_text=body,
+                recipient_membership_ids=recipient_ids,
+            )
+        _log.info("Custom commissioner email sent for league %s: %d recipients", league_id, len(sent))
+    except NotificationError as exc:
+        _log.warning("Custom commissioner email failed for league %s: %s", league_id, exc)
+    except Exception:
+        _log.exception("Unexpected error in custom commissioner email for league %s", league_id)
+
+
+@router.post("/leagues/{league_id}/commissioner/custom-email/send")
+def send_custom_commissioner_email(
+    league_id: uuid.UUID,
+    payload: CustomCommissionerEmailRequest,
+    background_tasks: BackgroundTasks,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+
+    if not payload.body.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email body cannot be empty.",
+        )
+    if not notifications_svc._smtp_configured():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SMTP is not configured. Set SMTP_HOST, SMTP_USERNAME, and SMTP_PASSWORD.",
+        )
+    league = session.get(League, league_id)
+    if league is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+
+    background_tasks.add_task(
+        _send_custom_email_task,
+        league_id,
+        payload.subject,
+        payload.body,
+        payload.recipient_ids,
+    )
+    return {"queued": True, "message": "Your email is being sent in the background."}
 
 
 @router.get("/leagues/{league_id}/reveal")

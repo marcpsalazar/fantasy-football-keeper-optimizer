@@ -2934,6 +2934,22 @@ export async function setMemberEmailOptOut(
   return { emailOptOut: boolean(data["email_opt_out"]) };
 }
 
+export async function sendCustomCommissionerEmail(
+  leagueId: string,
+  body: string,
+  subject?: string,
+  recipientIds?: string[],
+): Promise<{ queued: boolean; message: string }> {
+  const payload: Record<string, unknown> = { body };
+  if (subject) payload["subject"] = subject;
+  if (recipientIds && recipientIds.length > 0) payload["recipient_ids"] = recipientIds;
+  const data = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/commissioner/custom-email/send`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+  );
+  return { queued: boolean(data["queued"]), message: text(data["message"]) };
+}
+
 export async function getMyLeagueMemberships(): Promise<LeagueMembershipEmailPref[]> {
   const data = await fetchJson<Record<string, unknown>>("/api/auth/me/league-memberships");
   return array(data["memberships"]).map((m) => ({

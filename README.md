@@ -46,6 +46,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
   - **Compliance Checker**: automatically verifies that every team's keeper selections are within league limits. Shows a per-team pass/fail breakdown.
   - **Keeper Reveal**: controls the date on which keeper selections become visible to non-admin members. Before that date, member views are masked.
   - **Reminder Emails**: send deadline reminder emails to all league members via a configured SMTP server.
+  - **Send Message to League**: compose a custom email to all or selected league members using the same branded template. Choose recipients individually or send to everyone. Members who have opted out of emails are skipped automatically.
   - **Bulk Export**: download all team keeper card reports as a single ZIP archive.
 - **League Message Center**: a Facebook Messenger-style chat overlay fixed to the bottom-right corner of every screen. League members can send direct messages to each other and post to a shared league-wide channel. Messages deliver in real time to anyone online via WebSocket and persist so members can catch up later. A red badge on the chat button shows the total unread count. The commissioner always appears in every member's DM list even without a team assignment.
 - **Progressive Web App (PWA)**: the web app is installable on mobile and desktop. The browser displays a native install prompt when the app is ready; once installed, it runs in a standalone window with an offline-friendly shell.
@@ -926,6 +927,17 @@ SMTP_USE_TLS=true
 The SMTP status indicator shows whether the server is reachable before you send. Platform admins can
 test connectivity from this panel.
 
+**Send Message to League:**
+Compose and send a custom branded email to your entire league or to specific members.
+
+1. Open `Commissioner Tools` → `Send Message to League`.
+2. Optionally customize the subject (defaults to `A message from your commissioner — {League Name}`).
+3. Write the message body. Line breaks are preserved in the email.
+4. Select recipients — check **All members** to email everyone, or uncheck individuals to exclude them.
+5. Click `Send to N member(s)`. The email is sent in the background using the same dark-gold Mayhem template as the keeper deadline reminder. Members who have opted out of league emails are skipped automatically regardless of selection.
+
+Requires SMTP credentials set on the API service. See [Reminder Emails](#reminder-emails) for the required environment variables.
+
 **Bulk Export:**
 Click `Download All Reports` to generate a ZIP archive containing PNG keeper cards for every team in
 the league. Share the ZIP with your co-commissioner or post individual cards from the Team Outlook
@@ -1212,6 +1224,7 @@ DELETE /api/leagues/{league_id}/keeper-tenure
 GET    /api/leagues/{league_id}/commissioner/compliance
 POST   /api/leagues/{league_id}/commissioner/reminders/send
 GET    /api/leagues/{league_id}/commissioner/reminders/smtp-status
+POST   /api/leagues/{league_id}/commissioner/custom-email/send
 
 GET    /api/leagues/{league_id}/reveal
 GET    /api/leagues/{league_id}/news-impact

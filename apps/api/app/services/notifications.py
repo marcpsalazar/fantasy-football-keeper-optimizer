@@ -662,3 +662,212 @@ def smtp_status() -> dict[str, bool | str]:
         "port": s.smtp_port,
         "from_email": s.smtp_from_email,
     }
+
+
+# ---------------------------------------------------------------------------
+# Commissioner custom email
+# ---------------------------------------------------------------------------
+
+def _build_commissioner_custom_email(
+    *,
+    owner_name: str,
+    league_name: str,
+    body_text: str,
+    app_url: str,
+) -> tuple[str, str]:
+    """Return (html_body, text_body) for a custom commissioner message."""
+    opt_out_url = f"{app_url}/profile#email-preferences"
+
+    # Convert plain newlines to <br> for HTML rendering
+    body_html = body_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br />")
+
+    html_body = f"""
+<html>
+<head></head>
+<body style="margin:0;padding:0;background-color:#080c14;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#080c14;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#111827;max-width:600px;">
+
+          <!-- Gold top bar -->
+          <tr><td style="background:#f59e0b;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
+
+          <!-- Hero SVG -->
+          <tr>
+            <td style="padding:0;background:#080c14;font-size:0;line-height:0;">
+              <img src="https://mayhemfantasyfootballtools.com/email/hero.svg?v=3"
+                   width="600" height="200" alt=""
+                   style="display:block;width:100%;max-width:600px;height:auto;" />
+            </td>
+          </tr>
+
+          <!-- Branding bar -->
+          <tr>
+            <td style="background:#0d1117;padding:22px 40px 26px;border-top:2px solid #1a2236;">
+              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#f59e0b;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
+              <div style="font-size:32px;font-weight:900;color:#ffffff;letter-spacing:2px;font-family:Arial,sans-serif;">MAYHEM</div>
+              <div style="font-size:11px;color:#4a6080;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
+            </td>
+          </tr>
+
+          <!-- Greeting -->
+          <tr>
+            <td style="background:#111827;padding:32px 40px 0;">
+              <div style="font-size:28px;font-weight:900;color:#f8fafc;letter-spacing:0.5px;font-family:Arial,sans-serif;">HEY, {owner_name.upper()}.</div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:#4a6080;text-transform:uppercase;margin-top:8px;font-family:Arial,sans-serif;">A message from your commissioner</div>
+            </td>
+          </tr>
+
+          <!-- Divider -->
+          <tr><td style="background:#111827;padding:24px 40px 0;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
+
+          <!-- League badge + body -->
+          <tr>
+            <td style="background:#111827;padding:24px 40px 32px;">
+              {_section_label_html(league_name)}
+              <div style="color:#e2e8f0;font-size:15px;line-height:1.8;font-family:Arial,sans-serif;">{body_html}</div>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#0d1117;padding:20px 40px;text-align:center;">
+              <table cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid #f59e0b;">
+                <tr><td style="height:16px;">&nbsp;</td></tr>
+                <tr>
+                  <td style="text-align:center;">
+                    <p style="margin:0 0 6px;color:#2d3f5a;font-size:11px;font-family:Arial,sans-serif;">
+                      Sent by your league commissioner &bull;
+                      <a href="https://mayhemfantasyfootballtools.com" style="color:#4a6080;text-decoration:none;">Mayhem Fantasy Football Tools</a>
+                    </p>
+                    <a href="{opt_out_url}" style="color:#2d3f5a;font-size:10px;letter-spacing:1px;text-transform:uppercase;text-decoration:none;font-family:Arial,sans-serif;">Manage Email Preferences</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+    text_body = (
+        f"Hey {owner_name}!\n"
+        f"A message from your {league_name} commissioner:\n\n"
+        f"{body_text}\n\n"
+        f"Manage email preferences: {opt_out_url}\n"
+        "Sent via Mayhem Fantasy Football Tools — https://mayhemfantasyfootballtools.com"
+    )
+
+    return html_body, text_body
+
+
+def send_custom_commissioner_email(
+    session: Session,
+    league_id: uuid.UUID,
+    *,
+    subject: str | None,
+    body_text: str,
+    recipient_membership_ids: list[uuid.UUID] | None = None,
+) -> list[str]:
+    """Send a custom commissioner message to selected league members (or all if None).
+
+    Returns list of email addresses sent to.
+    """
+    settings = get_settings()
+
+    if not _smtp_configured():
+        raise NotificationError(
+            "SMTP is not configured. Set SMTP_HOST, SMTP_USERNAME, and SMTP_PASSWORD."
+        )
+
+    league = session.get(League, league_id)
+    if league is None:
+        raise NotificationError("League not found.")
+
+    app_url = settings.app_url or "https://mayhemfantasyfootballtools.com"
+    final_subject = subject or f"A message from your commissioner — {league.name}"
+
+    # Build recipient list
+    memberships_q = select(LeagueMembership).where(LeagueMembership.league_id == league_id)
+    if recipient_membership_ids:
+        memberships_q = memberships_q.where(LeagueMembership.id.in_(recipient_membership_ids))
+    memberships = session.exec(memberships_q).all()
+
+    if not memberships:
+        return []
+
+    user_ids = [m.user_id for m in memberships]
+    users = session.exec(select(User).where(User.id.in_(user_ids))).all()
+    user_by_id = {u.id: u for u in users}
+
+    teams = session.exec(select(Team).where(Team.league_id == league_id)).all()
+    team_by_user: dict = {t.user_id: t for t in teams if t.user_id}
+
+    use_resend_api = (settings.smtp_host or "").lower() == "smtp.resend.com"
+    from_display = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+
+    smtp_server: smtplib.SMTP | None = None
+    if not use_resend_api:
+        try:
+            smtp_server = smtplib.SMTP(settings.smtp_host, settings.smtp_port)  # type: ignore[arg-type]
+            if settings.smtp_use_tls:
+                smtp_server.starttls()
+            smtp_server.login(settings.smtp_username, settings.smtp_password)  # type: ignore[arg-type]
+        except (smtplib.SMTPException, OSError) as exc:
+            raise NotificationError(f"SMTP connection failed: {exc}") from exc
+
+    sent: list[str] = []
+    errors: list[str] = []
+    try:
+        for membership in memberships:
+            if membership.email_opt_out:
+                continue
+            user = user_by_id.get(membership.user_id)
+            if user is None or not user.email:
+                continue
+            team = team_by_user.get(membership.user_id)
+            owner_name = _resolve_owner_name(user, team)
+
+            html_body, text_body = _build_commissioner_custom_email(
+                owner_name=owner_name,
+                league_name=league.name,
+                body_text=body_text,
+                app_url=app_url,
+            )
+            try:
+                if use_resend_api:
+                    _send_via_resend_api(
+                        api_key=settings.smtp_password,  # type: ignore[arg-type]
+                        from_display=from_display,
+                        to=user.email,
+                        subject=final_subject,
+                        html=html_body,
+                        text=text_body,
+                    )
+                else:
+                    msg = MIMEMultipart("alternative")
+                    msg["Subject"] = final_subject
+                    msg["From"] = from_display
+                    msg["To"] = user.email
+                    msg.attach(MIMEText(text_body, "plain"))
+                    msg.attach(MIMEText(html_body, "html"))
+                    smtp_server.sendmail(settings.smtp_from_email, [user.email], msg.as_string())  # type: ignore[union-attr]
+                sent.append(user.email)
+            except (NotificationError, smtplib.SMTPException, OSError) as exc:
+                errors.append(f"{user.email}: {exc}")
+    finally:
+        if smtp_server is not None:
+            try:
+                smtp_server.quit()
+            except Exception:
+                pass
+
+    if errors:
+        raise NotificationError(f"Some emails failed to send: {'; '.join(errors)}")
+
+    return sent

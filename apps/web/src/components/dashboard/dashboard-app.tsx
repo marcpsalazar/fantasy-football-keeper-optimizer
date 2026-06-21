@@ -251,6 +251,7 @@ import {
   getEmailSettings,
   updateEmailSettings,
   setMemberEmailOptOut,
+  sendCustomCommissionerEmail,
   type EmailSettings,
   type LeagueMembershipEmailPref,
   type WatchlistEntry,
@@ -15102,10 +15103,11 @@ function CommissionerToolsPage({
         id="ct-season-actions"
         icon={CalendarDays}
         title="Season Actions"
-        description="Publish keeper reveals, send reminder emails, and export league data."
+        description="Publish keeper reveals, send reminder emails, message your league, and export league data."
       >
         <KeeperRevealPanel leagueId={activeLeagueId} league={league} />
         <ReminderEmailPanel leagueId={activeLeagueId} league={league} />
+        <CommissionerEmailPanel leagueId={activeLeagueId} league={league} />
         <BulkExportPanel leagueId={activeLeagueId} league={league} />
       </CommissionerSection>
 
@@ -15763,6 +15765,196 @@ function ReminderEmailPanel({
             </p>
           )}
         </div>
+      </div>
+    </PagePanel>
+  );
+}
+
+function CommissionerEmailPanel({
+  leagueId,
+  league,
+}: {
+  leagueId: string | null;
+  league: WorkspaceData["league"];
+}) {
+  const [members, setMembers] = React.useState<LeagueMembership[]>([]);
+  const [smtpStatus, setSmtpStatus] = React.useState<SmtpStatus | null>(null);
+  const [subject, setSubject] = React.useState("");
+  const [body, setBody] = React.useState("");
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [allSelected, setAllSelected] = React.useState(true);
+  const [sending, setSending] = React.useState(false);
+  const [sent, setSent] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    if (!leagueId) return;
+    getSmtpStatus(leagueId)
+      .then(setSmtpStatus)
+      .catch(() => {});
+    getLeagueMemberships(leagueId)
+      .then((ms) => {
+        setMembers(ms);
+        setSelectedIds(new Set(ms.map((m) => m.id)));
+      })
+      .catch(() => {});
+  }, [leagueId]);
+
+  const toggleMember = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    setAllSelected(false);
+  };
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+      setAllSelected(false);
+    } else {
+      setSelectedIds(new Set(members.map((m) => m.id)));
+      setAllSelected(true);
+    }
+  };
+
+  React.useEffect(() => {
+    setAllSelected(members.length > 0 && selectedIds.size === members.length);
+  }, [selectedIds, members]);
+
+  const handleSend = async () => {
+    if (!leagueId || !body.trim()) return;
+    setSending(true);
+    setError("");
+    setSent(false);
+    try {
+      const recipientIds = allSelected ? undefined : Array.from(selectedIds);
+      await sendCustomCommissionerEmail(leagueId, body, subject || undefined, recipientIds);
+      setSent(true);
+      setBody("");
+      setSubject("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to send email.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const defaultSubject = league?.name
+    ? `A message from your commissioner — ${league.name}`
+    : "A message from your commissioner";
+
+  return (
+    <PagePanel
+      title="Send Message to League"
+      description="Compose a custom email to all or selected league members using the same branded template."
+    >
+      <div className="space-y-5">
+        {/* SMTP status */}
+        {smtpStatus !== null && (
+          <div className="flex items-center gap-2 text-sm">
+            <span
+              className={cn(
+                "inline-block size-2 rounded-full",
+                smtpStatus.configured ? "bg-emerald-500" : "bg-zinc-400",
+              )}
+            />
+            <span className={smtpStatus.configured ? "text-zinc-700" : "text-zinc-500"}>
+              {smtpStatus.configured
+                ? `SMTP configured (${smtpStatus.host}:${smtpStatus.port})`
+                : "SMTP not configured — set SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD env vars"}
+            </span>
+          </div>
+        )}
+
+        {/* Subject */}
+        <div className="space-y-1.5">
+          <Label className="text-sm text-zinc-700">Subject</Label>
+          <input
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            placeholder={defaultSubject}
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+          />
+          <p className="text-xs text-zinc-400">Leave blank to use the default subject above.</p>
+        </div>
+
+        {/* Body */}
+        <div className="space-y-1.5">
+          <Label className="text-sm text-zinc-700">Message</Label>
+          <textarea
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500 min-h-[140px] resize-y"
+            placeholder="Write your message to the league here…"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+          />
+        </div>
+
+        {/* Recipients */}
+        {members.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-zinc-800">Recipients</p>
+            <div className="rounded-lg border border-zinc-200 overflow-hidden">
+              {/* Select all row */}
+              <label className="flex items-center gap-3 px-3 py-2.5 bg-zinc-50 border-b border-zinc-200 cursor-pointer hover:bg-zinc-100">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  className="size-4 accent-violet-600 cursor-pointer"
+                />
+                <span className="text-xs font-semibold text-zinc-600 uppercase tracking-wide">
+                  All members ({members.length})
+                </span>
+              </label>
+              {members.map((m) => (
+                <label
+                  key={m.id}
+                  className="flex items-center gap-3 px-3 py-2.5 border-b border-zinc-100 last:border-0 cursor-pointer hover:bg-zinc-50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(m.id)}
+                    onChange={() => toggleMember(m.id)}
+                    className="size-4 accent-violet-600 cursor-pointer"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-zinc-800">{m.alias ?? m.email}</p>
+                    {m.alias && <p className="text-xs text-zinc-400">{m.email}</p>}
+                  </div>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-zinc-400">
+              {selectedIds.size} of {members.length} member(s) selected. Members who have opted out of emails will be skipped automatically.
+            </p>
+          </div>
+        )}
+
+        {/* Feedback */}
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        {sent && (
+          <p className="text-sm text-emerald-700 font-medium">
+            Your message is being sent in the background.
+          </p>
+        )}
+
+        {/* Send button */}
+        <div className="flex items-center gap-3">
+          <Button
+            onClick={handleSend}
+            disabled={sending || !leagueId || !body.trim() || selectedIds.size === 0 || !smtpStatus?.configured}
+          >
+            {sending ? "Sending…" : `Send to ${selectedIds.size} member(s)`}
+          </Button>
+        </div>
+        {!smtpStatus?.configured && (
+          <p className="text-xs text-zinc-400">
+            Email sending is disabled until SMTP is configured on the server.
+          </p>
+        )}
       </div>
     </PagePanel>
   );
