@@ -47,6 +47,7 @@ Full-stack keeper optimizer for fantasy football leagues. The app imports league
   - **Keeper Reveal**: controls the date on which keeper selections become visible to non-admin members. Before that date, member views are masked.
   - **Reminder Emails**: send deadline reminder emails to all league members via a configured SMTP server.
   - **Send Message to League**: compose a custom email to all or selected league members using the same branded template. Choose recipients individually or send to everyone. Members who have opted out of emails are skipped automatically.
+  - **Invite Member**: invite owners to the league by email. If the email matches an existing account, a branded invite email is queued and an in-app DM is delivered to that user. If the email is not yet registered, the commissioner provides an owner alias (used to address the recipient in the email) and a registration invite is sent instead.
   - **Bulk Export**: download all team keeper card reports as a single ZIP archive.
 - **League Message Center**: a Facebook Messenger-style chat overlay fixed to the bottom-right corner of every screen. League members can send direct messages to each other and post to a shared league-wide channel. Messages deliver in real time to anyone online via WebSocket and persist so members can catch up later. A red badge on the chat button shows the total unread count. The commissioner always appears in every member's DM list even without a team assignment.
 - **Progressive Web App (PWA)**: the web app is installable on mobile and desktop. The browser displays a native install prompt when the app is ready; once installed, it runs in a standalone window with an offline-friendly shell.
@@ -880,6 +881,17 @@ Missing teams are warnings because the import path can create missing teams auto
 **League Members:**
 Add or remove league members and set per-league roles (`League Commissioner` or `Member`).
 
+**Invite Member:**
+Invite a new owner to the league by email.
+
+1. Open `Commissioner Tools` → `League Setup` → `Invite Member`.
+2. Enter the email address of the person you want to invite.
+3. Click `Send Invite`.
+   - If the email matches an **existing account**, a branded invite email is queued and an in-app DM is delivered to that user immediately.
+   - If the email is **not yet registered**, an `Owner Alias` field appears. Enter how this person should be addressed in the email (e.g. "Big Mike"), then click `Send Invite` again to dispatch a registration invite directing them to create an account.
+
+Requires SMTP credentials set on the API service. See [Reminder Emails](#reminder-emails) for the required environment variables.
+
 **Keeper Rules:**
 Set league-level keeper eligibility constraints, including the maximum number of consecutive seasons a team may keep the same player.
 
@@ -1225,6 +1237,7 @@ GET    /api/leagues/{league_id}/commissioner/compliance
 POST   /api/leagues/{league_id}/commissioner/reminders/send
 GET    /api/leagues/{league_id}/commissioner/reminders/smtp-status
 POST   /api/leagues/{league_id}/commissioner/custom-email/send
+POST   /api/leagues/{league_id}/commissioner/invite
 
 GET    /api/leagues/{league_id}/reveal
 GET    /api/leagues/{league_id}/news-impact

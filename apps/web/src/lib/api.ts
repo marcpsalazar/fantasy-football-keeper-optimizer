@@ -2950,6 +2950,24 @@ export async function sendCustomCommissionerEmail(
   return { queued: boolean(data["queued"]), message: text(data["message"]) };
 }
 
+export async function sendLeagueInvite(
+  leagueId: string,
+  email: string,
+  ownerAlias?: string,
+): Promise<{ status: "existing_user" | "new_user"; emailQueued: boolean; messageSent: boolean }> {
+  const payload: Record<string, unknown> = { email };
+  if (ownerAlias) payload["owner_alias"] = ownerAlias;
+  const data = await fetchJson<Record<string, unknown>>(
+    `/api/leagues/${leagueId}/commissioner/invite`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+  );
+  return {
+    status: text(data["status"]) as "existing_user" | "new_user",
+    emailQueued: boolean(data["email_queued"]),
+    messageSent: boolean(data["message_sent"]),
+  };
+}
+
 export async function getMyLeagueMemberships(): Promise<LeagueMembershipEmailPref[]> {
   const data = await fetchJson<Record<string, unknown>>("/api/auth/me/league-memberships");
   return array(data["memberships"]).map((m) => ({

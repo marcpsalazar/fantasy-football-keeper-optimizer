@@ -28,6 +28,7 @@ from app.models import (
     League,
     LeagueMembership,
     ManualOverride,
+    Message,
     MockDraftAnalysis,
     MockDraftPick,
     MockDraftSession,
@@ -3659,6 +3660,11 @@ class CustomCommissionerEmailRequest(BaseModel):
     recipient_ids: list[uuid.UUID] | None = None
 
 
+class LeagueInviteRequest(BaseModel):
+    email: str
+    owner_alias: str | None = None
+
+
 @router.get("/leagues/{league_id}/commissioner/compliance")
 def get_compliance_report(
     league_id: uuid.UUID,
@@ -3882,6 +3888,110 @@ def send_custom_commissioner_email(
         payload.recipient_ids,
     )
     return {"queued": True, "message": "Your email is being sent in the background."}
+
+
+def _send_invite_email_task(
+    to_email: str,
+    owner_name: str,
+    league_name: str,
+    commissioner_name: str,
+    is_existing_user: bool,
+    app_url: str,
+) -> None:
+    import logging
+    _log = logging.getLogger(__name__)
+    try:
+        notifications_svc.send_league_invite_email(
+            to_email=to_email,
+            owner_name=owner_name,
+            league_name=league_name,
+            commissioner_name=commissioner_name,
+            is_existing_user=is_existing_user,
+            app_url=app_url,
+        )
+        _log.info("League invite email sent to %s", to_email)
+    except notifications_svc.NotificationError as exc:
+        _log.warning("League invite email failed for %s: %s", to_email, exc)
+    except Exception:
+        _log.exception("Unexpected error sending league invite to %s", to_email)
+
+
+@router.post("/leagues/{league_id}/commissioner/invite")
+def invite_league_member(
+    league_id: uuid.UUID,
+    payload: LeagueInviteRequest,
+    background_tasks: BackgroundTasks,
+    user: User | None = Depends(require_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_league_admin(session, user, league_id)
+
+    email = (payload.email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required.")
+
+    league = session.get(League, league_id)
+    if league is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+
+    settings = get_settings()
+    app_url = settings.app_url or "https://mayhemfantasyfootballtools.com"
+    commissioner_name = (user.alias or user.email.split("@")[0]) if user else "Your Commissioner"
+
+    invitee = session.exec(select(User).where(User.email == email)).first()
+    email_queued = False
+    message_sent = False
+
+    if invitee:
+        owner_name = invitee.alias or invitee.email.split("@")[0]
+
+        # Send a DM from the commissioner to the invitee
+        if user:
+            dm = Message(
+                sender_id=user.id,
+                channel_type="dm",
+                recipient_id=invitee.id,
+                content=f"You've been invited to join {league.name}! Check your email for details and log in to access the league.",
+            )
+            session.add(dm)
+            session.commit()
+            message_sent = True
+
+        if notifications_svc._smtp_configured():
+            background_tasks.add_task(
+                _send_invite_email_task,
+                payload.email.strip(),
+                owner_name,
+                league.name,
+                commissioner_name,
+                True,
+                app_url,
+            )
+            email_queued = True
+
+        return {"status": "existing_user", "email_queued": email_queued, "message_sent": message_sent}
+
+    # New user — owner_alias is required
+    owner_alias = (payload.owner_alias or "").strip()
+    if not owner_alias:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="owner_alias is required when inviting a user who has not yet registered.",
+        )
+
+    if notifications_svc._smtp_configured():
+        background_tasks.add_task(
+            _send_invite_email_task,
+            payload.email.strip(),
+            owner_alias,
+            league.name,
+            commissioner_name,
+            False,
+            app_url,
+        )
+        email_queued = True
+
+    return {"status": "new_user", "email_queued": email_queued, "message_sent": False}
 
 
 @router.get("/leagues/{league_id}/reveal")

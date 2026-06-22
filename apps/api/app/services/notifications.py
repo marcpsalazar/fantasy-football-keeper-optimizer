@@ -871,3 +871,268 @@ def send_custom_commissioner_email(
         raise NotificationError(f"Some emails failed to send: {'; '.join(errors)}")
 
     return sent
+
+
+# ---------------------------------------------------------------------------
+# League invite emails
+# ---------------------------------------------------------------------------
+
+def _build_invite_existing_user_email(
+    *,
+    owner_name: str,
+    league_name: str,
+    commissioner_name: str,
+    app_url: str,
+) -> tuple[str, str]:
+    """Return (html_body, text_body) for a league invite to an existing registered user."""
+    login_url = f"{app_url}/login"
+
+    html_body = f"""
+<html>
+<head></head>
+<body style="margin:0;padding:0;background-color:#080c14;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#080c14;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#111827;max-width:600px;">
+
+          <!-- Gold top bar -->
+          <tr><td style="background:#f59e0b;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
+
+          <!-- Hero SVG -->
+          <tr>
+            <td style="padding:0;background:#080c14;font-size:0;line-height:0;">
+              <img src="https://mayhemfantasyfootballtools.com/email/hero.svg?v=3"
+                   width="600" height="200" alt=""
+                   style="display:block;width:100%;max-width:600px;height:auto;" />
+            </td>
+          </tr>
+
+          <!-- Branding bar -->
+          <tr>
+            <td style="background:#0d1117;padding:22px 40px 26px;border-top:2px solid #1a2236;">
+              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#f59e0b;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
+              <div style="font-size:32px;font-weight:900;color:#ffffff;letter-spacing:2px;font-family:Arial,sans-serif;">MAYHEM</div>
+              <div style="font-size:11px;color:#4a6080;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
+            </td>
+          </tr>
+
+          <!-- Greeting -->
+          <tr>
+            <td style="background:#111827;padding:32px 40px 0;">
+              <div style="font-size:28px;font-weight:900;color:#f8fafc;letter-spacing:0.5px;font-family:Arial,sans-serif;">HEY, {owner_name.upper()}.</div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:#4a6080;text-transform:uppercase;margin-top:8px;font-family:Arial,sans-serif;">You've been invited to a league</div>
+            </td>
+          </tr>
+
+          <!-- Divider -->
+          <tr><td style="background:#111827;padding:24px 40px 0;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="background:#111827;padding:24px 40px 32px;">
+              {_section_label_html(league_name)}
+              <div style="color:#e2e8f0;font-size:15px;line-height:1.8;font-family:Arial,sans-serif;">
+                <strong style="color:#f59e0b;">{commissioner_name}</strong> has invited you to join
+                <strong style="color:#ffffff;">{league_name}</strong> on Mayhem Fantasy Football Tools.<br /><br />
+                Log in to your account to access the league and start managing your keepers.
+              </div>
+              <div style="margin-top:28px;text-align:center;">
+                <a href="{login_url}" style="display:inline-block;background:#f59e0b;color:#000000;font-weight:800;font-size:14px;letter-spacing:1.5px;text-transform:uppercase;padding:14px 36px;text-decoration:none;font-family:Arial,sans-serif;">Log In Now</a>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#0d1117;padding:20px 40px;text-align:center;">
+              <table cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid #f59e0b;">
+                <tr><td style="height:16px;">&nbsp;</td></tr>
+                <tr>
+                  <td style="text-align:center;">
+                    <p style="margin:0 0 6px;color:#2d3f5a;font-size:11px;font-family:Arial,sans-serif;">
+                      Sent by your league commissioner &bull;
+                      <a href="https://mayhemfantasyfootballtools.com" style="color:#4a6080;text-decoration:none;">Mayhem Fantasy Football Tools</a>
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+    text_body = (
+        f"Hey {owner_name}!\n\n"
+        f"{commissioner_name} has invited you to join {league_name} on Mayhem Fantasy Football Tools.\n\n"
+        f"Log in to access the league: {login_url}\n\n"
+        "Mayhem Fantasy Football Tools — https://mayhemfantasyfootballtools.com"
+    )
+    return html_body, text_body
+
+
+def _build_invite_new_user_email(
+    *,
+    owner_alias: str,
+    league_name: str,
+    commissioner_name: str,
+    app_url: str,
+) -> tuple[str, str]:
+    """Return (html_body, text_body) for a league invite to a user who hasn't registered yet."""
+    register_url = f"{app_url}/register"
+
+    html_body = f"""
+<html>
+<head></head>
+<body style="margin:0;padding:0;background-color:#080c14;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#080c14;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#111827;max-width:600px;">
+
+          <!-- Gold top bar -->
+          <tr><td style="background:#f59e0b;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
+
+          <!-- Hero SVG -->
+          <tr>
+            <td style="padding:0;background:#080c14;font-size:0;line-height:0;">
+              <img src="https://mayhemfantasyfootballtools.com/email/hero.svg?v=3"
+                   width="600" height="200" alt=""
+                   style="display:block;width:100%;max-width:600px;height:auto;" />
+            </td>
+          </tr>
+
+          <!-- Branding bar -->
+          <tr>
+            <td style="background:#0d1117;padding:22px 40px 26px;border-top:2px solid #1a2236;">
+              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#f59e0b;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
+              <div style="font-size:32px;font-weight:900;color:#ffffff;letter-spacing:2px;font-family:Arial,sans-serif;">MAYHEM</div>
+              <div style="font-size:11px;color:#4a6080;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
+            </td>
+          </tr>
+
+          <!-- Greeting -->
+          <tr>
+            <td style="background:#111827;padding:32px 40px 0;">
+              <div style="font-size:28px;font-weight:900;color:#f8fafc;letter-spacing:0.5px;font-family:Arial,sans-serif;">HEY, {owner_alias.upper()}.</div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:#4a6080;text-transform:uppercase;margin-top:8px;font-family:Arial,sans-serif;">You've been invited to play fantasy football</div>
+            </td>
+          </tr>
+
+          <!-- Divider -->
+          <tr><td style="background:#111827;padding:24px 40px 0;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="background:#111827;padding:24px 40px 32px;">
+              {_section_label_html(league_name)}
+              <div style="color:#e2e8f0;font-size:15px;line-height:1.8;font-family:Arial,sans-serif;">
+                <strong style="color:#f59e0b;">{commissioner_name}</strong> has invited you to join
+                <strong style="color:#ffffff;">{league_name}</strong> on Mayhem Fantasy Football Tools.<br /><br />
+                Mayhem makes it easy to track keepers, run drafts, and manage your fantasy football league all in one place.
+                Create a free account to get started.
+              </div>
+              <div style="margin-top:28px;text-align:center;">
+                <a href="{register_url}" style="display:inline-block;background:#f59e0b;color:#000000;font-weight:800;font-size:14px;letter-spacing:1.5px;text-transform:uppercase;padding:14px 36px;text-decoration:none;font-family:Arial,sans-serif;">Create Your Account</a>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#0d1117;padding:20px 40px;text-align:center;">
+              <table cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid #f59e0b;">
+                <tr><td style="height:16px;">&nbsp;</td></tr>
+                <tr>
+                  <td style="text-align:center;">
+                    <p style="margin:0 0 6px;color:#2d3f5a;font-size:11px;font-family:Arial,sans-serif;">
+                      Sent by your league commissioner &bull;
+                      <a href="https://mayhemfantasyfootballtools.com" style="color:#4a6080;text-decoration:none;">Mayhem Fantasy Football Tools</a>
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+    text_body = (
+        f"Hey {owner_alias}!\n\n"
+        f"{commissioner_name} has invited you to join {league_name} on Mayhem Fantasy Football Tools.\n\n"
+        "Mayhem makes it easy to track keepers, run drafts, and manage your fantasy football league.\n"
+        f"Create a free account to get started: {register_url}\n\n"
+        "Mayhem Fantasy Football Tools — https://mayhemfantasyfootballtools.com"
+    )
+    return html_body, text_body
+
+
+def send_league_invite_email(
+    *,
+    to_email: str,
+    owner_name: str,
+    league_name: str,
+    commissioner_name: str,
+    is_existing_user: bool,
+    app_url: str,
+) -> None:
+    """Send a league invite email to a single recipient (existing or new user)."""
+    settings = get_settings()
+    if not _smtp_configured():
+        raise NotificationError("SMTP is not configured. Set SMTP_HOST, SMTP_USERNAME, and SMTP_PASSWORD.")
+
+    if is_existing_user:
+        subject = f"You've been invited to join {league_name}"
+        html_body, text_body = _build_invite_existing_user_email(
+            owner_name=owner_name,
+            league_name=league_name,
+            commissioner_name=commissioner_name,
+            app_url=app_url,
+        )
+    else:
+        subject = f"Join {league_name} on Mayhem Fantasy Football Tools"
+        html_body, text_body = _build_invite_new_user_email(
+            owner_alias=owner_name,
+            league_name=league_name,
+            commissioner_name=commissioner_name,
+            app_url=app_url,
+        )
+
+    from_display = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+    use_resend_api = (settings.smtp_host or "").lower() == "smtp.resend.com"
+
+    if use_resend_api:
+        _send_via_resend_api(
+            api_key=settings.smtp_password,  # type: ignore[arg-type]
+            from_display=from_display,
+            to=to_email,
+            subject=subject,
+            html=html_body,
+            text=text_body,
+        )
+    else:
+        try:
+            smtp_server = smtplib.SMTP(settings.smtp_host, settings.smtp_port)  # type: ignore[arg-type]
+            if settings.smtp_use_tls:
+                smtp_server.starttls()
+            smtp_server.login(settings.smtp_username, settings.smtp_password)  # type: ignore[arg-type]
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = from_display
+            msg["To"] = to_email
+            msg.attach(MIMEText(text_body, "plain"))
+            msg.attach(MIMEText(html_body, "html"))
+            smtp_server.sendmail(settings.smtp_from_email, [to_email], msg.as_string())  # type: ignore[arg-type]
+            smtp_server.quit()
+        except (smtplib.SMTPException, OSError) as exc:
+            raise NotificationError(f"SMTP send failed: {exc}") from exc

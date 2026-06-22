@@ -252,6 +252,7 @@ import {
   updateEmailSettings,
   setMemberEmailOptOut,
   sendCustomCommissionerEmail,
+  sendLeagueInvite,
   type EmailSettings,
   type LeagueMembershipEmailPref,
   type WatchlistEntry,
@@ -520,9 +521,9 @@ const screenGuides: ScreenGuide[] = [
   {
     title: "Commissioner Tools",
     icon: Wrench,
-    bestFor: "All league commissioner tasks: managing teams, members, imports, league settings, keeper rules, compliance, reveal, reminders, and bulk export.",
-    howToRead: "League Management, Draft Format, League Settings, League Data Imports (Sleeper / Yahoo / ESPN / CSV), League Members, Keeper Rules, and Keeper Tenure are all here. Below those, Commissioner Dates sets deadlines and reveal date, Compliance Checker verifies every team is within limits, Keeper Reveal controls member visibility, Reminder Emails sends deadline notices, and Bulk Export bundles all keeper card PNGs into a ZIP.",
-    watchFor: "Run the optimizer after any import so the compliance checker has fresh data. Always preview imports before committing. Set the reveal date before finalization so the keeper reveal works as expected. SMTP credentials must be configured on the server before email sending is enabled.",
+    bestFor: "All league commissioner tasks: managing teams, members, imports, league settings, keeper rules, compliance, reveal, reminders, invites, and bulk export.",
+    howToRead: "League Management, Draft Format, League Settings, League Data Imports (Sleeper / Yahoo / ESPN / CSV), League Members, Invite Member, Keeper Rules, and Keeper Tenure are all here. Commissioner Dates sets deadlines and reveal date, Compliance Checker verifies every team is within limits, Keeper Reveal controls member visibility, Reminder Emails sends deadline notices, Send Message to League composes a custom email blast, and Bulk Export bundles all keeper card PNGs into a ZIP. Use Invite Member to onboard owners: if the email matches an existing account, a branded invite email is queued and an in-app DM is sent to that user; if the email is not yet registered, enter an Owner Alias (how they'll be addressed in the email) and a registration invite is sent instead.",
+    watchFor: "Run the optimizer after any import so the compliance checker has fresh data. Always preview imports before committing. Set the reveal date before finalization so the keeper reveal works as expected. SMTP credentials must be configured on the server before email sending or invites are enabled.",
     view: "commissioner-tools",
     adminOnly: true,
   },
@@ -15072,6 +15073,7 @@ function CommissionerToolsPage({
         <LeagueRosterSettingsPanel />
         <CommissionerDatesPanel league={league} leagueId={activeLeagueId} refreshData={refreshData} />
         <LeagueMembersPanel />
+        <InviteUserPanel leagueId={activeLeagueId} />
       </CommissionerSection>
 
       <CommissionerSection
@@ -15457,6 +15459,108 @@ function KeeperRevealPanel({
             </div>
           </div>
         )}
+      </div>
+    </PagePanel>
+  );
+}
+
+function InviteUserPanel({ leagueId }: { leagueId: string | null }) {
+  const [email, setEmail] = React.useState("");
+  const [ownerAlias, setOwnerAlias] = React.useState("");
+  const [showAlias, setShowAlias] = React.useState(false);
+  const [sending, setSending] = React.useState(false);
+  const [result, setResult] = React.useState<{ status: string; emailQueued: boolean; messageSent: boolean } | null>(null);
+  const [error, setError] = React.useState("");
+
+  const handleSend = async () => {
+    if (!leagueId) return;
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setError("Email address is required.");
+      return;
+    }
+    setSending(true);
+    setError("");
+    setResult(null);
+    try {
+      const res = await sendLeagueInvite(leagueId, trimmedEmail, ownerAlias.trim() || undefined);
+      if (res.status === "new_user" && !ownerAlias.trim()) {
+        setShowAlias(true);
+        setError("This email isn't registered yet. Enter an owner alias to address them in the invite email, then send again.");
+        setSending(false);
+        return;
+      }
+      setResult(res);
+      setEmail("");
+      setOwnerAlias("");
+      setShowAlias(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to send invite.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <PagePanel title="Invite Member" description="Send a league invite via email and in-app message.">
+      <div className="space-y-4 max-w-md">
+        <div>
+          <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-1.5">
+            Email Address
+          </label>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => { setEmail(e.target.value); setResult(null); setError(""); setShowAlias(false); setOwnerAlias(""); }}
+            placeholder="owner@example.com"
+            className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-amber-500 focus:outline-none"
+          />
+        </div>
+
+        {showAlias && (
+          <div>
+            <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-1.5">
+              Owner Alias
+            </label>
+            <input
+              type="text"
+              value={ownerAlias}
+              onChange={(e) => setOwnerAlias(e.target.value)}
+              placeholder="e.g. Big Mike"
+              className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-amber-500 focus:outline-none"
+            />
+            <p className="mt-1 text-xs text-zinc-500">
+              How this person will be addressed in the invite email.
+            </p>
+          </div>
+        )}
+
+        {error && <p className="text-xs text-red-400">{error}</p>}
+
+        {result && (
+          <div className="rounded border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-400 space-y-0.5">
+            {result.status === "existing_user" ? (
+              <>
+                <p className="font-semibold">Invite sent to existing member.</p>
+                {result.emailQueued && <p>Email invite queued.</p>}
+                {result.messageSent && <p>In-app message delivered.</p>}
+              </>
+            ) : (
+              <>
+                <p className="font-semibold">Invite sent to new user.</p>
+                {result.emailQueued && <p>Registration invite email queued.</p>}
+              </>
+            )}
+          </div>
+        )}
+
+        <button
+          onClick={handleSend}
+          disabled={sending || !email.trim()}
+          className="rounded bg-amber-500 px-4 py-2 text-xs font-bold uppercase tracking-widest text-black hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {sending ? "Sending…" : "Send Invite"}
+        </button>
       </div>
     </PagePanel>
   );
