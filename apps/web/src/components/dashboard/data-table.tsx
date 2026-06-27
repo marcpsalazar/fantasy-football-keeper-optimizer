@@ -206,7 +206,7 @@ export function DataTable<TData>({
               {isTeamFilterOpen ? (
                 <div className="absolute right-0 top-10 z-20 w-[min(320px,calc(100vw-1rem))] rounded-md border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-zinc-900">Filter teams</p>
+                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Filter teams</p>
                     <Button
                       className="h-7 px-2 text-xs"
                       disabled={selectedTeams.length === 0 && teamSearch.length === 0}
@@ -223,7 +223,7 @@ export function DataTable<TData>({
                       placeholder="Search team names"
                       value={teamSearch}
                     />
-                    <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-200">
+                    <div className="max-h-64 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-700">
                       {matchingTeamOptions.length ? (
                         matchingTeamOptions.map((team) => {
                           const active = selectedTeams.includes(team);
@@ -232,8 +232,8 @@ export function DataTable<TData>({
                               aria-pressed={active}
                               className={["flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors",
                                 active
-                                  ? "bg-emerald-50 text-emerald-950"
-                                  : "text-zinc-700 hover:bg-zinc-50",
+                                  ? "bg-emerald-50 text-emerald-950 dark:bg-emerald-900/30 dark:text-emerald-300"
+                                  : "text-zinc-700 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800",
                               ].join(" ")}
                               key={team}
                               onClick={() => toggleTeam(team)}
@@ -255,7 +255,7 @@ export function DataTable<TData>({
                           );
                         })
                       ) : (
-                        <p className="px-3 py-4 text-sm text-zinc-500">No teams match the current search.</p>
+                        <p className="px-3 py-4 text-sm text-zinc-500 dark:text-zinc-400">No teams match the current search.</p>
                       )}
                     </div>
                     {selectedTeams.length ? (

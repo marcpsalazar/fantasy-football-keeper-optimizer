@@ -7092,11 +7092,9 @@ function KeeperRecommendationsPage() {
             <button
               onClick={() => setChartCollapsed((c) => !c)}
               aria-label={chartCollapsed ? "Expand chart" : "Collapse chart"}
-              className="shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+              className="shrink-0 text-xs text-[#1C4D93] dark:text-sky-400"
             >
-              <ChevronRight
-                className={cn("size-4 transition-transform duration-200", !chartCollapsed && "rotate-90")}
-              />
+              {chartCollapsed ? "Show" : "Hide"}
             </button>
           </CardHeader>
           {!chartCollapsed && (
