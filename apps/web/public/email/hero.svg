@@ -1,24 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="600" height="200" viewBox="0 0 600 200">
   <defs>
     <radialGradient id="gl" cx="15%" cy="0%" r="60%">
-      <stop offset="0%"   stop-color="#f59e0b" stop-opacity="0.85"/>
-      <stop offset="40%"  stop-color="#f59e0b" stop-opacity="0.30"/>
-      <stop offset="100%" stop-color="#122452"  stop-opacity="0"/>
+      <stop offset="0%"   stop-color="#FFB340" stop-opacity="0.85"/>
+      <stop offset="40%"  stop-color="#FFB340" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#040E1B"  stop-opacity="0"/>
     </radialGradient>
     <radialGradient id="gr" cx="85%" cy="0%" r="60%">
       <stop offset="0%"   stop-color="#818cf8" stop-opacity="0.75"/>
       <stop offset="40%"  stop-color="#818cf8" stop-opacity="0.25"/>
-      <stop offset="100%" stop-color="#122452"  stop-opacity="0"/>
+      <stop offset="100%" stop-color="#040E1B"  stop-opacity="0"/>
     </radialGradient>
     <!-- Goal post glow halo -->
     <radialGradient id="gp" cx="50%" cy="32%" r="18%">
-      <stop offset="0%"   stop-color="#f59e0b" stop-opacity="0.55"/>
-      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+      <stop offset="0%"   stop-color="#FFB340" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#FFB340" stop-opacity="0"/>
     </radialGradient>
     <!-- Bottom fade -->
     <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="55%" stop-color="#122452" stop-opacity="0"/>
-      <stop offset="100%" stop-color="#080c14" stop-opacity="1"/>
+      <stop offset="55%" stop-color="#040E1B" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#040E1B" stop-opacity="1"/>
     </linearGradient>
     <!-- Perspective line gradient: bright near vanish, fades down -->
     <linearGradient id="pl" x1="0" y1="0" x2="0" y2="1">
@@ -28,7 +28,7 @@
   </defs>
 
   <!-- Base -->
-  <rect width="600" height="200" fill="#122452"/>
+  <rect width="600" height="200" fill="#040E1B"/>
 
   <!--
     Vanishing point: (300, 65) = far end zone / goal line
@@ -92,7 +92,7 @@
   -->
 
   <!-- Far half numbers -->
-  <g font-family="Arial,sans-serif" font-weight="800" fill="#f59e0b">
+  <g font-family="Arial,sans-serif" font-weight="800" fill="#FFB340">
     <!-- far 40 yd y=101, hw=80 → x = 300±53 → left=247, right=353 -->
     <text x="247" y="105" font-size="7" text-anchor="end"   opacity="0.65">40</text>
     <text x="353" y="105" font-size="7" text-anchor="start" opacity="0.65">40</text>
@@ -108,14 +108,14 @@
   </g>
 
   <!-- 50 yard line number — most prominent -->
-  <g font-family="Arial,sans-serif" font-weight="800" fill="#f59e0b">
+  <g font-family="Arial,sans-serif" font-weight="800" fill="#FFB340">
     <!-- hw=107 → x = 300±71 → left=229, right=371 -->
     <text x="229" y="117" font-size="9" text-anchor="end"   opacity="0.90">50</text>
     <text x="371" y="117" font-size="9" text-anchor="start" opacity="0.90">50</text>
   </g>
 
   <!-- Near half numbers -->
-  <g font-family="Arial,sans-serif" font-weight="800" fill="#f59e0b">
+  <g font-family="Arial,sans-serif" font-weight="800" fill="#FFB340">
     <!-- near 40 yd y=128, hw=140 → x = 300±93 → left=207, right=393 -->
     <text x="207" y="132" font-size="10" text-anchor="end"   opacity="0.80">40</text>
     <text x="393" y="132" font-size="10" text-anchor="start" opacity="0.80">40</text>
@@ -131,7 +131,7 @@
   </g>
 
   <!-- Gold center hash marks on every yard line -->
-  <g stroke="#f59e0b" fill="none" stroke-width="1.8" opacity="0.60">
+  <g stroke="#FFB340" fill="none" stroke-width="1.8" opacity="0.60">
     <line x1="294" y1="75"  x2="306" y2="75"/>
     <line x1="294" y1="82"  x2="306" y2="82"/>
     <line x1="294" y1="91"  x2="306" y2="91"/>
@@ -150,15 +150,15 @@
        Crossbar at y=65, uprights clip above, stem down to 50-yd label -->
   <rect width="600" height="200" fill="url(#gp)"/>
   <!-- Left upright -->
-  <line x1="274" y1="0" x2="274" y2="65" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
+  <line x1="274" y1="0" x2="274" y2="65" stroke="#FFB340" stroke-width="2.5" opacity="0.95"/>
   <!-- Right upright -->
-  <line x1="326" y1="0" x2="326" y2="65" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
+  <line x1="326" y1="0" x2="326" y2="65" stroke="#FFB340" stroke-width="2.5" opacity="0.95"/>
   <!-- Crossbar -->
-  <line x1="268" y1="65" x2="332" y2="65" stroke="#f59e0b" stroke-width="2.5" opacity="0.95"/>
+  <line x1="268" y1="65" x2="332" y2="65" stroke="#FFB340" stroke-width="2.5" opacity="0.95"/>
   <!-- Stem from crossbar toward vanishing -->
-  <line x1="300" y1="65" x2="300" y2="78" stroke="#f59e0b" stroke-width="2.0" opacity="0.75"/>
+  <line x1="300" y1="65" x2="300" y2="78" stroke="#FFB340" stroke-width="2.0" opacity="0.75"/>
   <!-- Bright dot at crossbar center -->
-  <circle cx="300" cy="65" r="3" fill="#f59e0b" opacity="1.0"/>
+  <circle cx="300" cy="65" r="3" fill="#FFB340" opacity="1.0"/>
 
   <!-- Stadium light glows -->
   <rect width="600" height="200" fill="url(#gl)"/>

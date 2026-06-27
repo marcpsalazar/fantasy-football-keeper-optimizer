@@ -82,7 +82,7 @@ function Avatar({
   }
   return (
     <div
-      className={`${sizeClass} rounded-full bg-emerald-100 text-emerald-800 font-semibold flex items-center justify-center shrink-0`}
+      className={`${sizeClass} rounded-full bg-[#0a2040] text-[#80E8FF] font-semibold flex items-center justify-center shrink-0`}
     >
       {initials(name)}
     </div>
@@ -107,7 +107,7 @@ function MessageBubble({
       <div
         className={`max-w-[220px] rounded-2xl px-3 py-2 text-sm leading-snug break-words ${
           isMe
-            ? "bg-emerald-600 text-white rounded-tr-sm"
+            ? "bg-[#1C4D93] text-[#EBF4F9] rounded-tr-sm"
             : "bg-zinc-100 text-zinc-900 rounded-tl-sm"
         }`}
       >
@@ -394,7 +394,7 @@ export function MessagingOverlay({
                   <div className="relative">
                     <Avatar avatarUrl={conv.avatar} name={conv.name} />
                     {conv.type === "league" && (
-                      <span className="absolute -bottom-0.5 -right-0.5 flex size-3.5 items-center justify-center rounded-full bg-emerald-600 text-[8px] font-bold text-white">
+                      <span className="absolute -bottom-0.5 -right-0.5 flex size-3.5 items-center justify-center rounded-full bg-[#FFB340] text-[8px] font-bold text-[#040E1B]">
                         #
                       </span>
                     )}
@@ -405,7 +405,7 @@ export function MessagingOverlay({
                         {conv.name}
                       </span>
                       {conv.unreadCount > 0 && (
-                        <span className="shrink-0 flex size-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-semibold text-white">
+                        <span className="shrink-0 flex size-5 items-center justify-center rounded-full bg-[#FFB340] text-[11px] font-semibold text-[#040E1B]">
                           {conv.unreadCount > 9 ? "9+" : conv.unreadCount}
                         </span>
                       )}
@@ -425,7 +425,7 @@ export function MessagingOverlay({
               <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2">
                 {loadingMessages && (
                   <div className="flex justify-center py-4">
-                    <div className="size-5 rounded-full border-2 border-emerald-600 border-t-transparent animate-spin" />
+                    <div className="size-5 rounded-full border-2 border-[#FFB340] border-t-transparent animate-spin" />
                   </div>
                 )}
                 {!loadingMessages && messages.length === 0 && (
@@ -460,13 +460,13 @@ export function MessagingOverlay({
                   onKeyDown={handleKeyDown}
                   placeholder="Message…"
                   rows={1}
-                  className="flex-1 resize-none rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-emerald-500 max-h-24 overflow-y-auto"
+                  className="flex-1 resize-none rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-50 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#FFB340] max-h-24 overflow-y-auto"
                   style={{ lineHeight: "1.4" }}
                 />
                 <button
                   onClick={sendMessage}
                   disabled={!inputText.trim()}
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white transition-colors hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#1C4D93] text-[#EBF4F9] transition-colors hover:bg-[#FFB340] hover:text-[#040E1B] disabled:opacity-40 disabled:cursor-not-allowed"
                   type="button"
                   aria-label="Send message"
                 >
@@ -481,7 +481,7 @@ export function MessagingOverlay({
       {/* Trigger button */}
       <button
         onClick={() => setOpen((v) => !v)}
-        className="relative flex size-14 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg transition-all hover:bg-emerald-700 hover:scale-105 active:scale-95"
+        className="relative flex size-14 items-center justify-center rounded-full bg-[#1C4D93] text-[#EBF4F9] shadow-lg transition-all hover:bg-[#FFB340] hover:text-[#040E1B] hover:scale-105 active:scale-95"
         type="button"
         aria-label={open ? "Close messages" : "Open messages"}
       >
