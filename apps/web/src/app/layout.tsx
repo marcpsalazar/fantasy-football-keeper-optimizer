@@ -7,13 +7,13 @@ export const metadata: Metadata = {
   title: "Mayhem | Fantasy Football Tools",
   description: "Fantasy football keeper optimizer and mock draft tool",
   icons: {
-    icon: "/icon.svg",
-    apple: "/pwa-icon/192",
+    icon: "/brand/icon-football.png",
+    apple: "/brand/icon-football.png",
   },
   appleWebApp: {
     capable: true,
     title: "Mayhem",
-    statusBarStyle: "default",
+    statusBarStyle: "black-translucent",
   },
   manifest: "/manifest.webmanifest",
 };
@@ -30,13 +30,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){var t=localStorage.getItem("theme");if(t==="dark"||(t==null&&window.matchMedia("(prefers-color-scheme: dark)").matches)){document.documentElement.classList.add("dark")}})()`,
-          }}
-        />
+        {/* Google Fonts preconnect */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       </head>
       <body>
         {children}

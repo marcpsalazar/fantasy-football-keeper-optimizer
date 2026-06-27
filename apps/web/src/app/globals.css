@@ -1,77 +1,224 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap');
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ── Mayhem Brand Tokens ─────────────────────────────────────────────────── */
 :root {
-  color-scheme: light;
-  background: #f6f5f1;
-  color: #18181b;
-}
+  --mayhem-navy:        #040E1B;
+  --mayhem-navy-light:  #071829;
+  --mayhem-navy-mid:    #0a2040;
+  --mayhem-navy-card:   #0d1f35;
+  --mayhem-navy-border: #1a3050;
+  --mayhem-steel:       #EBF4F9;
+  --mayhem-chrome:      #BDC8D3;
+  --mayhem-chrome-mid:  #8fa4b3;
+  --mayhem-orange:      #FFB340;
+  --mayhem-orange-dim:  #cc8f2e;
+  --mayhem-neon:        #80E8FF;
+  --mayhem-neon-dim:    #3abfd9;
 
-.dark {
   color-scheme: dark;
+  background: var(--mayhem-navy);
+  color: var(--mayhem-steel);
 }
 
-* {
-  box-sizing: border-box;
-}
+/* ── Base Reset ──────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
 
-html,
-body {
-  min-height: 100%;
-  margin: 0;
-}
+html, body { min-height: 100%; margin: 0; }
 
 body {
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #f6f5f1;
+  font-family: 'Roboto', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--mayhem-navy);
+  color: var(--mayhem-steel);
 }
 
-button,
-input,
-textarea {
-  font: inherit;
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Oswald', ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.02em;
 }
 
-/* ── Dark mode: global color overrides ─────────────────────────────────────
-   Unlayered CSS (no @layer) wins over Tailwind's @layer utilities, so these
-   rules catch every element with these classes — all 150+ inline usages in
-   the dashboard and all shared UI components — without touching each one.
-   Explicit dark: variants on the same element produce the same values, so
-   there is no visual conflict.
-   ─────────────────────────────────────────────────────────────────────── */
+button, input, textarea { font: inherit; }
 
-/* Backgrounds */
-.dark .bg-white { background-color: var(--color-zinc-900); }
-.dark .bg-zinc-50 { background-color: var(--color-zinc-800); }
-.dark .bg-zinc-100 { background-color: var(--color-zinc-700); }
+/* ── Metallic heading gradient ───────────────────────────────────────────── */
+.mayhem-heading {
+  font-family: 'Oswald', sans-serif;
+  background: linear-gradient(180deg, #ffffff 0%, var(--mayhem-chrome) 50%, #8fa4b3 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
 
-/* Hover backgrounds */
-.dark .hover\:bg-zinc-50:hover  { background-color: var(--color-zinc-800); }
-.dark .hover\:bg-zinc-100:hover { background-color: var(--color-zinc-700); }
+/* ── Neon glow utilities ─────────────────────────────────────────────────── */
+.mayhem-glow-orange {
+  box-shadow: 0 0 12px rgba(255, 179, 64, 0.5), 0 0 24px rgba(255, 179, 64, 0.25);
+}
+.mayhem-glow-neon {
+  box-shadow: 0 0 12px rgba(128, 232, 255, 0.5), 0 0 24px rgba(128, 232, 255, 0.25);
+}
 
-/* Borders */
-.dark .border-zinc-100 { border-color: var(--color-zinc-700); }
-.dark .border-zinc-200 { border-color: var(--color-zinc-700); }
-.dark .border-zinc-300 { border-color: var(--color-zinc-600); }
+/* ── Blueprint grid background on main content ───────────────────────────── */
+.mayhem-content-bg {
+  background-image:
+    linear-gradient(rgba(26, 48, 80, 0.18) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(26, 48, 80, 0.18) 1px, transparent 1px);
+  background-size: 44px 44px;
+  background-color: var(--mayhem-navy);
+}
 
-/* Text */
-.dark .text-zinc-950 { color: var(--color-zinc-50);  }
-.dark .text-zinc-900 { color: var(--color-zinc-100); }
-.dark .text-zinc-800 { color: var(--color-zinc-200); }
-.dark .text-zinc-700 { color: var(--color-zinc-300); }
-.dark .text-zinc-600 { color: var(--color-zinc-400); }
-.dark .text-zinc-500 { color: var(--color-zinc-400); }
+/* ── Card orange top-accent bar ─────────────────────────────────────────── */
+.dark .mayhem-card {
+  border-top: 2px solid #FFB340 !important;
+  border-left: 1px solid #1a3050 !important;
+  border-right: 1px solid #1a3050 !important;
+  border-bottom: 1px solid #1a3050 !important;
+}
 
-/* Hover text */
-.dark .hover\:text-zinc-950:hover { color: var(--color-zinc-50); }
+/* ── Card header: metallic silver surface + gold left accent ─────────────── */
+.dark .mayhem-card-header {
+  background-image: url('/metallic_background.png');
+  background-size: cover;
+  background-position: center;
+  border-left: 3px solid #FFB340;
+  padding-left: 0.875rem !important;
+  border-bottom-color: #1a3050 !important;
+}
 
-/* Draft board pick-in animation */
+/* Title and description text override — dark navy engraved on silver.
+   3-class specificity beats the 2-class !important remaps above. */
+.dark .mayhem-card-header .mayhem-card-title {
+  color: #0C132C !important;
+}
+.dark .mayhem-card-header .mayhem-card-description {
+  color: rgba(12, 19, 44, 0.62) !important;
+}
+
+/* ── Section label (above a table or group of cards) ────────────────────── */
+.mayhem-section-label {
+  font-family: 'Oswald', sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #FFB340;
+}
+
+/* ── Draft board pick-in animation ──────────────────────────────────────── */
 @keyframes pick-in {
   from { opacity: 0; transform: translateY(3px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.animate-pick-in {
-  animation: pick-in 0.3s ease-out forwards;
+.animate-pick-in { animation: pick-in 0.3s ease-out forwards; }
+
+/* ── Draft board metallic palette (dark mode only) ───────────────────────── */
+
+/* Chrome gradient text — simulates polished metal catching a cold light source.
+   Applied to open pick numbers (#24, #48…) and "Open" labels. */
+.dark .draft-chrome-text {
+  background: linear-gradient(180deg, #C7EEFF 0%, #DDEBF9 52%, #C7EEFF 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
+
+/* Chrome badge — round header pills (R1–R11). Cold-light chrome surface. */
+.dark .draft-round-badge {
+  background: linear-gradient(180deg, #C7EEFF 0%, #DDEBF9 100%);
+  color: #0C132C;
+}
+
+/* ── Global dark-mode brand overrides ───────────────────────────────────────
+   These win over Tailwind @layer utilities and catch every element with
+   these classes without touching individual usage sites in dashboard-app.tsx.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Backgrounds: zinc → Mayhem navy */
+.dark body                         { background: var(--mayhem-navy); }
+.dark .bg-white                    { background-color: var(--mayhem-navy-light) !important; }
+.dark .bg-zinc-50                  { background-color: var(--mayhem-navy-mid) !important; }
+.dark .bg-zinc-100                 { background-color: var(--mayhem-navy-card) !important; }
+.dark .bg-zinc-800                 { background-color: var(--mayhem-navy-card) !important; }
+.dark .bg-zinc-900                 { background-color: var(--mayhem-navy) !important; }
+
+/* Hover backgrounds */
+.dark .hover\:bg-zinc-50:hover     { background-color: var(--mayhem-navy-mid) !important; }
+.dark .hover\:bg-zinc-100:hover    { background-color: var(--mayhem-navy-card) !important; }
+.dark .hover\:bg-zinc-800:hover    { background-color: var(--mayhem-navy-card) !important; }
+
+/* Borders: zinc → Mayhem navy border */
+.dark .border-zinc-100             { border-color: var(--mayhem-navy-border) !important; }
+.dark .border-zinc-200             { border-color: var(--mayhem-navy-border) !important; }
+.dark .border-zinc-300             { border-color: var(--mayhem-navy-border) !important; }
+.dark .border-zinc-600             { border-color: var(--mayhem-navy-border) !important; }
+.dark .border-zinc-700             { border-color: var(--mayhem-navy-border) !important; }
+
+/* Text: zinc → Mayhem steel/chrome */
+.dark .text-zinc-950               { color: var(--mayhem-steel)      !important; }
+.dark .text-zinc-900               { color: var(--mayhem-steel)      !important; }
+.dark .text-zinc-800               { color: var(--mayhem-chrome)     !important; }
+.dark .text-zinc-700               { color: var(--mayhem-chrome)     !important; }
+.dark .text-zinc-600               { color: var(--mayhem-chrome-mid) !important; }
+.dark .text-zinc-500               { color: var(--mayhem-chrome-mid) !important; }
+.dark .text-zinc-400               { color: var(--mayhem-chrome-mid) !important; }
+.dark .text-zinc-50                { color: var(--mayhem-steel)      !important; }
+
+/* Hover text */
+.dark .hover\:text-zinc-950:hover  { color: var(--mayhem-steel) !important; }
+.dark .hover\:text-zinc-50:hover   { color: var(--mayhem-steel) !important; }
+
+/* ── Emerald → Mayhem brand orange (active nav, badges, accents) ─────────── */
+.dark .bg-emerald-700              { background-color: var(--mayhem-orange)     !important; }
+.dark .bg-emerald-50               { background-color: rgba(255,179,64,0.1)     !important; }
+.dark .bg-emerald-900\/20          { background-color: rgba(255,179,64,0.12)    !important; }
+.dark .text-emerald-900            { color: var(--mayhem-orange)                !important; }
+.dark .text-emerald-600            { color: var(--mayhem-orange)                !important; }
+.dark .text-emerald-400            { color: var(--mayhem-orange)                !important; }
+.dark .border-emerald-600          { border-color: var(--mayhem-orange)         !important; }
+.dark .border-emerald-200          { border-color: rgba(255,179,64,0.3)         !important; }
+.dark .border-emerald-800          { border-color: rgba(255,179,64,0.3)         !important; }
+.dark .hover\:bg-emerald-700:hover { background-color: var(--mayhem-orange-dim) !important; }
+.dark .hover\:text-emerald-600:hover { color: var(--mayhem-orange)             !important; }
+.dark .ring-emerald-500            { --tw-ring-color: var(--mayhem-orange)      !important; }
+
+/* Emerald dark-mode tint surfaces — faint orange wash instead of green */
+.dark .bg-emerald-900\/10          { background-color: rgba(255,179,64,0.07)    !important; }
+.dark .bg-emerald-900\/40          { background-color: rgba(255,179,64,0.16)    !important; }
+.dark .bg-emerald-900\/50          { background-color: rgba(255,179,64,0.18)    !important; }
+.dark .bg-emerald-900\/60          { background-color: rgba(255,179,64,0.2)     !important; }
+.dark .bg-emerald-950\/20          { background-color: rgba(255,179,64,0.08)    !important; }
+.dark .bg-emerald-950\/30          { background-color: rgba(255,179,64,0.1)     !important; }
+.dark .bg-emerald-950\/40          { background-color: rgba(255,179,64,0.12)    !important; }
+.dark .bg-emerald-950\/60          { background-color: rgba(255,179,64,0.16)    !important; }
+.dark .hover\:bg-emerald-900\/20:hover { background-color: rgba(255,179,64,0.12) !important; }
+.dark .hover\:bg-emerald-950\/30:hover { background-color: rgba(255,179,64,0.1)  !important; }
+.dark .hover\:bg-emerald-950:hover     { background-color: rgba(255,179,64,0.14) !important; }
+.dark .border-emerald-700          { border-color: rgba(255,179,64,0.3)         !important; }
+.dark .border-emerald-900\/30      { border-color: rgba(255,179,64,0.25)        !important; }
+.dark .border-emerald-900\/50      { border-color: rgba(255,179,64,0.3)         !important; }
+.dark .hover\:border-emerald-700:hover { border-color: rgba(255,179,64,0.4)     !important; }
+.dark .hover\:border-emerald-600:hover { border-color: rgba(255,179,64,0.4)     !important; }
+.dark .text-emerald-200            { color: var(--mayhem-orange)                !important; }
+.dark .text-emerald-300            { color: var(--mayhem-orange)                !important; }
+.dark .ring-emerald-100            { --tw-ring-color: rgba(255,179,64,0.2)      !important; }
+.dark .ring-emerald-200            { --tw-ring-color: rgba(255,179,64,0.3)      !important; }
+
+/* Amber (active snapshot widget) → brand orange */
+.dark .border-amber-200            { border-color: rgba(255,179,64,0.3)         !important; }
+.dark .border-amber-800            { border-color: rgba(255,179,64,0.3)         !important; }
+.dark .bg-amber-50                 { background-color: rgba(255,179,64,0.08)    !important; }
+.dark .bg-amber-900\/20            { background-color: rgba(255,179,64,0.1)     !important; }
+.dark .text-amber-900              { color: var(--mayhem-orange)                !important; }
+.dark .text-amber-950              { color: var(--mayhem-steel)                 !important; }
+.dark .text-amber-200              { color: var(--mayhem-chrome)                !important; }
+.dark .text-amber-400              { color: var(--mayhem-orange)                !important; }
+.dark .text-amber-800              { color: var(--mayhem-orange-dim)            !important; }
+
+/* Blue accents → neon */
+.dark .text-blue-600               { color: var(--mayhem-neon) !important; }
+.dark .text-blue-400               { color: var(--mayhem-neon) !important; }
+.dark .border-blue-200             { border-color: rgba(128,232,255,0.3) !important; }
+
+/* ── Header / sidebar backdrop ───────────────────────────────────────────── */
+.dark .bg-white\/95 { background-color: rgba(4,14,27,0.95) !important; }
+.dark .dark\:bg-zinc-900\/95 { background-color: rgba(4,14,27,0.95) !important; }

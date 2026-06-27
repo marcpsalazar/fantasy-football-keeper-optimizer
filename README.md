@@ -1,6 +1,6 @@
 # Fantasy Football Keeper Optimizer
 
-Full-stack keeper optimizer for fantasy football leagues. The app imports league data from CSV files, calculates keeper recommendations, compares strategy presets, shows draft impact, supports manual overrides, and exports keeper reports.
+Full-stack keeper optimizer for fantasy football leagues. Import league data from Sleeper, Yahoo Fantasy, or ESPN — or paste CSV directly. The app ranks keeper candidates by comparing keeper cost against ADP, applies position weights and league rules, supports manual overrides, compares strategy presets, tracks multi-year keeper ROI, runs simulated mock drafts against AI bots, and exports keeper reports.
 
 ## What It Does
 

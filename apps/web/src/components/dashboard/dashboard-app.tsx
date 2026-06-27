@@ -11,6 +11,7 @@ import {
   BookOpen,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   ClipboardList,
   Download,
@@ -24,7 +25,6 @@ import {
   LogOut,
   ListChecks,
   MessageCircle,
-  Moon,
   PanelLeft,
   Pencil,
   Play,
@@ -37,7 +37,6 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Star,
-  Sun,
   Trash2,
   Trophy,
   Upload,
@@ -275,6 +274,7 @@ type ViewId =
   | "outlooks"
   | "draft-impact"
   | "mock-draft"
+  | "mock-draft-history"
   | "keeper-history"
   | "final-keepers"
   | "season-analysis"
@@ -299,9 +299,10 @@ const navItems: NavItem[] = [
   { id: "outlooks", label: "Team Outlook", icon: ShieldCheck },
   { id: "season-analysis", label: "Season Analysis", icon: BarChart2 },
   { id: "mock-draft", label: "Mock Draft", icon: Bot },
-  { id: "keeper-history", label: "Keeper History", icon: History },
+  { id: "mock-draft-history", label: "Mock Draft History", icon: History },
+  { id: "keeper-history", label: "Keeper History", icon: ClipboardList },
   { id: "final-keepers", label: "Final Keepers", icon: KeyRound },
-  { id: "draft-board", label: "Final Draft Board", icon: ClipboardList },
+  { id: "draft-board", label: "Final Draft Board", icon: ListChecks },
   { id: "teams", label: "Teams", icon: Users },
   { id: "draft", label: "Draft Results", icon: ClipboardList },
   { id: "rosters", label: "Final Rosters", icon: ListChecks },
@@ -312,8 +313,8 @@ const navItems: NavItem[] = [
 
 const navGroups: { label: string | null; ids: ViewId[] }[] = [
   { label: null, ids: ["guide", "dashboard"] },
-  { label: "Keeper Tools", ids: ["recommendations", "trade-analyzer", "scenarios", "draft-impact", "outlooks", "season-analysis"] },
-  { label: "Draft Room", ids: ["mock-draft", "keeper-history", "final-keepers", "draft-board"] },
+  { label: "Keeper Tools", ids: ["recommendations", "trade-analyzer", "scenarios", "draft-impact", "outlooks", "season-analysis", "final-keepers", "keeper-history"] },
+  { label: "Draft Room", ids: ["mock-draft", "mock-draft-history", "draft-board"] },
   { label: "League Data", ids: ["teams", "draft", "rosters"] },
   { label: "Settings", ids: ["settings", "commissioner-tools", "admin"] },
 ];
@@ -322,24 +323,6 @@ const formatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-function useTheme() {
-  const [dark, setDark] = React.useState(false);
-
-  React.useEffect(() => {
-    setDark(document.documentElement.classList.contains("dark"));
-  }, []);
-
-  const toggle = React.useCallback(() => {
-    setDark((prev) => {
-      const next = !prev;
-      document.documentElement.classList.toggle("dark", next);
-      localStorage.setItem("theme", next ? "dark" : "light");
-      return next;
-    });
-  }, []);
-
-  return { dark, toggle };
-}
 
 const mockDraftPersonalities = [
   "Balanced",
@@ -800,6 +783,7 @@ type DashboardContextValue = {
   upsertLeagueMemberNow: (leagueId: string, userId: string, role: "league_admin" | "member") => Promise<void>;
   updateLeagueMemberRoleNow: (leagueId: string, userId: string, role: "league_admin" | "member") => Promise<void>;
   removeLeagueMemberNow: (leagueId: string, userId: string) => Promise<void>;
+  setActiveView: (view: ViewId) => void;
 };
 
 const DashboardContext = React.createContext<DashboardContextValue | null>(null);
@@ -813,8 +797,15 @@ function useDashboard() {
 }
 
 export function DashboardApp() {
-  const { dark: isDark, toggle: toggleTheme } = useTheme();
   const [activeView, setActiveView] = React.useState<ViewId>("dashboard");
+  const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    const activeGroup = navGroups.find((g) => g.label && g.ids.includes(activeView));
+    if (activeGroup?.label) {
+      setExpandedGroups((prev) => new Set([...prev, activeGroup.label!]));
+    }
+  }, [activeView]);
   const [workspace, setWorkspace] = React.useState<WorkspaceData>(mockWorkspaceData);
   const [apiStatus, setApiStatus] = React.useState<ApiStatus>("loading");
   const [currentUser, setCurrentUser] = React.useState<AuthUser | null>(null);
@@ -1633,6 +1624,7 @@ export function DashboardApp() {
       upsertLeagueMemberNow,
       updateLeagueMemberRoleNow,
       removeLeagueMemberNow,
+      setActiveView,
     }),
     [
       activeLeagueId,
@@ -1678,6 +1670,7 @@ export function DashboardApp() {
       selectedScenarioByTeam,
       setManualOverrideNow,
       setSelectedScenarioForTeam,
+      setActiveView,
       statusMessage,
       tableDisplayResetSignal,
       updateUserNow,
@@ -1700,7 +1693,7 @@ export function DashboardApp() {
 
   return (
     <DashboardContext.Provider value={contextValue}>
-      <main className="min-h-screen bg-[#f6f5f1] text-zinc-950 dark:bg-[#0f0f12] dark:text-zinc-50">
+      <main className="min-h-screen bg-[#f6f5f1] text-zinc-950 dark:bg-[#040E1B] dark:text-[#EBF4F9]">
       <div className="grid min-h-screen lg:grid-cols-[264px_minmax(0,1fr)]">
         {mobileSidebarOpen && (
           <div
@@ -1709,22 +1702,26 @@ export function DashboardApp() {
             onClick={() => setMobileSidebarOpen(false)}
           />
         )}
-        <aside className={cn(
-          "fixed inset-y-0 left-0 z-50 w-72 border-r border-zinc-200 bg-white transition-transform dark:border-zinc-700 dark:bg-zinc-900 lg:static lg:z-auto lg:w-auto lg:transition-none",
-          mobileSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
-        )}>
+        <aside
+          className={cn(
+            "fixed inset-y-0 left-0 z-50 w-72 border-r border-zinc-200 bg-white transition-transform dark:border-[#1a3050] dark:bg-[#071829] lg:static lg:z-auto lg:w-auto lg:transition-none",
+            mobileSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+          )}
+          style={{ borderTop: "2px solid #FFB340" }}
+        >
           <div className="flex h-full flex-col">
-            <div className="flex items-center gap-3 border-b border-zinc-200 dark:border-zinc-700 px-5 py-4">
-              <div className="flex size-9 items-center justify-center rounded-md bg-emerald-700 text-white">
-                <Trophy className="size-5" aria-hidden="true" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold leading-5">Mayhem</p>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">Fantasy Football Tools</p>
-              </div>
+            {/* Sidebar brand header — py-[10px] compensates for the 2px aside border-top so
+                this div's bottom border lines up with the main header's bottom border */}
+            <div className="relative flex items-center justify-center border-b border-[#1a3050] bg-[#040E1B] px-4 py-[10px]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/large_text_shield_logo_with_dark_background.png"
+                alt="Mayhem Fantasy Football Tools"
+                className="h-40 w-auto max-w-full object-contain"
+              />
               <button
                 aria-label="Close navigation menu"
-                className="flex size-8 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 lg:hidden"
+                className="absolute right-2 top-1/2 -translate-y-1/2 flex size-8 items-center justify-center rounded-md text-[#8fa4b3] hover:bg-[rgba(128,232,255,0.08)] hover:text-[#80E8FF] lg:hidden"
                 onClick={() => setMobileSidebarOpen(false)}
                 type="button"
               >
@@ -1738,14 +1735,35 @@ export function DashboardApp() {
                   .map((id) => visibleNavItems.find((item) => item.id === id))
                   .filter(Boolean) as NavItem[];
                 if (!groupItems.length) return null;
+                const isExpanded = !group.label || expandedGroups.has(group.label);
                 return (
                   <div key={group.label ?? "top"} className="lg:mb-1">
                     {group.label && (
-                      <p className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                        {group.label}
-                      </p>
+                      <button
+                        className="flex w-full items-center justify-between px-3 pb-1 pt-3 text-left transition-colors hover:text-[#EBF4F9]"
+                        onClick={() =>
+                          setExpandedGroups((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(group.label!)) next.delete(group.label!);
+                            else next.add(group.label!);
+                            return next;
+                          })
+                        }
+                        type="button"
+                      >
+                        <span className="text-[10px] font-['Oswald'] font-semibold uppercase tracking-widest text-[#80E8FF]">
+                          {group.label}
+                        </span>
+                        <ChevronDown
+                          className={cn(
+                            "size-3 text-[#8fa4b3] transition-transform duration-200",
+                            isExpanded && "rotate-180",
+                          )}
+                          aria-hidden="true"
+                        />
+                      </button>
                     )}
-                    {groupItems.map((item) => {
+                    {isExpanded && groupItems.map((item) => {
                       const Icon = item.icon;
                       const isActive = activeView === item.id;
                       return (
@@ -1754,8 +1772,8 @@ export function DashboardApp() {
                           className={cn(
                             "group flex min-h-[44px] w-full shrink-0 items-center gap-2.5 rounded-r-md border-l-2 pl-2.5 pr-3 text-left text-sm transition-colors lg:min-h-0 lg:h-9 lg:w-auto",
                             isActive
-                              ? "border-emerald-600 bg-emerald-50 font-semibold text-emerald-900 dark:bg-emerald-900/20 dark:text-emerald-400"
-                              : "border-transparent font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-50",
+                              ? "border-[#FFB340] bg-[rgba(255,179,64,0.12)] font-semibold text-[#FFB340]"
+                              : "border-transparent font-medium text-[#BDC8D3] hover:bg-[rgba(128,232,255,0.06)] hover:text-[#EBF4F9]",
                           )}
                           onClick={() => { setActiveView(item.id); setMobileSidebarOpen(false); }}
                           title={item.label}
@@ -1764,7 +1782,7 @@ export function DashboardApp() {
                           <Icon
                             className={cn(
                               "size-4 shrink-0 transition-colors",
-                              isActive ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-400 group-hover:text-zinc-600 dark:group-hover:text-zinc-300",
+                              isActive ? "text-[#FFB340]" : "text-[#8fa4b3] group-hover:text-[#80E8FF]",
                             )}
                             aria-hidden="true"
                           />
@@ -1777,13 +1795,13 @@ export function DashboardApp() {
               })}
             </nav>
 
-            <div className="border-t border-zinc-200 dark:border-zinc-700 p-4">
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
-                <p className="text-xs font-semibold uppercase text-amber-900 dark:text-amber-400">Active snapshot</p>
-                <p className="mt-1 text-sm text-amber-950 dark:text-amber-200">
+            <div className="border-t border-[#1a3050] p-4">
+              <div className="rounded-md border border-[rgba(255,179,64,0.3)] bg-[rgba(255,179,64,0.07)] p-3">
+                <p className="text-[10px] font-['Oswald'] font-semibold uppercase tracking-widest text-[#FFB340]">Active snapshot</p>
+                <p className="mt-1 text-sm text-[#EBF4F9]">
                   {workspaceData.activeSnapshot?.name ?? "No ADP snapshot"}
                 </p>
-                <p className="text-xs text-amber-800 dark:text-amber-400">
+                <p className="text-xs text-[#BDC8D3]">
                   {workspaceData.activeSnapshot?.snapshotDate ?? "Import ADP to begin"}
                 </p>
               </div>
@@ -1792,36 +1810,33 @@ export function DashboardApp() {
         </aside>
 
         <section className="min-w-0">
-          <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95 md:px-6">
+          <header className="sticky top-0 z-10 border-b border-[#1a3050] bg-[rgba(4,14,27,0.95)] px-4 py-3 backdrop-blur md:px-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
                 <button
                   aria-label="Open navigation menu"
-                  className="flex size-9 shrink-0 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 lg:hidden"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-md text-[#8fa4b3] hover:bg-[rgba(128,232,255,0.08)] hover:text-[#80E8FF] lg:hidden"
                   onClick={() => setMobileSidebarOpen(true)}
                   type="button"
                 >
                   <PanelLeft className="size-5" aria-hidden="true" />
                 </button>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/brand/logo-shield.png"
+                  alt="Mayhem"
+                  className="hidden h-8 w-8 shrink-0 rounded object-cover lg:block"
+                />
                 <div className="min-w-0">
-                  <p className="hidden text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400 sm:block">League workspace</p>
-                  <h1 className="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50 sm:text-xl">{activeLabel}</h1>
+                  <p className="hidden text-[10px] font-['Oswald'] font-semibold uppercase tracking-widest text-[#80E8FF] sm:block">Mayhem &bull; League Workspace</p>
+                  <h1 className="truncate font-['Oswald'] text-base font-semibold uppercase tracking-wide sm:text-xl" style={CHROME_TEXT_STYLE}>{activeLabel}</h1>
                 </div>
                 <div className="hidden sm:block">
                   <CountdownClock league={workspaceData.league} />
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-                  className="flex size-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                  onClick={toggleTheme}
-                  title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-                  type="button"
-                >
-                  {isDark ? <Sun className="size-4" aria-hidden="true" /> : <Moon className="size-4" aria-hidden="true" />}
-                </button>
-                <ConnectionBadge status={apiStatus} />
+<ConnectionBadge status={apiStatus} />
                 <Button
                   aria-label="Refresh displayed workspace data from the backend without rerunning the optimizer"
                   className="h-9 px-2 sm:h-auto sm:min-h-12 sm:flex-col sm:items-start sm:gap-0 sm:px-3 sm:py-2 sm:text-left"
@@ -1839,17 +1854,23 @@ export function DashboardApp() {
                 </Button>
                 <Button
                   aria-label="Run the optimizer to recompute keeper recommendations from the current inputs and settings"
-                  className="h-9 px-2 sm:h-auto sm:min-h-12 sm:flex-col sm:items-start sm:gap-0 sm:px-3 sm:py-2 sm:text-left"
+                  className="h-9 px-2 sm:h-auto sm:min-h-12 sm:flex-col sm:items-start sm:gap-0 sm:px-3 sm:py-2 sm:text-left hover:bg-transparent dark:hover:bg-transparent hover:text-[#0C132C] dark:hover:text-[#0C132C] hover:brightness-110"
                   disabled={isBusy}
                   onClick={runOptimizerNow}
                   title="Recompute keeper recommendations from the current rosters, draft results, ADP, overrides, and optimizer settings."
+                  style={{
+                    backgroundImage: "url('/metallic_gold_background.png')",
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                    color: "#0C132C",
+                  }}
                 >
                   <Play className="size-4 sm:hidden" aria-hidden="true" />
                   <span className="hidden sm:flex items-center gap-2">
                     <Play className="size-4" aria-hidden="true" />
                     Run Optimizer
                   </span>
-                  <span className="hidden text-[11px] font-normal text-zinc-300 dark:text-emerald-200 sm:block">Recompute recommendations</span>
+                  <span className="hidden text-[11px] font-normal sm:block" style={{ color: "rgba(12,19,44,0.6)" }}>Recompute recommendations</span>
                 </Button>
                 {currentUser ? (
                   <div className="relative" ref={userMenuRef}>
@@ -2024,6 +2045,7 @@ export function DashboardApp() {
             {activeView === "outlooks" && <TeamOutlooksPage />}
             {activeView === "draft-impact" && <DraftImpactPage />}
             {activeView === "mock-draft" && <MockDraftPage />}
+            {activeView === "mock-draft-history" && <MockDraftHistoryPage />}
             {activeView === "keeper-history" && <KeeperHistoryPage />}
             {activeView === "final-keepers" && <FinalKeepersPage />}
             {activeView === "draft-board" && <DraftBoardPage />}
@@ -2075,15 +2097,21 @@ function CountdownClock({ league }: { league: WorkspaceData["league"] }) {
     <div className="flex items-center gap-3">
       <div
         className={cn(
-          "shrink-0 border-l border-zinc-200 pl-3 text-zinc-950 dark:border-zinc-700 dark:text-zinc-50",
+          "shrink-0 border-l border-[#1a3050] pl-3",
           countdown.isDeadlineDay && "text-rose-700 dark:text-rose-400",
         )}
       >
-        <p className="text-[11px] font-semibold uppercase text-current">
+        <p
+          className="text-[11px] font-semibold uppercase"
+          style={!countdown.isDeadlineDay ? { color: "#C7EEFF", opacity: 0.75 } : undefined}
+        >
           {countdown.label}
           {countdown.targetDate ? <span className="ml-2">{countdown.targetDate}</span> : null}
         </p>
-        <p className="mt-0.5 font-mono text-xl font-semibold tabular-nums tracking-normal">
+        <p
+          className="mt-0.5 font-mono text-xl font-semibold tabular-nums tracking-normal"
+          style={!countdown.isDeadlineDay ? CHROME_TEXT_STYLE : undefined}
+        >
           {countdown.value}
         </p>
       </div>
@@ -2240,6 +2268,62 @@ function AuthShell({ status, title }: { status: string; title: string }) {
   );
 }
 
+/* ── Shared page shell: stadium background + logo top + centered card ── */
+function FormShell({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+  return (
+    <main
+      className="relative flex min-h-screen flex-col items-center justify-start px-4 pt-8 pb-12"
+      style={{
+        backgroundImage: "url('/brand/bg-stadium.png')",
+        backgroundSize: "cover",
+        backgroundPosition: "center top",
+        backgroundColor: "#040E1B",
+      }}
+    >
+      {/* Dark gradient overlay — heavier at bottom so card is readable, lighter at top so stadium shows */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: "linear-gradient(to bottom, rgba(4,14,27,0.45) 0%, rgba(4,14,27,0.72) 40%, rgba(4,14,27,0.88) 100%)",
+        }}
+      />
+
+      {/* Content above overlay */}
+      <div className="relative z-10 flex w-full max-w-[400px] flex-col items-center">
+
+        {/* Logo banner — dark background blends into the stadium overlay */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/logo-signin-top.png"
+          alt="Mayhem Fantasy Football Tools"
+          className="mb-8 w-full max-w-[400px] rounded-xl object-cover"
+          style={{ boxShadow: "0 4px 32px rgba(4,14,27,0.7)" }}
+        />
+
+        {/* Sign-in card */}
+        <div
+          className="w-full rounded-md border border-[#1a3050] bg-[rgba(4,14,27,0.88)] p-8 backdrop-blur-md"
+          style={{
+            borderTop: "2px solid #FFB340",
+            boxShadow: "0 8px 48px rgba(4,14,27,0.9), 0 0 40px rgba(255,179,64,0.07)",
+          }}
+        >
+          <div className="mb-6">
+            <p className="mayhem-section-label mb-1 text-[#FFB340]">Mayhem Fantasy Football Tools</p>
+            <h1 className="font-['Oswald'] text-2xl font-bold uppercase tracking-wider text-[#EBF4F9]">{title}</h1>
+            <p className="mt-1 text-sm text-[#8fa4b3]">{subtitle}</p>
+          </div>
+          {children}
+        </div>
+
+        <p className="mt-6 text-xs text-[#3d5870]">
+          &copy; {new Date().getFullYear()} Mayhem Fantasy Football Tools
+        </p>
+      </div>
+    </main>
+  );
+}
+
 function LoginScreen({
   isBusy,
   onLogin,
@@ -2266,158 +2350,93 @@ function LoginScreen({
 
   if (mode === "register") {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#f6f5f1] px-4 text-zinc-950 dark:bg-[#0f0f12] dark:text-zinc-50">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle>Create Account</CardTitle>
-            <CardDescription>Register to join a keeper league.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form
-              className="space-y-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setError("");
-                if (password !== confirmPassword) {
-                  setError("Passwords do not match.");
-                  return;
-                }
-                if (password.length < 8) {
-                  setError("Password must be at least 8 characters.");
-                  return;
-                }
-                void onRegister(email, password, alias || undefined).catch((err: unknown) => {
-                  const msg = err instanceof Error ? err.message : "";
-                  if (msg.includes("409") || msg.toLowerCase().includes("already")) {
-                    setError("An account with that email already exists.");
-                  } else {
-                    setError("Registration failed. Please try again.");
-                  }
-                });
-              }}
-            >
-              <div className="space-y-2">
-                <Label htmlFor="reg-email">Email</Label>
-                <Input
-                  autoComplete="email"
-                  id="reg-email"
-                  onChange={(event) => setEmail(event.target.value)}
-                  type="email"
-                  value={email}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="reg-alias">Display name (optional)</Label>
-                <Input
-                  autoComplete="nickname"
-                  id="reg-alias"
-                  onChange={(event) => setAlias(event.target.value)}
-                  placeholder="How you'll appear in the app"
-                  type="text"
-                  value={alias}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="reg-password">Password</Label>
-                <Input
-                  autoComplete="new-password"
-                  id="reg-password"
-                  onChange={(event) => setPassword(event.target.value)}
-                  type="password"
-                  value={password}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="reg-confirm">Confirm password</Label>
-                <Input
-                  autoComplete="new-password"
-                  id="reg-confirm"
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                  type="password"
-                  value={confirmPassword}
-                />
-              </div>
-              {error ? <p className="text-sm text-rose-700">{error}</p> : null}
-              <Button
-                className="w-full"
-                disabled={isBusy || !email || !password || !confirmPassword}
-                type="submit"
-              >
-                Create Account
-              </Button>
-            </form>
-            <p className="mt-4 text-center text-sm text-zinc-500">
-              Already have an account?{" "}
-              <button
-                className="font-medium text-emerald-700 hover:underline dark:text-emerald-400"
-                onClick={() => { reset(); setMode("login"); }}
-                type="button"
-              >
-                Sign in
-              </button>
-            </p>
-          </CardContent>
-        </Card>
-      </main>
+      <FormShell title="Create Account" subtitle="Register to join a keeper league.">
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setError("");
+            if (password !== confirmPassword) {
+              setError("Passwords do not match.");
+              return;
+            }
+            if (password.length < 8) {
+              setError("Password must be at least 8 characters.");
+              return;
+            }
+            void onRegister(email, password, alias || undefined).catch((err: unknown) => {
+              const msg = err instanceof Error ? err.message : "";
+              if (msg.includes("409") || msg.toLowerCase().includes("already")) {
+                setError("An account with that email already exists.");
+              } else {
+                setError("Registration failed. Please try again.");
+              }
+            });
+          }}
+        >
+          <div className="space-y-1.5">
+            <Label className="text-[#BDC8D3]" htmlFor="reg-email">Email</Label>
+            <Input autoComplete="email" id="reg-email" onChange={(e) => setEmail(e.target.value)} type="email" value={email} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[#BDC8D3]" htmlFor="reg-alias">Display name <span className="text-[#8fa4b3]">(optional)</span></Label>
+            <Input autoComplete="nickname" id="reg-alias" onChange={(e) => setAlias(e.target.value)} placeholder="How you'll appear in the app" type="text" value={alias} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[#BDC8D3]" htmlFor="reg-password">Password</Label>
+            <Input autoComplete="new-password" id="reg-password" onChange={(e) => setPassword(e.target.value)} type="password" value={password} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[#BDC8D3]" htmlFor="reg-confirm">Confirm password</Label>
+            <Input autoComplete="new-password" id="reg-confirm" onChange={(e) => setConfirmPassword(e.target.value)} type="password" value={confirmPassword} />
+          </div>
+          {error ? <p className="text-sm text-rose-400">{error}</p> : null}
+          <Button className="w-full" disabled={isBusy || !email || !password || !confirmPassword} type="submit">
+            Create Account
+          </Button>
+        </form>
+        <p className="mt-5 text-center text-sm text-[#8fa4b3]">
+          Already have an account?{" "}
+          <button className="font-semibold text-[#80E8FF] hover:underline" onClick={() => { reset(); setMode("login"); }} type="button">
+            Sign in
+          </button>
+        </p>
+      </FormShell>
     );
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f6f5f1] px-4 text-zinc-950 dark:bg-[#0f0f12] dark:text-zinc-50">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Sign In</CardTitle>
-          <CardDescription>Use your keeper optimizer account to continue.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form
-            className="space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setError("");
-              void onLogin(email, password).catch(() => {
-                setError("Invalid email or password.");
-              });
-            }}
-          >
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                autoComplete="email"
-                id="email"
-                onChange={(event) => setEmail(event.target.value)}
-                type="email"
-                value={email}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                autoComplete="current-password"
-                id="password"
-                onChange={(event) => setPassword(event.target.value)}
-                type="password"
-                value={password}
-              />
-            </div>
-            {error ? <p className="text-sm text-rose-700">{error}</p> : null}
-            <Button className="w-full" disabled={isBusy || !email || !password} type="submit">
-              Sign In
-            </Button>
-          </form>
-          <p className="mt-4 text-center text-sm text-zinc-500">
-            Don&apos;t have an account?{" "}
-            <button
-              className="font-medium text-emerald-700 hover:underline dark:text-emerald-400"
-              onClick={() => { reset(); setMode("register"); }}
-              type="button"
-            >
-              Create one
-            </button>
-          </p>
-        </CardContent>
-      </Card>
-    </main>
+    <FormShell title="Sign In" subtitle="Use your keeper optimizer account to continue.">
+      <form
+        className="space-y-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setError("");
+          void onLogin(email, password).catch(() => {
+            setError("Invalid email or password.");
+          });
+        }}
+      >
+        <div className="space-y-1.5">
+          <Label className="text-[#BDC8D3]" htmlFor="email">Email</Label>
+          <Input autoComplete="email" id="email" onChange={(e) => setEmail(e.target.value)} type="email" value={email} />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-[#BDC8D3]" htmlFor="password">Password</Label>
+          <Input autoComplete="current-password" id="password" onChange={(e) => setPassword(e.target.value)} type="password" value={password} />
+        </div>
+        {error ? <p className="text-sm text-rose-400">{error}</p> : null}
+        <Button className="w-full" disabled={isBusy || !email || !password} type="submit">
+          Sign In
+        </Button>
+      </form>
+      <p className="mt-5 text-center text-sm text-[#8fa4b3]">
+        Don&apos;t have an account?{" "}
+        <button className="font-semibold text-[#80E8FF] hover:underline" onClick={() => { reset(); setMode("register"); }} type="button">
+          Create one
+        </button>
+      </p>
+    </FormShell>
   );
 }
 
@@ -2636,7 +2655,7 @@ function CreateLeagueModal({
             <Label htmlFor="cl-scoring">Scoring Format</Label>
             <select
               id="cl-scoring"
-              className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+              className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-[#80E8FF] focus:ring-2 focus:ring-[rgba(128,232,255,0.12)]"
               value={scoringFormat}
               onChange={(e) => setScoringFormat(e.target.value)}
             >
@@ -2650,7 +2669,7 @@ function CreateLeagueModal({
             <Label htmlFor="cl-draft">Draft Type</Label>
             <select
               id="cl-draft"
-              className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+              className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-[#80E8FF] focus:ring-2 focus:ring-[rgba(128,232,255,0.12)]"
               value={draftType}
               onChange={(e) => setDraftType(e.target.value)}
             >
@@ -3281,7 +3300,7 @@ function LeagueDashboard() {
                     TE: isActive ? "bg-violet-100 border-violet-300 text-violet-800 dark:bg-violet-900/40 dark:border-violet-700 dark:text-violet-300" : "border-zinc-200 text-zinc-600 hover:bg-violet-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-violet-950/30",
                     K:  isActive ? "bg-zinc-200 border-zinc-400 text-zinc-800 dark:bg-zinc-700 dark:border-zinc-500 dark:text-zinc-200" : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-700",
                     DST: isActive ? "bg-zinc-200 border-zinc-400 text-zinc-800 dark:bg-zinc-700 dark:border-zinc-500 dark:text-zinc-200" : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-700",
-                    ALL: isActive ? "bg-zinc-900 border-zinc-900 text-white dark:bg-zinc-100 dark:border-zinc-100 dark:text-zinc-900" : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800",
+                    ALL: isActive ? "bg-zinc-100 border-zinc-100 text-zinc-900" : "border-zinc-200 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800",
                   };
                   return (
                     <button
@@ -3436,13 +3455,15 @@ function GuidePage({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
         </CardHeader>
         <CardContent className="grid gap-4 lg:grid-cols-[minmax(0,0.92fr)_minmax(340px,0.58fr)]">
           <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4">
-            <p className="text-sm font-semibold text-emerald-950">The short version</p>
-            <p className="mt-2 text-sm leading-6 text-emerald-950">
-              The app compares what a player costs to keep against what that player is worth in
-              the current draft market. The best keepers usually give you strong players at
-              cheaper-than-market prices, while still protecting enough draft picks to build the
-              rest of the roster.
-            </p>
+            <p className="text-sm font-semibold text-zinc-950 dark:text-[#FFB340]">The short version</p>
+            <ul className="mt-2 space-y-2 text-sm leading-6 text-zinc-900 dark:text-[#EBF4F9]">
+              <li><span className="font-medium">Import your league data</span> — pull teams, draft results, rosters, and ADP from Sleeper, Yahoo, or ESPN, or paste CSV directly. Run the optimizer after any import.</li>
+              <li><span className="font-medium">Tune the model to your rules</span> — set keeper limits, position caps, eligibility thresholds, and strategy weights in Optimizer Settings. Saving reruns automatically.</li>
+              <li><span className="font-medium">Review ranked recommendations</span> — each player is scored by comparing their keeper cost against their ADP value. Override individual players with Force Keep or Exclude when you have context the model doesn&apos;t.</li>
+              <li><span className="font-medium">Compare strategies side by side</span> — Scenario Comparison runs five preset strategies (Pure Value, Balanced, Win Now, Rebuild, and more) across all teams so you can see the tradeoffs before committing.</li>
+              <li><span className="font-medium">Finalize and practice</span> — lock keeper picks through the Final Keepers board, then open Mock Draft to simulate the upcoming draft with AI bots and a personalized strategy plan.</li>
+              <li><span className="font-medium">Review the season after the fact</span> — import end-of-season stats to see which recommendations hit or busted, what value was missed, and multi-year ROI trends by team and player.</li>
+            </ul>
           </div>
           <div className="rounded-md border border-zinc-200 bg-zinc-50 p-4">
             <p className="text-sm font-semibold text-zinc-950">How the pieces fit</p>
@@ -4157,7 +4178,7 @@ function LeagueMembersPanel() {
                   <Label htmlFor="add-user">User</Label>
                   <select
                     id="add-user"
-                    className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                    className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-[#80E8FF] focus:ring-2 focus:ring-[rgba(128,232,255,0.12)]"
                     value={addUserId}
                     onChange={(e) => setAddUserId(e.target.value)}
                   >
@@ -4171,7 +4192,7 @@ function LeagueMembersPanel() {
                   <Label htmlFor="add-role">Role</Label>
                   <select
                     id="add-role"
-                    className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                    className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-[#80E8FF] focus:ring-2 focus:ring-[rgba(128,232,255,0.12)]"
                     value={addRole}
                     onChange={(e) => setAddRole(e.target.value as "league_admin" | "member")}
                   >
@@ -4333,7 +4354,7 @@ function AIUsagePanel() {
                 <span
                   className={cn(
                     "inline-block size-2 rounded-full",
-                    enabled ? "bg-emerald-500" : "bg-zinc-300",
+                    enabled ? "bg-[#FFB340]" : "bg-zinc-300",
                   )}
                 />
                 <span className="text-zinc-700">{String(label)}</span>
@@ -4447,7 +4468,7 @@ function DraftFormatPanel() {
           <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors ${format === "snake" ? "border-emerald-600 bg-emerald-50" : "border-zinc-200 bg-white hover:bg-zinc-50"}`}>
             <input
               checked={format === "snake"}
-              className="mt-0.5 accent-emerald-700"
+              className="mt-0.5 accent-[#FFB340]"
               onChange={() => setFormat("snake")}
               type="radio"
             />
@@ -4461,7 +4482,7 @@ function DraftFormatPanel() {
           <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors ${format === "auction" ? "border-emerald-600 bg-emerald-50" : "border-zinc-200 bg-white hover:bg-zinc-50"}`}>
             <input
               checked={format === "auction"}
-              className="mt-0.5 accent-emerald-700"
+              className="mt-0.5 accent-[#FFB340]"
               onChange={() => setFormat("auction")}
               type="radio"
             />
@@ -4577,7 +4598,7 @@ function LeagueRosterSettingsPanel() {
                   <span className="font-medium text-zinc-700">{position}</span>
                   <input
                     checked={form.allowedPositions.includes(position)}
-                    className="size-4 accent-emerald-700"
+                    className="size-4 accent-[#FFB340]"
                     onChange={(event) => toggleAllowedPosition(position, event.target.checked)}
                     type="checkbox"
                   />
@@ -4670,7 +4691,7 @@ function KeeperRulesPanel() {
               Max consecutive seasons
             </label>
             <input
-              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
+              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[rgba(128,232,255,0.15)]"
               id="max-consec-seasons"
               min={1}
               placeholder="No limit"
@@ -4895,7 +4916,7 @@ function KeeperTenurePanel() {
             </label>
           </div>
           <textarea
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600"
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-[rgba(128,232,255,0.15)]"
             disabled={isBusy || previewing || importing}
             placeholder={"player,position,team,consecutive_seasons\nPatrick Mahomes,QB,Team A,2\nJustin Jefferson,WR,Team B,3"}
             rows={6}
@@ -5075,7 +5096,7 @@ function UserLeagueMembershipsSection({ userId }: { userId: string }) {
                     ) : null}
                   </span>
                   <select
-                    className="h-7 rounded border border-zinc-300 bg-white px-2 text-xs text-zinc-950 outline-none focus:border-emerald-600"
+                    className="h-7 rounded border border-zinc-300 bg-white px-2 text-xs text-zinc-950 outline-none focus:border-[#80E8FF]"
                     disabled={busy || isBusy}
                     onChange={(e) =>
                       void changeRole(m.leagueId, e.target.value as "league_admin" | "member")
@@ -5099,7 +5120,7 @@ function UserLeagueMembershipsSection({ userId }: { userId: string }) {
                   <div className="flex items-center gap-2 pl-0.5">
                     <span className="text-xs text-zinc-500 shrink-0">Team</span>
                     <select
-                      className="h-7 flex-1 rounded border border-zinc-300 bg-white px-2 text-xs text-zinc-950 outline-none focus:border-emerald-600"
+                      className="h-7 flex-1 rounded border border-zinc-300 bg-white px-2 text-xs text-zinc-950 outline-none focus:border-[#80E8FF]"
                       disabled={busy || isBusy}
                       onChange={(e) => void changeTeam(m.leagueId, e.target.value)}
                       value={m.teamId ?? ""}
@@ -5119,7 +5140,7 @@ function UserLeagueMembershipsSection({ userId }: { userId: string }) {
 
       <div className="flex items-center gap-2">
         <select
-          className="h-9 flex-1 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+          className="h-9 flex-1 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-[#80E8FF] focus:ring-2 focus:ring-[rgba(128,232,255,0.12)]"
           disabled={busy || isBusy || nonMemberLeagues.length === 0}
           onChange={(e) => setPendingLeagueId(e.target.value)}
           value={pendingLeagueId}
@@ -5134,7 +5155,7 @@ function UserLeagueMembershipsSection({ userId }: { userId: string }) {
           ))}
         </select>
         <select
-          className="h-9 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+          className="h-9 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none focus:border-[#80E8FF] focus:ring-2 focus:ring-[rgba(128,232,255,0.12)]"
           disabled={busy || isBusy || nonMemberLeagues.length === 0}
           onChange={(e) => setPendingRole(e.target.value as "league_admin" | "member")}
           value={pendingRole}
@@ -5366,7 +5387,7 @@ function UserManagementPanel() {
               <div className="grid gap-2">
                 <Label htmlFor="user-role">Role</Label>
                 <select
-                  className="h-10 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none transition-colors focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                  className="h-10 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none transition-colors focus:border-[#80E8FF] focus:ring-2 focus:ring-[rgba(128,232,255,0.12)]"
                   id="user-role"
                   onChange={(event) =>
                     setForm((current) => ({
@@ -5383,7 +5404,7 @@ function UserManagementPanel() {
               <label className="flex items-center gap-2 self-end rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700">
                 <input
                   checked={form.isActive}
-                  className="size-4 accent-emerald-700"
+                  className="size-4 accent-[#FFB340]"
                   onChange={(event) =>
                     setForm((current) => ({ ...current, isActive: event.target.checked }))
                   }
@@ -6640,7 +6661,7 @@ function LeagueManagementPanel() {
             <div className="grid gap-2">
               <Label htmlFor="team-user">Assigned User</Label>
               <select
-                className="h-10 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none transition-colors focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                className="h-10 rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 shadow-sm outline-none transition-colors focus:border-[#80E8FF] focus:ring-2 focus:ring-[rgba(128,232,255,0.12)]"
                 id="team-user"
                 onChange={(event) =>
                   setForm((current) => ({ ...current, userId: event.target.value || null }))
@@ -7120,7 +7141,8 @@ function KeeperRecommendationsPage() {
             myTeamId && teamFinalized !== null ? (
               teamFinalized ? (
                 <Button
-                  className="h-8 gap-1.5 px-3 text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white border-0 shadow-sm"
+                  variant="outline"
+                  className="h-8 gap-1.5 px-3 text-xs font-semibold"
                   disabled={finalizeLoading || pastDeadline}
                   onClick={handleSelfUnfinalize}
                   title={pastDeadline ? "The keeper deadline has passed" : undefined}
@@ -7130,10 +7152,16 @@ function KeeperRecommendationsPage() {
                 </Button>
               ) : (
                 <Button
-                  className="h-8 gap-1.5 px-3 text-xs font-semibold shadow-sm ring-2 ring-emerald-400 ring-offset-1"
+                  className="h-8 gap-1.5 px-3 text-xs font-semibold shadow-sm hover:bg-transparent dark:hover:bg-transparent hover:text-[#0C132C] dark:hover:text-[#0C132C] hover:brightness-110"
                   disabled={finalizeLoading || pastDeadline}
                   onClick={handleSelfFinalize}
                   title={pastDeadline ? "The keeper deadline has passed" : undefined}
+                  style={{
+                    backgroundImage: "url('/metallic_gold_background.png')",
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                    color: "#0C132C",
+                  }}
                 >
                   <CheckCircle2 className="size-3.5" />
                   {finalizeLoading ? "Saving…" : "Finalize Keepers"}
@@ -7318,195 +7346,215 @@ function TradeAnalyzerPage() {
       <div className="space-y-6">
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           {/* Team A column — gives */}
-          <div className="rounded-lg border border-rose-100 bg-rose-50 p-4 dark:border-rose-900/50 dark:bg-rose-950/20">
-            <div className="mb-3">
-              <Label className="mb-1 block text-xs font-medium text-rose-700 dark:text-rose-400">Team A</Label>
-              <select
-                className="w-full rounded-md border border-rose-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 dark:border-rose-900 dark:bg-zinc-800 dark:text-zinc-100"
-                value={receivingTeamId}
-                onChange={(e) => {
-                  setReceivingTeamId(e.target.value);
-                  setGivePlayerIds([]);
-                  setGivePicks([]);
-                  setResult(null);
-                }}
-              >
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
+          <div className="rounded-lg overflow-hidden border border-[#1a3050]">
+            <div
+              className="flex items-center justify-between px-4 py-2"
+              style={{ backgroundImage: "url('/metallic_background.png')", backgroundSize: "cover", backgroundPosition: "center" }}
+            >
+              <span className="text-xs font-bold uppercase tracking-widest" style={{ color: "#0C132C" }}>Team A</span>
+              <span className="text-[10px] font-semibold uppercase" style={{ color: "rgba(12,19,44,0.55)" }}>Trading Away</span>
             </div>
-
-            <p className="mb-2 text-xs font-semibold text-rose-700 dark:text-rose-400">Players Trading Away</p>
-            {myRoster.length === 0 ? (
-              <p className="text-xs text-zinc-400">No roster data. Import final rosters first.</p>
-            ) : (
-              <div className="max-h-60 space-y-0.5 overflow-y-auto pr-1">
-                {myRoster.map((p) => (
-                  <label
-                    key={p.playerId}
-                    className={cn(
-                      "flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm transition-colors",
-                      giveSet.has(p.playerId)
-                        ? "bg-rose-200 text-rose-900 dark:bg-rose-900/40 dark:text-rose-200"
-                        : "text-zinc-700 hover:bg-rose-100 dark:text-zinc-300 dark:hover:bg-rose-900/30",
-                    )}
-                  >
-                    <input
-                      type="checkbox"
-                      className="accent-rose-600"
-                      checked={giveSet.has(p.playerId)}
-                      onChange={() => toggleGive(p.playerId)}
-                    />
-                    <span className="flex-1 font-medium">{p.player}</span>
-                    <Badge className="text-[10px]">{p.position}</Badge>
-                  </label>
-                ))}
+            <div className="bg-[#071829] p-4">
+              <div className="mb-3">
+                <select
+                  className="w-full rounded-md border border-[#1a3050] bg-[#0a2040] px-3 py-2 text-sm text-[#EBF4F9] focus:outline-none focus:ring-2 focus:ring-[#C7EEFF]/30"
+                  value={receivingTeamId}
+                  onChange={(e) => {
+                    setReceivingTeamId(e.target.value);
+                    setGivePlayerIds([]);
+                    setGivePicks([]);
+                    setResult(null);
+                  }}
+                >
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
               </div>
-            )}
 
-            <div className="mt-3 border-t border-rose-200 pt-3 dark:border-rose-900/50">
-              <p className="mb-2 text-xs font-semibold text-rose-600 dark:text-rose-400">Draft Picks Trading Away</p>
-              <div className="mb-2 flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  max={30}
-                  className="w-20 rounded border border-zinc-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-zinc-400"
-                  placeholder="Round"
-                  value={givePickRound}
-                  onChange={(e) => setGivePickRound(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") addGivePick(); }}
-                />
-                <Button size="sm" variant="outline" onClick={addGivePick} className="h-7 px-2 text-xs">
-                  <Plus className="mr-1 size-3" />
-                  Add
-                </Button>
-              </div>
-              {givePicks.length === 0 ? (
-                <p className="text-xs text-zinc-400">No picks added.</p>
+              <p className="mb-2 text-xs font-semibold text-[#C7EEFF]">Players Trading Away</p>
+              {myRoster.length === 0 ? (
+                <p className="text-xs text-[#8fa4b3]">No roster data. Import final rosters first.</p>
               ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {givePicks.map((round) => (
-                    <span
-                      key={round}
-                      className="inline-flex items-center gap-1 rounded bg-rose-200 px-2 py-0.5 text-xs font-medium text-rose-800 dark:bg-rose-900/50 dark:text-rose-200"
+                <div className="max-h-60 space-y-0.5 overflow-y-auto pr-1">
+                  {myRoster.map((p) => (
+                    <label
+                      key={p.playerId}
+                      className={cn(
+                        "flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm transition-colors",
+                        giveSet.has(p.playerId)
+                          ? "text-[#C7EEFF]"
+                          : "text-[#BDC8D3] hover:bg-[rgba(199,238,255,0.07)]",
+                      )}
+                      style={giveSet.has(p.playerId) ? { backgroundColor: "rgba(199,238,255,0.15)" } : undefined}
                     >
-                      Rd {round}
-                      <span className="text-rose-500">·{pickValue(round).toFixed(1)}</span>
-                      <button onClick={() => removeGivePick(round)} className="hover:text-rose-600">
-                        <X className="size-3" />
-                      </button>
-                    </span>
+                      <input
+                        type="checkbox"
+                        className="accent-[#80E8FF]"
+                        checked={giveSet.has(p.playerId)}
+                        onChange={() => toggleGive(p.playerId)}
+                      />
+                      <span className="flex-1 font-medium">{p.player}</span>
+                      <Badge className="text-[10px]">{p.position}</Badge>
+                    </label>
                   ))}
                 </div>
               )}
+
+              <div className="mt-3 border-t border-[#1a3050] pt-3">
+                <p className="mb-2 text-xs font-semibold text-[#C7EEFF]">Draft Picks Trading Away</p>
+                <div className="mb-2 flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={30}
+                    className="w-20 rounded border border-[#1a3050] bg-[#0a2040] px-2 py-1 text-xs text-[#EBF4F9] focus:outline-none focus:ring-1 focus:ring-[#C7EEFF]/30"
+                    placeholder="Round"
+                    value={givePickRound}
+                    onChange={(e) => setGivePickRound(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") addGivePick(); }}
+                  />
+                  <Button size="sm" variant="outline" onClick={addGivePick} className="h-7 px-2 text-xs">
+                    <Plus className="mr-1 size-3" />
+                    Add
+                  </Button>
+                </div>
+                {givePicks.length === 0 ? (
+                  <p className="text-xs text-[#8fa4b3]">No picks added.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {givePicks.map((round) => (
+                      <span
+                        key={round}
+                        className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium"
+                        style={{ backgroundColor: "rgba(199,238,255,0.12)", color: "#C7EEFF" }}
+                      >
+                        Rd {round}
+                        <span style={{ color: "rgba(199,238,255,0.55)" }}>·{pickValue(round).toFixed(1)}</span>
+                        <button onClick={() => removeGivePick(round)} className="opacity-60 hover:opacity-100">
+                          <X className="size-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
           {/* Team B column — receives */}
-          <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-4 dark:border-emerald-900/50 dark:bg-emerald-950/20">
-            <div className="mb-3">
-              <Label className="mb-1 block text-xs font-medium text-emerald-700 dark:text-emerald-400">Team B</Label>
-              <select
-                className="w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300 dark:border-emerald-900 dark:bg-zinc-800 dark:text-zinc-100"
-                value={givingTeamId}
-                onChange={(e) => {
-                  setGivingTeamId(e.target.value);
-                  setReceiveItems([]);
-                  setResult(null);
-                }}
-              >
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
+          <div className="rounded-lg overflow-hidden border border-[rgba(255,179,64,0.3)]">
+            <div
+              className="flex items-center justify-between px-4 py-2"
+              style={{ backgroundImage: "url('/metallic_gold_background.png')", backgroundSize: "cover", backgroundPosition: "center" }}
+            >
+              <span className="text-xs font-bold uppercase tracking-widest" style={{ color: "#0C132C" }}>Team B</span>
+              <span className="text-[10px] font-semibold uppercase" style={{ color: "rgba(12,19,44,0.55)" }}>Receiving</span>
             </div>
-
-            <p className="mb-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Players Receiving</p>
-            {theirRoster.length === 0 ? (
-              <p className="text-xs text-zinc-400">No roster data for this team. Import final rosters first.</p>
-            ) : (
-              <div className="max-h-60 space-y-0.5 overflow-y-auto pr-1">
-                {theirRoster.map((p) => {
-                  const isSelected = receivePlayerIds.has(p.playerId);
-                  const item = receiveItems.find((r) => r.playerId === p.playerId);
-                  return (
-                    <div key={p.playerId}>
-                      <label
-                        className={cn(
-                          "flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm transition-colors",
-                          isSelected
-                            ? "bg-emerald-200 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200"
-                            : "text-zinc-700 hover:bg-emerald-100 dark:text-zinc-300 dark:hover:bg-emerald-900/30",
-                        )}
-                      >
-                        <input
-                          type="checkbox"
-                          className="accent-emerald-600"
-                          checked={isSelected}
-                          onChange={() => toggleReceive(p.playerId)}
-                        />
-                        <span className="flex-1 font-medium">{p.player}</span>
-                        <Badge className="text-[10px]">{p.position}</Badge>
-                        {isSelected && (
-                          <input
-                            type="number"
-                            min={1}
-                            max={20}
-                            className="w-14 rounded border border-emerald-300 bg-white px-1.5 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-emerald-400 dark:border-emerald-800 dark:bg-zinc-700 dark:text-zinc-100"
-                            placeholder="Rd"
-                            title="Keeper cost round"
-                            value={item?.keeperCostRound ?? ""}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) =>
-                              updateReceiveCost(p.playerId, e.target.value ? Number(e.target.value) : null)
-                            }
-                          />
-                        )}
-                      </label>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="mt-3 border-t border-emerald-200 pt-3 dark:border-emerald-900/50">
-              <p className="mb-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">Draft Picks Receiving</p>
-              <div className="mb-2 flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  max={30}
-                  className="w-20 rounded border border-zinc-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-zinc-400"
-                  placeholder="Round"
-                  value={receivePickRound}
-                  onChange={(e) => setReceivePickRound(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") addReceivePick(); }}
-                />
-                <Button size="sm" variant="outline" onClick={addReceivePick} className="h-7 px-2 text-xs">
-                  <Plus className="mr-1 size-3" />
-                  Add
-                </Button>
-              </div>
-              {receivePicks.length === 0 ? (
-                <p className="text-xs text-zinc-400">No picks added.</p>
-              ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {receivePicks.map((round) => (
-                    <span
-                      key={round}
-                      className="inline-flex items-center gap-1 rounded bg-emerald-200 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200"
-                    >
-                      Rd {round}
-                      <span className="text-emerald-600">·{pickValue(round).toFixed(1)}</span>
-                      <button onClick={() => removeReceivePick(round)} className="hover:text-emerald-600">
-                        <X className="size-3" />
-                      </button>
-                    </span>
+            <div className="bg-[#071829] p-4">
+              <div className="mb-3">
+                <select
+                  className="w-full rounded-md border border-[rgba(255,179,64,0.3)] bg-[#0a2040] px-3 py-2 text-sm text-[#EBF4F9] focus:outline-none focus:ring-2 focus:ring-[#FFB340]/30"
+                  value={givingTeamId}
+                  onChange={(e) => {
+                    setGivingTeamId(e.target.value);
+                    setReceiveItems([]);
+                    setResult(null);
+                  }}
+                >
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
+                </select>
+              </div>
+
+              <p className="mb-2 text-xs font-semibold text-[#FFB340]">Players Receiving</p>
+              {theirRoster.length === 0 ? (
+                <p className="text-xs text-[#8fa4b3]">No roster data for this team. Import final rosters first.</p>
+              ) : (
+                <div className="max-h-60 space-y-0.5 overflow-y-auto pr-1">
+                  {theirRoster.map((p) => {
+                    const isSelected = receivePlayerIds.has(p.playerId);
+                    const item = receiveItems.find((r) => r.playerId === p.playerId);
+                    return (
+                      <div key={p.playerId}>
+                        <label
+                          className={cn(
+                            "flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm transition-colors",
+                            isSelected
+                              ? "text-[#FFB340]"
+                              : "text-[#BDC8D3] hover:bg-[rgba(255,179,64,0.07)]",
+                          )}
+                          style={isSelected ? { backgroundColor: "rgba(255,179,64,0.15)" } : undefined}
+                        >
+                          <input
+                            type="checkbox"
+                            className="accent-[#FFB340]"
+                            checked={isSelected}
+                            onChange={() => toggleReceive(p.playerId)}
+                          />
+                          <span className="flex-1 font-medium">{p.player}</span>
+                          <Badge className="text-[10px]">{p.position}</Badge>
+                          {isSelected && (
+                            <input
+                              type="number"
+                              min={1}
+                              max={20}
+                              className="w-14 rounded border border-[rgba(255,179,64,0.3)] bg-[#0a2040] px-1.5 py-0.5 text-xs text-center text-[#EBF4F9] focus:outline-none focus:ring-1 focus:ring-[#FFB340]/30"
+                              placeholder="Rd"
+                              title="Keeper cost round"
+                              value={item?.keeperCostRound ?? ""}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) =>
+                                updateReceiveCost(p.playerId, e.target.value ? Number(e.target.value) : null)
+                              }
+                            />
+                          )}
+                        </label>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
+
+              <div className="mt-3 border-t border-[rgba(255,179,64,0.2)] pt-3">
+                <p className="mb-2 text-xs font-semibold text-[#FFB340]">Draft Picks Receiving</p>
+                <div className="mb-2 flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={30}
+                    className="w-20 rounded border border-[rgba(255,179,64,0.3)] bg-[#0a2040] px-2 py-1 text-xs text-[#EBF4F9] focus:outline-none focus:ring-1 focus:ring-[#FFB340]/30"
+                    placeholder="Round"
+                    value={receivePickRound}
+                    onChange={(e) => setReceivePickRound(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") addReceivePick(); }}
+                  />
+                  <Button size="sm" variant="outline" onClick={addReceivePick} className="h-7 px-2 text-xs">
+                    <Plus className="mr-1 size-3" />
+                    Add
+                  </Button>
+                </div>
+                {receivePicks.length === 0 ? (
+                  <p className="text-xs text-[#8fa4b3]">No picks added.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {receivePicks.map((round) => (
+                      <span
+                        key={round}
+                        className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium"
+                        style={{ backgroundColor: "rgba(255,179,64,0.12)", color: "#C5A07A" }}
+                      >
+                        Rd {round}
+                        <span style={{ color: "rgba(197,160,122,0.65)" }}>·{pickValue(round).toFixed(1)}</span>
+                        <button onClick={() => removeReceivePick(round)} className="opacity-60 hover:opacity-100">
+                          <X className="size-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -7548,31 +7596,31 @@ function TradeAnalyzerPage() {
         {result && (
           <div className="space-y-5">
             {/* Delta summary */}
-            <div className="space-y-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+            <div className="space-y-3 rounded-lg border border-[#1a3050] bg-[#071829] p-4">
               {/* Keeper value row */}
               <div>
-                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#8fa4b3]">
                   Keeper Value Impact
                 </p>
                 <div className="flex flex-wrap items-center gap-4">
                   <div className="text-center">
-                    <p className="text-xs text-zinc-500">Before</p>
-                    <p className="text-lg font-bold text-zinc-700">
+                    <p className="text-xs text-[#8fa4b3]">Before</p>
+                    <p className="text-lg font-bold text-[#EBF4F9]">
                       {result.baselineSurplus > 0 ? "+" : ""}
                       {result.baselineSurplus.toFixed(1)}
                     </p>
                   </div>
-                  <div className="text-zinc-300">→</div>
+                  <div className="text-[#1a3050] font-bold">→</div>
                   <div className="text-center">
-                    <p className="text-xs text-zinc-500">After</p>
-                    <p className="text-lg font-bold text-zinc-700">
+                    <p className="text-xs text-[#8fa4b3]">After</p>
+                    <p className="text-lg font-bold text-[#EBF4F9]">
                       {result.hypotheticalSurplus > 0 ? "+" : ""}
                       {result.hypotheticalSurplus.toFixed(1)}
                     </p>
                   </div>
-                  <div className="text-zinc-300">=</div>
+                  <div className="text-[#1a3050] font-bold">=</div>
                   <div className="text-center">
-                    <p className="text-xs text-zinc-500">Change</p>
+                    <p className="text-xs text-[#8fa4b3]">Change</p>
                     <p className={cn("text-lg font-bold", surplusDeltaColor)}>
                       {result.surplusDelta > 0 ? "+" : ""}
                       {result.surplusDelta.toFixed(1)}
@@ -7588,28 +7636,28 @@ function TradeAnalyzerPage() {
 
               {/* Pick value row — only shown when picks are involved */}
               {(result.givePicksValue > 0 || result.receivePicksValue > 0) && (
-                <div className="border-t border-zinc-200 pt-3">
-                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                <div className="border-t border-[#1a3050] pt-3">
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#8fa4b3]">
                     Draft Pick Value
                   </p>
                   <div className="flex flex-wrap items-center gap-4">
                     <div className="text-center">
-                      <p className="text-xs text-zinc-500">Sending</p>
-                      <p className="text-lg font-bold text-rose-600">
+                      <p className="text-xs text-[#8fa4b3]">Sending</p>
+                      <p className="text-lg font-bold text-rose-500">
                         -{result.givePicksValue.toFixed(1)}
                       </p>
                     </div>
-                    <div className="text-zinc-300">+</div>
+                    <div className="text-[#1a3050] font-bold">+</div>
                     <div className="text-center">
-                      <p className="text-xs text-zinc-500">Receiving</p>
+                      <p className="text-xs text-[#8fa4b3]">Receiving</p>
                       <p className="text-lg font-bold text-emerald-600">
                         +{result.receivePicksValue.toFixed(1)}
                       </p>
                     </div>
-                    <div className="text-zinc-300">=</div>
+                    <div className="text-[#1a3050] font-bold">=</div>
                     <div className="text-center">
-                      <p className="text-xs text-zinc-500">Net Picks</p>
-                      <p className={cn("text-lg font-bold", result.pickValueDelta >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                      <p className="text-xs text-[#8fa4b3]">Net Picks</p>
+                      <p className={cn("text-lg font-bold", result.pickValueDelta >= 0 ? "text-emerald-600" : "text-rose-500")}>
                         {result.pickValueDelta > 0 ? "+" : ""}
                         {result.pickValueDelta.toFixed(1)}
                       </p>
@@ -7619,15 +7667,15 @@ function TradeAnalyzerPage() {
               )}
 
               {/* Total row */}
-              <div className="border-t border-zinc-200 pt-3">
-                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+              <div className="border-t border-[#1a3050] pt-3">
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#8fa4b3]">
                   Total Trade Impact
                 </p>
                 <p className={cn("text-2xl font-bold", totalDeltaColor)}>
                   {result.totalValueDelta > 0 ? "+" : ""}
                   {result.totalValueDelta.toFixed(1)} rounds
                 </p>
-                <p className="mt-0.5 text-xs text-zinc-400">
+                <p className="mt-0.5 text-xs text-[#8fa4b3]">
                   {result.totalValueDelta > 1
                     ? "This trade favors Team A"
                     : result.totalValueDelta < -1
@@ -7665,22 +7713,22 @@ function TradeAnalyzerPage() {
                 className={cn(
                   "rounded-lg border p-4 space-y-4",
                   result.aiNarrative.verdict === "good"
-                    ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/20"
+                    ? "border-[rgba(255,179,64,0.3)] bg-[rgba(255,179,64,0.06)]"
                     : result.aiNarrative.verdict === "bad"
-                      ? "border-rose-200 bg-rose-50 dark:border-rose-900/50 dark:bg-rose-950/20"
-                      : "border-zinc-200 bg-zinc-50",
+                      ? "border-rose-900/50 bg-rose-950/10"
+                      : "border-[#1a3050] bg-[#071829]",
                 )}
               >
                 {/* Header: verdict + recommendation */}
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge
                     className={cn(
-                      "text-white capitalize",
+                      "capitalize",
                       result.aiNarrative.verdict === "good"
-                        ? "bg-emerald-600"
+                        ? "bg-[#9a6818] text-[#EBF4F9] border-[rgba(255,179,64,0.3)]"
                         : result.aiNarrative.verdict === "bad"
-                          ? "bg-rose-600"
-                          : "bg-zinc-500",
+                          ? "bg-rose-600 text-white border-rose-700"
+                          : "bg-[#0a2040] text-[#BDC8D3] border-[#1a3050]",
                     )}
                   >
                     {result.aiNarrative.verdict}
@@ -7689,10 +7737,10 @@ function TradeAnalyzerPage() {
                     className={cn(
                       "capitalize",
                       result.aiNarrative.recommendation === "proceed"
-                        ? "bg-emerald-100 text-emerald-800"
+                        ? "bg-[rgba(255,179,64,0.12)] text-[#FFB340] border-[rgba(255,179,64,0.3)]"
                         : result.aiNarrative.recommendation === "decline"
-                          ? "bg-rose-100 text-rose-800"
-                          : "bg-amber-100 text-amber-800",
+                          ? "bg-rose-950/20 text-rose-400 border-rose-900/50"
+                          : "bg-[rgba(128,232,255,0.1)] text-[#80E8FF] border-[rgba(128,232,255,0.25)]",
                     )}
                   >
                     {result.aiNarrative.recommendation === "proceed"
@@ -7704,25 +7752,25 @@ function TradeAnalyzerPage() {
                 </div>
 
                 {/* Summary */}
-                <p className="text-sm text-zinc-700">{result.aiNarrative.summary}</p>
+                <p className="text-sm text-[#EBF4F9]">{result.aiNarrative.summary}</p>
 
                 {/* Per-team analysis */}
                 {(result.aiNarrative.teamAAnalysis || result.aiNarrative.teamBAnalysis) && (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {result.aiNarrative.teamAAnalysis && (
-                      <div className="rounded border border-zinc-200 bg-white p-3">
-                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                      <div className="rounded border border-[#1a3050] bg-[#0a2040] p-3">
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#C7EEFF]">
                           {result.receivingTeamName || "Team A"}
                         </p>
-                        <p className="text-xs text-zinc-600">{result.aiNarrative.teamAAnalysis}</p>
+                        <p className="text-xs text-[#BDC8D3]">{result.aiNarrative.teamAAnalysis}</p>
                       </div>
                     )}
                     {result.aiNarrative.teamBAnalysis && (
-                      <div className="rounded border border-zinc-200 bg-white p-3">
-                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                      <div className="rounded border border-[rgba(255,179,64,0.2)] bg-[#0a2040] p-3">
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#C5A07A]">
                           {result.givingTeamName || "Team B"}
                         </p>
-                        <p className="text-xs text-zinc-600">{result.aiNarrative.teamBAnalysis}</p>
+                        <p className="text-xs text-[#BDC8D3]">{result.aiNarrative.teamBAnalysis}</p>
                       </div>
                     )}
                   </div>
@@ -7731,11 +7779,11 @@ function TradeAnalyzerPage() {
                 {/* Modifications */}
                 {result.aiNarrative.modifications.length > 0 && (
                   <div>
-                    <p className="mb-1.5 text-xs font-semibold text-zinc-600">Suggested modifications</p>
+                    <p className="mb-1.5 text-xs font-semibold text-[#BDC8D3]">Suggested modifications</p>
                     <ul className="space-y-1">
                       {result.aiNarrative.modifications.map((m, i) => (
-                        <li key={i} className="flex items-start gap-2 text-xs text-zinc-600">
-                          <span className="mt-0.5 shrink-0 text-zinc-400">•</span>
+                        <li key={i} className="flex items-start gap-2 text-xs text-[#BDC8D3]">
+                          <span className="mt-0.5 shrink-0 text-[#8fa4b3]">•</span>
                           {m}
                         </li>
                       ))}
@@ -7746,13 +7794,13 @@ function TradeAnalyzerPage() {
                 {/* Key risk / opportunity cost */}
                 <div className="space-y-1">
                   {result.aiNarrative.keyRisk && (
-                    <p className="text-xs text-zinc-500">
-                      <span className="font-medium">Key risk:</span> {result.aiNarrative.keyRisk}
+                    <p className="text-xs text-[#8fa4b3]">
+                      <span className="font-medium text-[#BDC8D3]">Key risk:</span> {result.aiNarrative.keyRisk}
                     </p>
                   )}
                   {result.aiNarrative.opportunityCost && (
-                    <p className="text-xs text-zinc-500">
-                      <span className="font-medium">Opportunity cost:</span> {result.aiNarrative.opportunityCost}
+                    <p className="text-xs text-[#8fa4b3]">
+                      <span className="font-medium text-[#BDC8D3]">Opportunity cost:</span> {result.aiNarrative.opportunityCost}
                     </p>
                   )}
                 </div>
@@ -7775,23 +7823,23 @@ function TradeKeeperTable({
   variant: "baseline" | "hypothetical";
 }) {
   return (
-    <div className="rounded-lg border border-zinc-200 overflow-hidden">
+    <div className="rounded-lg border border-[#1a3050] overflow-hidden">
       <div
         className={cn(
           "px-3 py-2 text-xs font-semibold uppercase tracking-wide",
           variant === "baseline"
-            ? "bg-zinc-100 text-zinc-500"
-            : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400",
+            ? "bg-[#0a2040] text-[#8fa4b3]"
+            : "bg-[rgba(255,179,64,0.08)] text-[#FFB340]",
         )}
       >
         {title}
       </div>
       {rows.length === 0 ? (
-        <p className="px-3 py-4 text-xs text-zinc-400">No recommended keepers.</p>
+        <p className="px-3 py-4 text-xs text-[#8fa4b3]">No recommended keepers.</p>
       ) : (
-        <table className="w-full text-sm">
+        <table className="w-full bg-[#071829] text-sm">
           <thead>
-            <tr className="border-b border-zinc-100 text-xs text-zinc-400">
+            <tr className="border-b border-[#1a3050] text-xs text-[#8fa4b3]">
               <th className="px-3 py-1.5 text-left font-normal">Player</th>
               <th className="px-3 py-1.5 text-right font-normal">Cost Rd</th>
               <th className="px-3 py-1.5 text-right font-normal">ADP Rd</th>
@@ -7802,24 +7850,22 @@ function TradeKeeperTable({
             {rows.map((r) => (
               <tr
                 key={r.playerId}
-                className={cn(
-                  "border-b border-zinc-50 last:border-0",
-                  r.isIncoming && "bg-emerald-50 dark:bg-emerald-950/30",
-                )}
+                className="border-b border-[#0a2040] last:border-0"
+                style={r.isIncoming ? { backgroundColor: "rgba(255,179,64,0.08)" } : undefined}
               >
                 <td className="px-3 py-1.5">
-                  <span className="font-medium">{r.playerName}</span>
-                  <span className="ml-1.5 text-[10px] text-zinc-400">{r.position}</span>
+                  <span className="font-medium text-[#EBF4F9]">{r.playerName}</span>
+                  <span className="ml-1.5 text-[10px] text-[#8fa4b3]">{r.position}</span>
                   {r.isIncoming && (
                     <Badge variant="success" className="ml-1.5 text-[9px] py-0">
                       incoming
                     </Badge>
                   )}
                 </td>
-                <td className="px-3 py-1.5 text-right text-zinc-500">
+                <td className="px-3 py-1.5 text-right text-[#BDC8D3]">
                   {r.keeperCostRound != null ? Math.round(r.keeperCostRound) : "—"}
                 </td>
-                <td className="px-3 py-1.5 text-right text-zinc-500">
+                <td className="px-3 py-1.5 text-right text-[#BDC8D3]">
                   {r.adpRound != null ? Math.round(r.adpRound) : "—"}
                 </td>
                 <td
@@ -7991,7 +8037,7 @@ function ScenarioComparisonPage() {
                             Outlook Scenario
                           </Label>
                           <select
-                            className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                            className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none transition focus:border-[#80E8FF] focus:ring-2 focus:ring-[rgba(128,232,255,0.12)] dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                             onChange={(event) => {
                               const value = event.target.value;
                               setSelectedScenarioForTeam(
@@ -8212,6 +8258,24 @@ const POSITION_CELL_BG: Record<string, string> = {
   K:   "bg-zinc-50",
   DST: "bg-zinc-50",
   DEF: "bg-zinc-50",
+};
+
+const KEEPER_CELL_STYLE: React.CSSProperties = {
+  backgroundImage: "url('/metallic_background.png')",
+  backgroundSize: "cover",
+  backgroundPosition: "center",
+};
+
+const CHROME_TEXT_STYLE: React.CSSProperties = {
+  background: "linear-gradient(180deg, #C7EEFF 0%, #DDEBF9 52%, #C7EEFF 100%)",
+  WebkitBackgroundClip: "text",
+  WebkitTextFillColor: "transparent",
+  backgroundClip: "text",
+};
+
+const ROUND_BADGE_STYLE: React.CSSProperties = {
+  background: "linear-gradient(180deg, #C7EEFF 0%, #DDEBF9 100%)",
+  color: "#0C132C",
 };
 
 // ── Final Keepers Page ────────────────────────────────────────────────────────
@@ -8879,6 +8943,10 @@ function KeeperHistoryPage() {
   );
 }
 
+// Module-level signal so MockDraftHistoryPage can ask MockDraftPage to open
+// or rerun a session after navigating to the mock-draft view.
+let pendingMockDraftAction: { type: "open" | "rerun"; sessionId: string } | null = null;
+
 function MockDraftPage() {
   const { currentUser, data, isBusy } = useDashboard();
   const leagueId = data.source === "api" ? data.league?.id : null;
@@ -8893,12 +8961,9 @@ function MockDraftPage() {
     defaultDifficulty: "Medium",
     teamBotOverrides: {},
   });
-  const [history, setHistory] = React.useState<MockDraftHistoryRow[]>([]);
   const [draftHistories, setDraftHistories] = React.useState<TeamDraftHistory[]>([]);
   const [keeperSignals, setKeeperSignals] = React.useState<LeagueKeeperSignals | null>(null);
   const [activeSession, setActiveSession] = React.useState<MockDraftSession | null>(null);
-  const [selectedComparisonIds, setSelectedComparisonIds] = React.useState<string[]>([]);
-  const [comparisonSessions, setComparisonSessions] = React.useState<MockDraftSession[]>([]);
   const [playerSearch, setPlayerSearch] = React.useState("");
   const [positionFilter, setPositionFilter] = React.useState("ALL");
   const [selectedPlayer, setSelectedPlayer] = React.useState<MockDraftAvailablePlayer | null>(null);
@@ -8996,24 +9061,21 @@ function MockDraftPage() {
 
   const refreshHistory = React.useCallback(async () => {
     if (!leagueId) {
-      setHistory([]);
       setDraftHistories([]);
       setKeeperSignals(null);
       return;
     }
     setIsLoading(true);
     try {
-      const [mockDrafts, ownerHistories, signals] = await Promise.allSettled([
-        listMockDrafts(leagueId),
+      const [ownerHistories, signals] = await Promise.allSettled([
         getLeagueDraftHistory(leagueId),
         getLeagueKeeperSignals(leagueId),
       ]);
-      if (mockDrafts.status === "fulfilled") setHistory(mockDrafts.value);
       if (ownerHistories.status === "fulfilled") setDraftHistories(ownerHistories.value);
       if (signals.status === "fulfilled") setKeeperSignals(signals.value);
       setErrorMessage("");
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Loading mock draft history failed.");
+      setErrorMessage(error instanceof Error ? error.message : "Loading draft context failed.");
     } finally {
       setIsLoading(false);
     }
@@ -9023,14 +9085,25 @@ function MockDraftPage() {
     void refreshHistory();
   }, [refreshHistory]);
 
+  // Handle open/rerun actions arriving from MockDraftHistoryPage
   React.useEffect(() => {
-    setSelectedComparisonIds((current) =>
-      current.filter((sessionId) => history.some((row) => row.id === sessionId)),
-    );
-    setComparisonSessions((current) =>
-      current.filter((session) => history.some((row) => row.id === session.id)),
-    );
-  }, [history]);
+    if (!pendingMockDraftAction) return;
+    const action = pendingMockDraftAction;
+    pendingMockDraftAction = null;
+    setIsLoading(true);
+    if (action.type === "open") {
+      readMockDraft(action.sessionId)
+        .then((session) => { setActiveSession(session); setIsDraftWorkspaceOpen(true); setErrorMessage(""); })
+        .catch((err: unknown) => { setErrorMessage(err instanceof Error ? err.message : "Opening session failed."); })
+        .finally(() => { setIsLoading(false); });
+    } else {
+      readMockDraft(action.sessionId)
+        .then((session) => { prepareRerun(session); })
+        .catch((err: unknown) => { setErrorMessage(err instanceof Error ? err.message : "Preparing rerun failed."); })
+        .finally(() => { setIsLoading(false); });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startNewSession = React.useCallback(async () => {
     if (!leagueId) {
@@ -9192,19 +9265,6 @@ function MockDraftPage() {
     [activeSession, refreshHistory],
   );
 
-  const openHistorySession = React.useCallback(async (sessionId: string) => {
-    setIsLoading(true);
-    try {
-      setActiveSession(await readMockDraft(sessionId));
-      setIsDraftWorkspaceOpen(true);
-      setErrorMessage("");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Opening mock draft failed.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
   const prepareRerun = React.useCallback((session: MockDraftSession) => {
     const botConfig = session.botConfig;
     const defaultPersonality =
@@ -9252,67 +9312,6 @@ function MockDraftPage() {
     setErrorMessage("");
   }, []);
 
-  const rerunFromHistory = React.useCallback(
-    async (sessionId: string) => {
-      setIsLoading(true);
-      try {
-        prepareRerun(await readMockDraft(sessionId));
-      } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : "Preparing rerun failed.");
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [prepareRerun],
-  );
-
-  const toggleComparison = React.useCallback((sessionId: string) => {
-    setSelectedComparisonIds((current) => {
-      if (current.includes(sessionId)) {
-        return current.filter((id) => id !== sessionId);
-      }
-      return [...current, sessionId].slice(-4);
-    });
-  }, []);
-
-  const loadComparison = React.useCallback(async () => {
-    if (!selectedComparisonIds.length) {
-      setComparisonSessions([]);
-      return;
-    }
-    setIsLoading(true);
-    try {
-      setComparisonSessions(await Promise.all(selectedComparisonIds.map((id) => readMockDraft(id))));
-      setErrorMessage("");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Loading comparison failed.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [selectedComparisonIds]);
-
-  const deleteHistorySession = React.useCallback(
-    async (sessionId: string) => {
-      if (!window.confirm("Delete this completed mock draft? This removes its saved recap and analysis.")) {
-        return;
-      }
-      setIsLoading(true);
-      try {
-        await deleteMockDraft(sessionId);
-        setHistory((current) => current.filter((row) => row.id !== sessionId));
-        setSelectedComparisonIds((current) => current.filter((id) => id !== sessionId));
-        setComparisonSessions((current) => current.filter((session) => session.id !== sessionId));
-        setActiveSession((current) => (current?.id === sessionId ? null : current));
-        setErrorMessage("");
-        await refreshHistory();
-      } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : "Deleting mock draft failed.");
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [refreshHistory],
-  );
 
   const keeperCount = data.keeperRecommendations.filter(
     (recommendation) =>
@@ -9578,20 +9577,13 @@ function MockDraftPage() {
   return (
     <PagePanel
       title="Mock Draft"
-      description="League-specific draft setup, saved results, and recap history."
-      action={
-        <Button disabled={isBusy || isLoading || !leagueId} onClick={refreshHistory} variant="outline">
-          <RefreshCw className="mr-2 size-4" aria-hidden="true" />
-          Refresh
-        </Button>
-      }
+      description="Set up and run a live draft simulation against AI bots."
     >
       <div className="space-y-5">
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-3">
           <MetricStrip label="User Team" value={userTeam?.name ?? "Unassigned"} />
           <MetricStrip label="Selected Keepers" value={keeperCount.toString()} />
           <MetricStrip label="ADP Snapshot" value={data.activeSnapshot?.name ?? "Not loaded"} />
-          <MetricStrip label="Completed Mocks" value={history.length.toString()} />
         </div>
 
         {errorMessage ? (
@@ -9956,7 +9948,7 @@ function MockDraftPage() {
                   <label className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
                     <input
                       checked={autoScrollBoard}
-                      className="size-3.5 accent-emerald-700"
+                      className="size-3.5 accent-[#FFB340]"
                       onChange={(event) => setAutoScrollBoard(event.target.checked)}
                       type="checkbox"
                     />
@@ -10062,24 +10054,24 @@ function MockDraftPage() {
 
                 {/* AI Pick Recommendation banner */}
                 {isUserPickSlot && activeSession.status === "in_progress" && (isAiPickLoading || aiPickRec) && (
-                  <div className="shrink-0 border-b border-emerald-100 bg-emerald-50 dark:border-emerald-900/30 dark:bg-emerald-950/20">
+                  <div className="shrink-0 border-b border-[rgba(255,179,64,0.2)] bg-[rgba(255,179,64,0.06)]">
                     {isAiPickLoading && !aiPickRec ? (
                       <div className="flex items-center gap-2 px-3 py-2">
-                        <div className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-                        <span className="text-xs text-emerald-700 dark:text-emerald-400">Generating pick recommendation…</span>
+                        <div className="size-1.5 animate-pulse rounded-full bg-[#80E8FF]" />
+                        <span className="text-xs text-[#8fa4b3]">Generating pick recommendation…</span>
                       </div>
                     ) : aiPickRec ? (
                       <div className="flex items-center justify-between gap-3 px-3 py-1.5">
                         <div className="flex min-w-0 flex-col gap-0.5">
                           <div className="flex min-w-0 items-center gap-2">
-                            <p className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                            <p className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-[#FFB340]">
                               {aiPickRec.aiUsed ? "AI Rec" : "Best"}
                             </p>
-                            <p className="truncate text-sm font-bold text-emerald-950 dark:text-emerald-100">{aiPickRec.playerName}</p>
+                            <p className="truncate text-sm font-bold text-[#EBF4F9]">{aiPickRec.playerName}</p>
                             <PositionBadge position={aiPickRec.position} />
-                            {aiPickRec.nflTeam && <span className="text-xs text-emerald-700 dark:text-emerald-400">{aiPickRec.nflTeam}</span>}
+                            {aiPickRec.nflTeam && <span className="text-xs text-[#BDC8D3]">{aiPickRec.nflTeam}</span>}
                             {aiPickRec.adpPick !== null && (
-                              <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400">
+                              <span className="shrink-0 text-xs text-[#8fa4b3]">
                                 ADP {Math.round(aiPickRec.adpPick)}
                                 {activeSession.currentPick && aiPickRec.adpPick < activeSession.currentPick
                                   ? ` · +${Math.round(activeSession.currentPick - aiPickRec.adpPick)}`
@@ -10088,7 +10080,7 @@ function MockDraftPage() {
                             )}
                           </div>
                           {aiPickRec.aiUsed && (
-                            <p className="text-[11px] leading-snug text-emerald-700 dark:text-emerald-400">{aiPickRec.reasoning}</p>
+                            <p className="text-[11px] leading-snug text-[#BDC8D3]">{aiPickRec.reasoning}</p>
                           )}
                         </div>
                         <Button
@@ -10298,11 +10290,111 @@ function MockDraftPage() {
           </div>
         ) : null}
 
+      </div>
+    </PagePanel>
+  );
+}
+
+function MockDraftHistoryPage() {
+  const { data, isBusy, setActiveView } = useDashboard();
+  const leagueId = data.source === "api" ? data.league?.id : null;
+  const [history, setHistory] = React.useState<MockDraftHistoryRow[]>([]);
+  const [selectedComparisonIds, setSelectedComparisonIds] = React.useState<string[]>([]);
+  const [comparisonSessions, setComparisonSessions] = React.useState<MockDraftSession[]>([]);
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  const load = React.useCallback(async () => {
+    if (!leagueId) { setHistory([]); return; }
+    setIsLoading(true);
+    try {
+      setHistory(await listMockDrafts(leagueId));
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load history.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [leagueId]);
+
+  React.useEffect(() => { void load(); }, [load]);
+
+  React.useEffect(() => {
+    setSelectedComparisonIds((c) => c.filter((id) => history.some((r) => r.id === id)));
+    setComparisonSessions((c) => c.filter((s) => history.some((r) => r.id === s.id)));
+  }, [history]);
+
+  const toggleComparison = React.useCallback((sessionId: string) => {
+    setSelectedComparisonIds((c) =>
+      c.includes(sessionId) ? c.filter((id) => id !== sessionId) : [...c, sessionId].slice(-4),
+    );
+  }, []);
+
+  const loadComparison = React.useCallback(async () => {
+    if (!selectedComparisonIds.length) { setComparisonSessions([]); return; }
+    setIsLoading(true);
+    try {
+      setComparisonSessions(await Promise.all(selectedComparisonIds.map((id) => readMockDraft(id))));
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Loading comparison failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedComparisonIds]);
+
+  const handleOpen = React.useCallback((sessionId: string) => {
+    pendingMockDraftAction = { type: "open", sessionId };
+    setActiveView("mock-draft");
+  }, [setActiveView]);
+
+  const handleRerun = React.useCallback((sessionId: string) => {
+    pendingMockDraftAction = { type: "rerun", sessionId };
+    setActiveView("mock-draft");
+  }, [setActiveView]);
+
+  const handleDelete = React.useCallback(async (sessionId: string) => {
+    if (!window.confirm("Delete this completed mock draft? This removes its saved recap and analysis.")) return;
+    setIsLoading(true);
+    try {
+      await deleteMockDraft(sessionId);
+      setHistory((c) => c.filter((r) => r.id !== sessionId));
+      setSelectedComparisonIds((c) => c.filter((id) => id !== sessionId));
+      setComparisonSessions((c) => c.filter((s) => s.id !== sessionId));
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  return (
+    <PagePanel
+      title="Mock Draft History"
+      description="Completed mock draft sessions — open replays, rerun setups, or compare results."
+      action={
+        <Button disabled={isLoading || !leagueId} onClick={load} variant="outline">
+          <RefreshCw className="mr-2 size-4" aria-hidden="true" />
+          Refresh
+        </Button>
+      }
+    >
+      <div className="space-y-5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <MetricStrip label="Completed Mocks" value={history.length.toString()} />
+          <MetricStrip label="Selected to Compare" value={selectedComparisonIds.length.toString()} />
+        </div>
+
+        {error ? (
+          <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">{error}</div>
+        ) : null}
+
         <section className="rounded-md border border-zinc-200 bg-white p-4">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <History className="size-4 text-zinc-500" aria-hidden="true" />
-              <h2 className="text-base font-semibold text-zinc-950">History</h2>
+              <h2 className="text-base font-semibold text-zinc-950">Sessions</h2>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -10315,10 +10407,7 @@ function MockDraftPage() {
               </Button>
               <Button
                 disabled={!selectedComparisonIds.length && !comparisonSessions.length}
-                onClick={() => {
-                  setSelectedComparisonIds([]);
-                  setComparisonSessions([]);
-                }}
+                onClick={() => { setSelectedComparisonIds([]); setComparisonSessions([]); }}
                 size="sm"
                 variant="ghost"
               >
@@ -10369,47 +10458,22 @@ function MockDraftPage() {
                     <td className="hidden max-w-[360px] truncate py-3 pr-4 text-zinc-600 sm:table-cell">{row.summary}</td>
                     <td className="py-3 pr-0">
                       <div className="flex justify-end gap-2">
-                        <Button
-                          disabled={isBusy || isLoading}
-                          onClick={() => void openHistorySession(row.id)}
-                          size="sm"
-                          variant="outline"
-                        >
-                          Open
-                        </Button>
-                        <Button
-                          disabled={isBusy || isLoading}
-                          onClick={() => void rerunFromHistory(row.id)}
-                          size="sm"
-                          variant="outline"
-                        >
-                          Rerun
-                        </Button>
-                        <Button
-                          disabled={isBusy || isLoading}
-                          onClick={() => void deleteHistorySession(row.id)}
-                          size="sm"
-                          variant="destructive"
-                        >
-                          Delete
-                        </Button>
+                        <Button disabled={isBusy || isLoading} onClick={() => handleOpen(row.id)} size="sm" variant="outline">Open</Button>
+                        <Button disabled={isBusy || isLoading} onClick={() => handleRerun(row.id)} size="sm" variant="outline">Rerun</Button>
+                        <Button disabled={isBusy || isLoading} onClick={() => void handleDelete(row.id)} size="sm" variant="destructive">Delete</Button>
                       </div>
                     </td>
                   </tr>
                 ))}
-                {!history.length ? (
+                {!history.length && !isLoading ? (
                   <tr>
-                    <td className="py-5 text-zinc-500" colSpan={8}>
-                      No completed mock drafts.
-                    </td>
+                    <td className="py-5 text-zinc-500" colSpan={8}>No completed mock drafts yet.</td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
           </div>
-          {comparisonSessions.length ? (
-            <MockDraftComparison sessions={comparisonSessions} />
-          ) : null}
+          {comparisonSessions.length ? <MockDraftComparison sessions={comparisonSessions} /> : null}
         </section>
       </div>
     </PagePanel>
@@ -10577,7 +10641,7 @@ const MockPickCell = React.forwardRef<
 >(function MockPickCell({ slot, isCurrentPick, isNew }, ref) {
   if (!slot) {
     return (
-      <td className="min-w-[116px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-300 last:border-r-0">
+      <td className="min-w-[116px] border-r border-zinc-100 dark:border-[#1a2a4a] px-2 py-1.5 text-center text-zinc-300 dark:text-[#C7EEFF]/30 last:border-r-0">
         —
       </td>
     );
@@ -10585,41 +10649,40 @@ const MockPickCell = React.forwardRef<
 
   const isKeeper = slot.status === "Keeper";
   const isDrafted = slot.status === "Drafted";
-  const draftedBg = isDrafted && slot.pick?.position
-    ? (POSITION_CELL_BG[slot.pick.position] ?? "bg-white")
-    : "bg-white";
+  const isActive = isKeeper || isDrafted;
 
   return (
     <td
       ref={ref}
       className={cn(
-        "min-w-[116px] border-r border-zinc-100 px-2 py-2 align-top last:border-r-0",
-        isKeeper ? "bg-rose-50" : isDrafted ? draftedBg : "bg-zinc-50/30",
+        "min-w-[116px] border-r border-zinc-100 dark:border-[#1a2a4a] px-2 py-2 align-top last:border-r-0",
+        !isActive && "bg-zinc-50/30 dark:bg-transparent",
         isCurrentPick && "outline outline-2 -outline-offset-2 outline-amber-400",
       )}
+      style={isActive ? KEEPER_CELL_STYLE : undefined}
     >
       <div className={cn("space-y-0.5", isNew && "animate-pick-in")}>
         <div className="flex items-center justify-between gap-1">
-          <span className="text-[10px] tabular-nums font-medium text-zinc-400">
+          <span
+            className="text-[10px] tabular-nums font-medium"
+            style={isActive ? { color: "#1C4D93" } : CHROME_TEXT_STYLE}
+          >
             #{slot.overallPick}
           </span>
-          {isKeeper && <Lock className="h-2.5 w-2.5 shrink-0 text-rose-400" aria-label="Keeper" />}
+          {isKeeper && <Lock className="h-2.5 w-2.5 shrink-0 text-[#C5A07A]" aria-label="Keeper" />}
         </div>
         {slot.pick ? (
           <>
             <p
-              className={cn(
-                "truncate text-[11px] font-semibold leading-tight",
-                isKeeper ? "text-rose-800" : "text-zinc-900",
-              )}
+              className="truncate text-[11px] font-semibold leading-tight text-[#1C4D93]"
               title={slot.pick.playerName}
             >
               {slot.pick.playerName}
             </p>
-            <PositionBadge position={slot.pick.position} />
+            <PositionBadge position={slot.pick.position} className="border-[#C5A07A] bg-[#0C132C] text-[#C5A07A] dark:border-[#C5A07A] dark:bg-[#0C132C] dark:text-[#C5A07A]" />
           </>
         ) : (
-          <p className="text-[10px] italic text-zinc-400">Open</p>
+          <p className="text-[10px] italic" style={CHROME_TEXT_STYLE}>Open</p>
         )}
       </div>
     </td>
@@ -10707,42 +10770,42 @@ function MockDraftBoardPreview({
   }, [autoScroll, session.currentPick]);
 
   return (
-    <div ref={boardScrollRef} className={cn("overflow-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950", className ?? "max-h-[560px]")}>
+    <div ref={boardScrollRef} className={cn("overflow-auto rounded-lg border border-zinc-200 bg-white dark:border-[#1a2a4a] dark:bg-[#0C132C]", className ?? "max-h-[560px]")}>
       <table className="border-collapse text-xs">
         <thead className="sticky top-0 z-20">
-          <tr className="border-b border-zinc-200 bg-zinc-50">
-            <th className="sticky left-0 z-30 min-w-[112px] border-r border-zinc-200 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600">
+          <tr className="border-b border-zinc-200 dark:border-[#1a2a4a] bg-zinc-50 dark:bg-[#0C132C]">
+            <th className="sticky left-0 z-30 min-w-[112px] border-r border-zinc-200 dark:border-[#1a2a4a] bg-zinc-50 dark:bg-[#0C132C] px-3 py-2 text-left font-semibold text-zinc-600 dark:text-[#C7EEFF]">
               Team
             </th>
             {rounds.map((round) => (
               <th
                 key={round}
-                className="min-w-[116px] border-r border-zinc-100 px-2 py-2 text-center last:border-r-0"
+                className="min-w-[116px] border-r border-zinc-100 dark:border-[#1a2a4a] px-2 py-2 text-center last:border-r-0"
               >
-                <span className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold" style={ROUND_BADGE_STYLE}>
                   R{round}
                 </span>
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-zinc-100">
+        <tbody className="divide-y divide-zinc-100 dark:divide-[#1a2a4a]">
           {teams.map((team) => {
             const isUserTeam =
               team.teamId === currentUser?.teamId ||
               team.teamName === currentUser?.teamName ||
               team.teamName === session.userTeamName;
             return (
-              <tr key={team.key} className={isUserTeam ? "bg-emerald-50/40" : "bg-white"}>
+              <tr key={team.key} className={isUserTeam ? "bg-emerald-50/40 dark:bg-emerald-950/20" : "bg-white dark:bg-[#0C132C]"}>
                 <td
                   className={cn(
-                    "sticky left-0 z-10 min-w-[112px] border-r border-zinc-200 px-3 py-2 align-middle",
-                    isUserTeam ? "bg-emerald-50 text-emerald-900" : "bg-white text-zinc-800",
+                    "sticky left-0 z-10 min-w-[112px] border-r border-zinc-200 dark:border-[#1a2a4a] px-3 py-2 align-middle",
+                    isUserTeam ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-300" : "bg-white dark:bg-[#0C132C] text-zinc-800 dark:text-[#C7EEFF]",
                   )}
                 >
                   <div className="flex items-center gap-1.5">
                     {isUserTeam && (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#FFB340]" />
                     )}
                     <span className="max-w-[92px] truncate text-[11px] font-medium">
                       {team.teamName}
@@ -11665,16 +11728,16 @@ function DraftBoardPreview({
   return (
     <div className="space-y-2">
       <div className="flex justify-end">
-        <div className="flex rounded-md border border-zinc-200 text-[11px] font-medium overflow-hidden">
+        <div className="flex rounded-md border border-zinc-200 dark:border-[#1a3050] text-[11px] font-medium overflow-hidden">
           <button
-            className={cn("px-2 py-1 transition-colors", boardView === "grid" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50")}
+            className={cn("px-2 py-1 transition-colors", boardView === "grid" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-[#0a1f35]")}
             onClick={() => setBoardView("grid")}
             type="button"
           >
             Grid
           </button>
           <button
-            className={cn("px-2 py-1 transition-colors border-l border-zinc-200", boardView === "list" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50")}
+            className={cn("px-2 py-1 transition-colors border-l border-zinc-200 dark:border-[#1a3050]", boardView === "list" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-[#0a1f35]")}
             onClick={() => setBoardView("list")}
             type="button"
           >
@@ -11684,39 +11747,39 @@ function DraftBoardPreview({
       </div>
 
       {boardView === "grid" ? (
-        <div className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 bg-white">
+        <div className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 dark:border-[#1a2a4a] bg-white dark:bg-[#0C132C]">
           <table className="border-collapse text-xs">
             <thead className="sticky top-0 z-20">
-              <tr className="border-b border-zinc-200 bg-zinc-50">
-                <th className="sticky left-0 z-30 min-w-[112px] border-r border-zinc-200 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600">
+              <tr className="border-b border-zinc-200 dark:border-[#1a2a4a] bg-zinc-50 dark:bg-[#0C132C]">
+                <th className="sticky left-0 z-30 min-w-[112px] border-r border-zinc-200 dark:border-[#1a2a4a] bg-zinc-50 dark:bg-[#0C132C] px-3 py-2 text-left font-semibold text-zinc-600 dark:text-[#C7EEFF]">
                   Team
                 </th>
                 {rounds.map((round) => (
                   <th
                     key={round}
-                    className="min-w-[80px] border-r border-zinc-100 px-2 py-2 text-center last:border-r-0"
+                    className="min-w-[80px] border-r border-zinc-100 dark:border-[#1a2a4a] px-2 py-2 text-center last:border-r-0"
                   >
-                    <span className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold" style={ROUND_BADGE_STYLE}>
                       R{round}
                     </span>
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-100">
+            <tbody className="divide-y divide-zinc-100 dark:divide-[#1a2a4a]">
               {teams.map((team) => {
                 const isUserTeam = isCurrentUserTeam({ name: team, user: currentUser });
                 return (
-                  <tr key={team} className={isUserTeam ? "bg-emerald-50/40" : "bg-white"}>
+                  <tr key={team} className={isUserTeam ? "bg-emerald-50/40 dark:bg-emerald-950/20" : "bg-white dark:bg-[#0C132C]"}>
                     <td
                       className={cn(
-                        "sticky left-0 z-10 min-w-[112px] border-r border-zinc-200 px-3 py-2 align-middle",
-                        isUserTeam ? "bg-emerald-50 text-emerald-900" : "bg-white text-zinc-800",
+                        "sticky left-0 z-10 min-w-[112px] border-r border-zinc-200 dark:border-[#1a2a4a] px-3 py-2 align-middle",
+                        isUserTeam ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-300" : "bg-white dark:bg-[#0C132C] text-zinc-800 dark:text-[#C7EEFF]",
                       )}
                     >
                       <div className="flex items-center gap-1.5">
                         {isUserTeam && (
-                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#FFB340]" />
                         )}
                         <span className="max-w-[92px] truncate text-[11px] font-medium">{team}</span>
                       </div>
@@ -11725,7 +11788,7 @@ function DraftBoardPreview({
                       const pick = grid.get(team)?.get(round);
                       if (!pick) {
                         return (
-                          <td key={round} className="min-w-[80px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-300 last:border-r-0">
+                          <td key={round} className="min-w-[80px] border-r border-zinc-100 dark:border-[#1a2a4a] px-2 py-1.5 text-center text-zinc-300 dark:text-[#C7EEFF]/40 last:border-r-0">
                             —
                           </td>
                         );
@@ -11735,29 +11798,33 @@ function DraftBoardPreview({
                         <td
                           key={round}
                           className={cn(
-                            "min-w-[80px] border-r border-zinc-100 px-2 py-2 align-top last:border-r-0",
-                            isForfeited ? "bg-rose-50" : "bg-white",
+                            "min-w-[80px] border-r border-zinc-100 dark:border-[#1a2a4a] px-2 py-2 align-top last:border-r-0",
+                            !isForfeited && "bg-white dark:bg-[#0C132C]",
                           )}
+                          style={isForfeited ? KEEPER_CELL_STYLE : undefined}
                         >
                           <div className="space-y-0.5">
                             <div className="flex items-center justify-between gap-1">
-                              <span className="text-[10px] tabular-nums font-medium text-zinc-400">
+                              <span
+                                className="text-[10px] tabular-nums font-medium"
+                                style={isForfeited ? { color: "#1C4D93" } : CHROME_TEXT_STYLE}
+                              >
                                 #{pick.overallPick}
                               </span>
-                              {isForfeited && <Lock className="h-2.5 w-2.5 shrink-0 text-rose-400" aria-label="Keeper" />}
+                              {isForfeited && <Lock className="h-2.5 w-2.5 shrink-0 text-[#C5A07A]" aria-label="Keeper" />}
                             </div>
                             {isForfeited ? (
                               <>
                                 <p
-                                  className="truncate text-[11px] font-semibold leading-tight text-rose-800"
+                                  className="truncate text-[11px] font-semibold leading-tight text-[#1C4D93]"
                                   title={pick.keeperPlayer}
                                 >
                                   {pick.keeperPlayer}
                                 </p>
-                                {pick.keeperPosition && <PositionBadge position={pick.keeperPosition} />}
+                                {pick.keeperPosition && <PositionBadge position={pick.keeperPosition} className="border-[#C5A07A] bg-[#0C132C] text-[#C5A07A] dark:border-[#C5A07A] dark:bg-[#0C132C] dark:text-[#C5A07A]" />}
                               </>
                             ) : (
-                              <p className="text-[10px] italic text-zinc-400">Open</p>
+                              <p className="text-[10px] italic" style={CHROME_TEXT_STYLE}>Open</p>
                             )}
                           </div>
                         </td>
@@ -11777,16 +11844,16 @@ function DraftBoardPreview({
               .sort((a, b) => a.overallPick - b.overallPick);
             const forfeitedCount = roundPicks.filter((p) => p.status === "Forfeited").length;
             return (
-              <div key={round} className="rounded-lg border border-zinc-200 bg-white overflow-hidden">
-                <div className="border-b border-zinc-100 bg-zinc-50 px-3 py-2">
-                  <span className="rounded bg-zinc-900 px-2 py-0.5 text-[10px] font-semibold text-white">
+              <div key={round} className="rounded-lg border border-zinc-200 dark:border-[#1a2a4a] bg-white dark:bg-[#0C132C] overflow-hidden">
+                <div className="border-b border-zinc-100 dark:border-[#1a2a4a] bg-zinc-50 dark:bg-[#0C132C] px-3 py-2">
+                  <span className="rounded px-2 py-0.5 text-[10px] font-semibold" style={ROUND_BADGE_STYLE}>
                     Round {round}
                   </span>
-                  <span className="ml-2 text-xs text-zinc-500">
+                  <span className="ml-2 text-xs text-zinc-500 dark:text-[#C7EEFF]/60">
                     {forfeitedCount} forfeited · {roundPicks.length - forfeitedCount} open
                   </span>
                 </div>
-                <div className="divide-y divide-zinc-100">
+                <div className="divide-y divide-zinc-100 dark:divide-[#1a2a4a]">
                   {roundPicks.map((pick) => {
                     const isForfeited = pick.status === "Forfeited";
                     const isUserTeam = isCurrentUserTeam({ name: pick.team, user: currentUser });
@@ -11795,24 +11862,28 @@ function DraftBoardPreview({
                         key={pick.overallPick}
                         className={cn(
                           "flex items-center gap-3 px-3 py-2 text-xs",
-                          isForfeited ? "bg-rose-50" : isUserTeam ? "bg-emerald-50/50" : "",
+                          !isForfeited && (isUserTeam ? "bg-emerald-50/50 dark:bg-emerald-950/20" : ""),
                         )}
+                        style={isForfeited ? KEEPER_CELL_STYLE : undefined}
                       >
-                        <span className={cn("w-8 shrink-0 font-semibold tabular-nums", isForfeited ? "text-rose-500" : "text-zinc-400")}>
+                        <span
+                          className="w-8 shrink-0 font-semibold tabular-nums"
+                          style={isForfeited ? { color: "#1C4D93" } : CHROME_TEXT_STYLE}
+                        >
                           #{pick.overallPick}
                         </span>
                         <div className="min-w-0 flex-1">
                           {isForfeited ? (
-                            <p className="truncate font-semibold text-rose-800">{pick.keeperPlayer ?? "—"}</p>
+                            <p className="truncate font-semibold text-[#1C4D93]">{pick.keeperPlayer ?? "—"}</p>
                           ) : (
-                            <p className="truncate text-zinc-400">Open pick</p>
+                            <p className="truncate text-zinc-400 dark:text-[#C7EEFF]/60">Open pick</p>
                           )}
-                          <p className="truncate text-[10px] text-zinc-500">{pick.team}</p>
+                          <p className="truncate text-[10px] text-zinc-500 dark:text-[#C7EEFF]/50">{pick.team}</p>
                         </div>
                         {isForfeited && pick.keeperPosition && (
-                          <PositionBadge position={pick.keeperPosition} />
+                          <PositionBadge position={pick.keeperPosition} className="border-[#C5A07A] bg-[#0C132C] text-[#C5A07A] dark:border-[#C5A07A] dark:bg-[#0C132C] dark:text-[#C5A07A]" />
                         )}
-                        {isForfeited && <Lock className="size-3 shrink-0 text-rose-400" aria-hidden="true" />}
+                        {isForfeited && <Lock className="size-3 shrink-0 text-[#C5A07A]" aria-hidden="true" />}
                       </div>
                     );
                   })}
@@ -12603,7 +12674,7 @@ function ValueWindowSection({
                           <div
                             className={cn(
                               "h-full rounded-full transition-all",
-                              yr.isValue ? "bg-emerald-500" : "bg-red-400",
+                              yr.isValue ? "bg-[#FFB340]" : "bg-red-400",
                             )}
                             style={{ width: `${barWidth}%` }}
                           />
@@ -13163,7 +13234,7 @@ function DashboardTeamSnapshotCard({
     <div
       className={cn(
         "rounded-md border border-zinc-200 bg-white p-4 transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md dark:border-zinc-700 dark:bg-zinc-900",
-        isCurrentTeam && "border-emerald-300 bg-emerald-50/40 ring-1 ring-emerald-100 dark:border-emerald-700 dark:bg-emerald-900/10 dark:ring-emerald-900/50",
+        isCurrentTeam && "border-[rgba(128,232,255,0.4)] bg-[rgba(128,232,255,0.06)] ring-1 ring-[rgba(128,232,255,0.15)] dark:border-[rgba(128,232,255,0.4)] dark:bg-[rgba(128,232,255,0.06)] dark:ring-[rgba(128,232,255,0.15)]",
       )}
     >
       <div className="flex items-start justify-between gap-3">
@@ -13518,7 +13589,7 @@ function ToggleRow({
       </span>
       <input
         checked={checked}
-        className="size-4 accent-emerald-700"
+        className="size-4 accent-[#FFB340]"
         onChange={(event) => onChange(event.target.checked)}
         type="checkbox"
       />
@@ -13558,7 +13629,7 @@ function OutlookCard({
   }
 
   return (
-    <Card className={cn("transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md", isCurrentTeam && "border-emerald-300 bg-emerald-50/40 ring-1 ring-emerald-100")}>
+    <Card className={cn("transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md", isCurrentTeam && "border-[rgba(128,232,255,0.4)] bg-[rgba(128,232,255,0.06)] ring-1 ring-[rgba(128,232,255,0.15)]")}>
       <CardHeader>
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="min-w-0">
@@ -13626,7 +13697,7 @@ function TeamNameMark({
     <span
       className={cn(
         "inline-flex min-w-0 max-w-full items-center gap-2 align-middle",
-        isCurrentTeam && "rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-emerald-950",
+        isCurrentTeam && "rounded-md border border-[rgba(128,232,255,0.4)] bg-[rgba(128,232,255,0.08)] px-2 py-1 text-[#EBF4F9] dark:border-[rgba(128,232,255,0.4)] dark:bg-[rgba(128,232,255,0.08)] dark:text-[#EBF4F9]",
         className,
       )}
     >
@@ -13667,7 +13738,7 @@ function InfoLine({ label, value }: { label: string; value: string }) {
   );
 }
 
-function PositionBadge({ position }: { position: string }) {
+function PositionBadge({ position, className }: { position: string; className?: string }) {
   const variantMap: Record<string, "qb" | "rb" | "wr" | "te" | "k" | "dst"> = {
     QB: "qb",
     RB: "rb",
@@ -13678,7 +13749,7 @@ function PositionBadge({ position }: { position: string }) {
     DEF: "dst",
   };
   const variant = variantMap[position] ?? "default";
-  return <Badge variant={variant as Parameters<typeof Badge>[0]["variant"]}>{position}</Badge>;
+  return <Badge variant={variant as Parameters<typeof Badge>[0]["variant"]} className={className}>{position}</Badge>;
 }
 
 function DraftCountdownRing({ max, value }: { max: number; value: number }) {
@@ -13827,36 +13898,36 @@ function DraftBoardPage() {
           <MetricStrip label="Rounds" value={board.roundCount.toString()} />
         </div>
 
-        <div className="flex flex-wrap items-center gap-4 text-xs text-zinc-500">
+        <div className="flex flex-wrap items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-3 w-3 rounded bg-rose-200" />
+            <span className="inline-block h-3 w-3 rounded border border-[#C3D8EE]" style={KEEPER_CELL_STYLE} />
             Forfeited (keeper)
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-3 w-3 rounded border border-zinc-200 bg-white" />
+            <span className="inline-block h-3 w-3 rounded border border-zinc-200 dark:border-[#1a2a4a] bg-white dark:bg-[#0C132C]" />
             Open
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-3 w-3 rounded bg-emerald-100" />
+            <span className="inline-block h-3 w-3 rounded bg-emerald-100 dark:bg-emerald-950/60" />
             Your team
           </span>
           <span className="ml-auto flex items-center gap-2">
             <span>{board.draftType === "snake" ? "Snake draft" : board.draftType}</span>
             {board.isFinalized && (
-              <span className="rounded bg-emerald-100 px-2 py-0.5 font-medium text-emerald-700">
+              <span className="rounded bg-emerald-100 dark:bg-emerald-950/40 px-2 py-0.5 font-medium text-emerald-700 dark:text-emerald-400">
                 Keepers finalized
               </span>
             )}
-            <div className="flex rounded-md border border-zinc-200 text-[11px] font-medium overflow-hidden">
+            <div className="flex rounded-md border border-zinc-200 dark:border-[#1a3050] text-[11px] font-medium overflow-hidden">
               <button
-                className={cn("px-2 py-1 transition-colors", boardView === "grid" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50")}
+                className={cn("px-2 py-1 transition-colors", boardView === "grid" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-[#0a1f35]")}
                 onClick={() => setBoardView("grid")}
                 type="button"
               >
                 Grid
               </button>
               <button
-                className={cn("px-2 py-1 transition-colors border-l border-zinc-200", boardView === "list" ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-50")}
+                className={cn("px-2 py-1 transition-colors border-l border-zinc-200 dark:border-[#1a3050]", boardView === "list" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-[#0a1f35]")}
                 onClick={() => setBoardView("list")}
                 type="button"
               >
@@ -13868,26 +13939,26 @@ function DraftBoardPage() {
 
         {boardView === "grid" ? (
           /* Grid: rows = teams (by draft slot), columns = rounds */
-          <div className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 bg-white">
+          <div className="max-h-[560px] overflow-auto rounded-lg border border-zinc-200 dark:border-[#1a2a4a] bg-white dark:bg-[#0C132C]">
             <table className="border-collapse text-xs">
               <thead className="sticky top-0 z-20">
-                <tr className="border-b border-zinc-200 bg-zinc-50">
-                  <th className="sticky left-0 z-30 min-w-[120px] border-r border-zinc-200 bg-zinc-50 px-3 py-2 text-left font-semibold text-zinc-600">
+                <tr className="border-b border-zinc-200 dark:border-[#1a2a4a] bg-zinc-50 dark:bg-[#0C132C]">
+                  <th className="sticky left-0 z-30 min-w-[120px] border-r border-zinc-200 dark:border-[#1a2a4a] bg-zinc-50 dark:bg-[#0C132C] px-3 py-2 text-left font-semibold text-zinc-600 dark:text-[#C7EEFF]">
                     Team
                   </th>
                   {rounds.map((round) => (
                     <th
                       key={round}
-                      className="min-w-[80px] border-r border-zinc-100 px-2 py-2 text-center last:border-r-0"
+                      className="min-w-[80px] border-r border-zinc-100 dark:border-[#1a2a4a] px-2 py-2 text-center last:border-r-0"
                     >
-                      <span className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                      <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold" style={ROUND_BADGE_STYLE}>
                         R{round}
                       </span>
                     </th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100">
+              <tbody className="divide-y divide-zinc-100 dark:divide-[#1a2a4a]">
                 {teamsInOrder.map((team) => {
                   const isUserTeam = isCurrentUserTeam({
                     name: team.teamName,
@@ -13896,21 +13967,21 @@ function DraftBoardPage() {
                   });
                   const slot = team.draftSlot ?? 0;
                   return (
-                    <tr key={team.teamId ?? team.teamName} className={isUserTeam ? "bg-emerald-50/40" : "bg-white"}>
+                    <tr key={team.teamId ?? team.teamName} className={isUserTeam ? "bg-emerald-50/40 dark:bg-emerald-950/20" : "bg-white dark:bg-[#0C132C]"}>
                       <td
                         className={cn(
-                          "sticky left-0 z-10 min-w-[120px] border-r border-zinc-200 px-3 py-2 align-middle",
-                          isUserTeam ? "bg-emerald-50 text-emerald-900" : "bg-white text-zinc-800",
+                          "sticky left-0 z-10 min-w-[120px] border-r border-zinc-200 dark:border-[#1a2a4a] px-3 py-2 align-middle",
+                          isUserTeam ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-300" : "bg-white dark:bg-[#0C132C] text-zinc-800 dark:text-[#C7EEFF]",
                         )}
                       >
                         <div className="flex items-center gap-1.5">
                           {isUserTeam && (
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#FFB340]" />
                           )}
                           <div className="min-w-0">
                             <p className="max-w-[88px] truncate text-[11px] font-medium">{team.teamName}</p>
                             {team.ownerName && (
-                              <p className="max-w-[88px] truncate text-[10px] text-zinc-400">{team.ownerName}</p>
+                              <p className="max-w-[88px] truncate text-[10px] text-zinc-400 dark:text-[#C7EEFF]/50">{team.ownerName}</p>
                             )}
                           </div>
                         </div>
@@ -13919,7 +13990,7 @@ function DraftBoardPage() {
                         const pick = grid.get(slot)?.get(round);
                         if (!pick) {
                           return (
-                            <td key={round} className="min-w-[80px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-300 last:border-r-0">
+                            <td key={round} className="min-w-[80px] border-r border-zinc-100 dark:border-[#1a2a4a] px-2 py-1.5 text-center text-zinc-300 dark:text-[#C7EEFF]/40 last:border-r-0">
                               —
                             </td>
                           );
@@ -13940,16 +14011,16 @@ function DraftBoardPage() {
                 .filter((p) => p.round === round)
                 .sort((a, b) => a.overallPick - b.overallPick);
               return (
-                <div key={round} className="rounded-lg border border-zinc-200 bg-white overflow-hidden">
-                  <div className="border-b border-zinc-100 bg-zinc-50 px-3 py-2">
-                    <span className="rounded bg-zinc-900 px-2 py-0.5 text-[10px] font-semibold text-white">
+                <div key={round} className="rounded-lg border border-zinc-200 dark:border-[#1a2a4a] bg-white dark:bg-[#0C132C] overflow-hidden">
+                  <div className="border-b border-zinc-100 dark:border-[#1a2a4a] bg-zinc-50 dark:bg-[#0C132C] px-3 py-2">
+                    <span className="rounded px-2 py-0.5 text-[10px] font-semibold" style={ROUND_BADGE_STYLE}>
                       Round {round}
                     </span>
-                    <span className="ml-2 text-xs text-zinc-500">
+                    <span className="ml-2 text-xs text-zinc-500 dark:text-[#C7EEFF]/60">
                       {roundPicks.filter((p) => p.isForfeited).length} forfeited · {roundPicks.filter((p) => !p.isForfeited).length} open
                     </span>
                   </div>
-                  <div className="divide-y divide-zinc-100">
+                  <div className="divide-y divide-zinc-100 dark:divide-[#1a2a4a]">
                     {roundPicks.map((pick) => {
                       const isUserTeam = isCurrentUserTeam({
                         name: pick.teamName ?? "",
@@ -13961,27 +14032,31 @@ function DraftBoardPage() {
                           key={pick.overallPick}
                           className={cn(
                             "flex items-center gap-3 px-3 py-2 text-xs",
-                            pick.isForfeited ? "bg-rose-50" : isUserTeam ? "bg-emerald-50/50" : "",
+                            !pick.isForfeited && (isUserTeam ? "bg-emerald-50/50 dark:bg-emerald-950/20" : ""),
                           )}
+                          style={pick.isForfeited ? KEEPER_CELL_STYLE : undefined}
                         >
-                          <span className={cn("w-8 shrink-0 font-semibold tabular-nums", pick.isForfeited ? "text-rose-500" : "text-zinc-400")}>
+                          <span
+                            className="w-8 shrink-0 font-semibold tabular-nums"
+                            style={pick.isForfeited ? { color: "#1C4D93" } : CHROME_TEXT_STYLE}
+                          >
                             #{pick.overallPick}
                           </span>
                           <div className="min-w-0 flex-1">
                             {pick.isForfeited ? (
-                              <p className="truncate font-semibold text-rose-800">
+                              <p className="truncate font-semibold text-[#1C4D93]">
                                 {pick.forfeitedPlayerName ?? "—"}
                               </p>
                             ) : (
-                              <p className="truncate text-zinc-400">Open pick</p>
+                              <p className="truncate text-zinc-400 dark:text-[#C7EEFF]/60">Open pick</p>
                             )}
-                            <p className="truncate text-[10px] text-zinc-500">{pick.teamName ?? "—"}</p>
+                            <p className="truncate text-[10px] text-zinc-500 dark:text-[#C7EEFF]/50">{pick.teamName ?? "—"}</p>
                           </div>
                           {pick.isForfeited && pick.forfeitedPlayerPosition && (
-                            <PositionBadge position={pick.forfeitedPlayerPosition} />
+                            <PositionBadge position={pick.forfeitedPlayerPosition} className="border-[#C5A07A] bg-[#0C132C] text-[#C5A07A] dark:border-[#C5A07A] dark:bg-[#0C132C] dark:text-[#C5A07A]" />
                           )}
                           {pick.isForfeited && (
-                            <Lock className="size-3 shrink-0 text-rose-400" aria-hidden="true" />
+                            <Lock className="size-3 shrink-0 text-[#C5A07A]" aria-hidden="true" />
                           )}
                         </div>
                       );
@@ -13995,22 +14070,23 @@ function DraftBoardPage() {
 
         {/* Forfeited picks summary */}
         {forfeitedPicks.length > 0 && (
-          <div className="rounded-lg border border-zinc-200 bg-white p-4">
-            <h3 className="mb-3 text-sm font-semibold text-zinc-700">Forfeited Picks Summary</h3>
+          <div className="rounded-lg border border-zinc-200 dark:border-[#1a2a4a] bg-white dark:bg-[#0C132C] p-4">
+            <h3 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-[#C7EEFF]">Forfeited Picks Summary</h3>
             <div className="space-y-1.5">
               {forfeitedPicks
                 .sort((a, b) => a.overallPick - b.overallPick)
                 .map((p) => (
                   <div
                     key={p.overallPick}
-                    className="flex items-center gap-3 rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-xs"
+                    className="flex items-center gap-3 rounded-md border border-[#C3D8EE] px-3 py-2 text-xs"
+                    style={KEEPER_CELL_STYLE}
                   >
-                    <span className="font-semibold text-rose-700">#{p.overallPick}</span>
-                    <span className="text-zinc-500">Rd {p.round}</span>
-                    <span className="font-medium text-zinc-800">{p.teamName ?? "—"}</span>
-                    <span className="flex-1 text-zinc-700">{p.forfeitedPlayerName ?? "—"}</span>
+                    <span className="font-semibold text-[#1C4D93]">#{p.overallPick}</span>
+                    <span className="text-[#1C4D93]/60">Rd {p.round}</span>
+                    <span className="font-medium text-[#1C4D93]">{p.teamName ?? "—"}</span>
+                    <span className="flex-1 text-[#1C4D93]">{p.forfeitedPlayerName ?? "—"}</span>
                     {p.forfeitedPlayerPosition && (
-                      <PositionBadge position={p.forfeitedPlayerPosition} />
+                      <PositionBadge position={p.forfeitedPlayerPosition} className="border-[#C5A07A] bg-[#0C132C] text-[#C5A07A] dark:border-[#C5A07A] dark:bg-[#0C132C] dark:text-[#C5A07A]" />
                     )}
                   </div>
                 ))}
@@ -14025,30 +14101,30 @@ function DraftBoardPage() {
 function DraftPickCell({ pick }: { pick: DraftBoardPick }) {
   if (pick.isForfeited) {
     return (
-      <td className="min-w-[80px] border-r border-zinc-100 px-2 py-2 align-top bg-rose-50 last:border-r-0">
+      <td className="min-w-[80px] border-r border-zinc-100 dark:border-[#1a2a4a] px-2 py-2 align-top last:border-r-0" style={KEEPER_CELL_STYLE}>
         <div className="space-y-0.5">
           <div className="flex items-center justify-between gap-1">
-            <span className="text-[10px] tabular-nums font-medium text-rose-400">
+            <span className="text-[10px] tabular-nums font-medium text-[#1C4D93]">
               #{pick.overallPick}
             </span>
-            <Lock className="h-2.5 w-2.5 shrink-0 text-rose-400" aria-label="Keeper" />
+            <Lock className="h-2.5 w-2.5 shrink-0 text-[#C5A07A]" aria-label="Keeper" />
           </div>
           <p
-            className="truncate text-[11px] font-semibold leading-tight text-rose-800"
+            className="truncate text-[11px] font-semibold leading-tight text-[#1C4D93]"
             title={pick.forfeitedPlayerName ?? ""}
           >
             {pick.forfeitedPlayerName ?? "—"}
           </p>
           {pick.forfeitedPlayerPosition && (
-            <PositionBadge position={pick.forfeitedPlayerPosition} />
+            <PositionBadge position={pick.forfeitedPlayerPosition} className="border-[#C5A07A] bg-[#0C132C] text-[#C5A07A] dark:border-[#C5A07A] dark:bg-[#0C132C] dark:text-[#C5A07A]" />
           )}
         </div>
       </td>
     );
   }
   return (
-    <td className="min-w-[80px] border-r border-zinc-100 px-2 py-1.5 text-center text-zinc-400 tabular-nums text-[10px] last:border-r-0">
-      #{pick.overallPick}
+    <td className="min-w-[80px] border-r border-zinc-100 dark:border-[#1a2a4a] px-2 py-1.5 text-center tabular-nums text-[10px] last:border-r-0">
+      <span style={CHROME_TEXT_STYLE}>#{pick.overallPick}</span>
     </td>
   );
 }
@@ -14397,8 +14473,14 @@ function AdpSparkline({ history }: { history: AdpHistoryPoint[] }) {
 }
 
 function RecommendationBadge({ status }: { status: KeeperRecommendation["status"] }) {
-  const variant =
-    status === "Recommended" ? "success" : status === "Eligible" ? "info" : "danger";
+  if (status === "Excluded") {
+    return (
+      <Badge className="border-[#1a3050] bg-[#0a2040] text-[#8fa4b3] dark:border-[#1a3050] dark:bg-[#0a2040] dark:text-[#8fa4b3]">
+        {status}
+      </Badge>
+    );
+  }
+  const variant = status === "Recommended" ? "success" : "info";
   return <Badge variant={variant}>{status}</Badge>;
 }
 
@@ -14756,10 +14838,10 @@ function KeeperScatterPlot({ recs }: { recs: KeeperRecommendation[] }) {
                     type="checkbox"
                     checked={isChecked}
                     onChange={() => toggleTeam(key)}
-                    className="hidden accent-emerald-600 sm:block"
+                    className="hidden accent-[#FFB340] sm:block"
                   />
                   {isUserTeam && (
-                    <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
+                    <span className="size-1.5 shrink-0 rounded-full bg-[#FFB340]" />
                   )}
                   <span className={cn("truncate", isUserTeam && "font-semibold")}>
                     {name}
@@ -14855,51 +14937,63 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
 
   if (loading || alerts.length === 0) return null;
 
+  const metallicFrame: React.CSSProperties = {
+    backgroundImage: "url('/metallic_background.png')",
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+  };
+
   return (
-    <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-zinc-600 dark:bg-zinc-800">
+    <div className="rounded-md overflow-hidden" style={metallicFrame}>
+      {/* Header sits directly on metallic surface */}
       <button
         className="flex w-full items-center gap-2 px-4 py-3 text-left"
         onClick={() => setExpanded((v) => !v)}
         type="button"
       >
-        <Zap className="size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
-        <span className="text-sm font-semibold text-amber-900 dark:text-zinc-100">
+        <Zap className="size-4 shrink-0 text-[#C5A07A]" aria-hidden="true" />
+        <span className="text-sm font-semibold text-[#0C132C]">
           {alerts.length} keeper candidate{alerts.length !== 1 ? "s" : ""} in today&apos;s news
         </span>
-        <span className="ml-auto text-xs text-amber-600 dark:text-zinc-400">{expanded ? "Hide" : "Show"}</span>
+        <span className="ml-auto text-xs text-[#1C4D93]">{expanded ? "Hide" : "Show"}</span>
       </button>
 
       {expanded && (
-        <div className="border-t border-amber-200 px-4 pb-4 pt-2 dark:border-zinc-700">
-          <div className="overflow-x-auto rounded border border-amber-200 dark:border-zinc-700">
+        /* Content area: dark translucent overlay for table legibility */
+        <div
+          className="border-t border-[#C5A07A]/40 px-4 pb-4 pt-2"
+          style={{ backgroundColor: "rgba(7, 18, 41, 0.93)" }}
+        >
+          <div className="overflow-x-auto rounded border border-[#C5A07A]/30">
             <table className="w-full text-sm">
-              <thead className="bg-amber-100 text-xs font-semibold uppercase text-amber-700 dark:bg-zinc-700 dark:text-zinc-300">
-                <tr>
-                  <th className="px-3 py-2 text-left">Player</th>
-                  <th className="px-3 py-2 text-left">Team</th>
-                  <th className="px-3 py-2 text-center">Status</th>
-                  <th className="px-3 py-2 text-center">Value</th>
-                  <th className="px-3 py-2 text-center">Flips at Rd</th>
-                  <th className="px-3 py-2 text-left">Headline</th>
+              {/* Table header uses metallic surface */}
+              <thead>
+                <tr style={metallicFrame}>
+                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[#0C132C]">Player</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[#0C132C]">Team</th>
+                  <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-[#0C132C]">Status</th>
+                  <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-[#0C132C]">Value</th>
+                  <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-[#0C132C]">Flips at Rd</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[#0C132C]">Headline</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-amber-100 bg-white dark:divide-zinc-700 dark:bg-zinc-800">
+              <tbody className="divide-y divide-[#1a2a4a]">
                 {alerts.map((alert, i) => (
-                  <tr key={i}>
-                    <td className="px-3 py-2 font-medium text-zinc-900">
+                  <tr key={i} className="bg-[#071829]">
+                    <td className="px-3 py-2 font-medium text-[#EBF4F9]">
                       {alert.playerName}
-                      <span className="ml-1 text-xs text-zinc-400">
+                      <span className="ml-1 text-xs text-[#8fa4b3]">
                         {alert.position}{alert.nflTeam ? ` · ${alert.nflTeam}` : ""}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-zinc-700">{alert.teamName}</td>
+                    <td className="px-3 py-2 text-[#BDC8D3]">{alert.teamName}</td>
                     <td className="px-3 py-2 text-center">
                       <span
                         className={cn(
                           "inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium",
                           alert.isRecommended
-                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
-                            : "bg-zinc-100 text-zinc-600",
+                            ? "bg-emerald-900/40 text-emerald-300"
+                            : "bg-[#0C132C] text-[#8fa4b3]",
                         )}
                       >
                         {alert.isRecommended ? "Keep" : "Pass"}
@@ -14910,7 +15004,7 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
                         <span
                           className={cn(
                             "font-medium",
-                            alert.currentKeeperValue > 0 ? "text-emerald-700 dark:text-emerald-400" : "text-zinc-500",
+                            alert.currentKeeperValue > 0 ? "text-emerald-400" : "text-[#8fa4b3]",
                           )}
                         >
                           {alert.currentKeeperValue > 0 ? "+" : ""}
@@ -14920,7 +15014,7 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
                         "—"
                       )}
                     </td>
-                    <td className="px-3 py-2 text-center text-zinc-600">
+                    <td className="px-3 py-2 text-center text-[#C7EEFF]">
                       {alert.flipAdpRound != null ? (
                         <span title="ADP round at which recommendation eligibility flips">
                           Rd {alert.flipAdpRound % 1 === 0 ? alert.flipAdpRound : alert.flipAdpRound.toFixed(1)}
@@ -14934,7 +15028,7 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
                         href={alert.headlineLink}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-amber-800 hover:underline dark:text-emerald-400"
+                        className="text-[#C5A07A] hover:underline"
                       >
                         {alert.headline}
                       </a>
@@ -14944,7 +15038,7 @@ function NewsImpactPanel({ leagueId }: { leagueId: string | null }) {
               </tbody>
             </table>
           </div>
-          <p className="mt-2 text-xs text-amber-700 dark:text-zinc-400">
+          <p className="mt-2 text-xs text-[#8fa4b3]">
             &quot;Flips at Rd&quot; is the ADP round at which a player crosses the keeper value threshold — news shifting ADP beyond that point would change their recommendation.
           </p>
         </div>
@@ -15699,7 +15793,7 @@ function ReminderEmailPanel({
             <span
               className={cn(
                 "inline-block size-2 rounded-full",
-                smtpStatus.configured ? "bg-emerald-500" : "bg-zinc-400",
+                smtpStatus.configured ? "bg-[#FFB340]" : "bg-zinc-400",
               )}
             />
             <span className={smtpStatus.configured ? "text-zinc-700" : "text-zinc-500"}>
@@ -15962,7 +16056,7 @@ function CommissionerEmailPanel({
             <span
               className={cn(
                 "inline-block size-2 rounded-full",
-                smtpStatus.configured ? "bg-emerald-500" : "bg-zinc-400",
+                smtpStatus.configured ? "bg-[#FFB340]" : "bg-zinc-400",
               )}
             />
             <span className={smtpStatus.configured ? "text-zinc-700" : "text-zinc-500"}>

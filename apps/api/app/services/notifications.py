@@ -73,14 +73,14 @@ def _player_image_tag(image_url: str | None, player_name: str, size: int = 48) -
         initial = player_name[0].upper() if player_name else "#"
         font_size = max(12, size // 2)
         return (
-            f'<div style="width:{size}px;height:{size}px;border-radius:4px;background:#1a2236;'
-            f'border:1px solid #2d3f5a;text-align:center;line-height:{size}px;'
-            f'font-size:{font_size}px;font-weight:700;color:#4a6080;'
+            f'<div style="width:{size}px;height:{size}px;border-radius:4px;background:#1a3050;'
+            f'border:1px solid #3d5870;text-align:center;line-height:{size}px;'
+            f'font-size:{font_size}px;font-weight:700;color:#8fa4b3;'
             f'font-family:Arial,sans-serif;display:inline-block;">{initial}</div>'
         )
     return (
         f'<img src="{image_url}" alt="{player_name}" width="{size}" height="{size}" '
-        f'style="border-radius:4px;object-fit:cover;background:#1a2236;display:block;" />'
+        f'style="border-radius:4px;object-fit:cover;background:#1a3050;display:block;" />'
     )
 
 
@@ -88,7 +88,7 @@ def _section_label_html(text: str, color: str = "#94a3b8") -> str:
     return (
         f'<table cellpadding="0" cellspacing="0" style="margin-bottom:16px;">'
         f'<tr>'
-        f'<td width="3" style="background:#f59e0b;font-size:0;line-height:0;">&nbsp;</td>'
+        f'<td width="3" style="background:#FFB340;font-size:0;line-height:0;">&nbsp;</td>'
         f'<td style="padding-left:10px;font-size:10px;font-weight:800;letter-spacing:2.5px;'
         f'color:{color};text-transform:uppercase;font-family:Arial,sans-serif;">{text}</td>'
         f'</tr></table>'
@@ -98,13 +98,13 @@ def _section_label_html(text: str, color: str = "#94a3b8") -> str:
 def _news_item_html(item, matched_player_name: str, player_image_url: str | None) -> str:
     img_tag = _player_image_tag(player_image_url, matched_player_name or "#", size=44)
     source_tag = (
-        f'<span style="font-size:10px;font-weight:700;letter-spacing:1px;color:#4a6080;'
+        f'<span style="font-size:10px;font-weight:700;letter-spacing:1px;color:#8fa4b3;'
         f'text-transform:uppercase;">{item.source}</span>'
         if item.source else ""
     )
     return f"""
 <tr>
-  <td style="padding:12px 0;border-bottom:1px solid #1a2236;">
+  <td style="padding:12px 0;border-bottom:1px solid #1a3050;">
     <table cellpadding="0" cellspacing="0" width="100%">
       <tr>
         <td width="52" valign="top" style="padding-right:14px;">{img_tag}</td>
@@ -121,8 +121,8 @@ def _news_item_html(item, matched_player_name: str, player_image_url: str | None
 def _strategy_bullet_html(bullet: str) -> str:
     return (
         f'<tr><td style="padding:6px 0;color:#94a3b8;font-size:14px;line-height:1.6;'
-        f'font-family:Arial,sans-serif;border-bottom:1px solid #1a2236;">'
-        f'<span style="color:#f59e0b;margin-right:10px;font-weight:700;">—</span>{bullet}</td></tr>'
+        f'font-family:Arial,sans-serif;border-bottom:1px solid #1a3050;">'
+        f'<span style="color:#FFB340;margin-right:10px;font-weight:700;">—</span>{bullet}</td></tr>'
     )
 
 
@@ -130,23 +130,23 @@ def _featured_player_html(player_name: str, position: str, nfl_team: str, image_
     img_tag = _player_image_tag(image_url, player_name, size=80)
     pos_abbr = (position[:2] if position else "?").upper()
     return f"""
-<table cellpadding="0" cellspacing="0" style="margin-top:24px;width:100%;background:#080c14;border:1px solid #f59e0b;">
+<table cellpadding="0" cellspacing="0" style="margin-top:24px;width:100%;background:#040E1B;border:1px solid #FFB340;">
   <!-- Gold top stripe -->
-  <tr><td colspan="4" style="background:#f59e0b;height:2px;font-size:0;">&nbsp;</td></tr>
+  <tr><td colspan="4" style="background:#FFB340;height:2px;font-size:0;">&nbsp;</td></tr>
   <tr>
     <!-- Gold left accent -->
-    <td width="4" style="background:#f59e0b;font-size:0;">&nbsp;</td>
+    <td width="4" style="background:#FFB340;font-size:0;">&nbsp;</td>
     <!-- Player photo -->
     <td width="100" valign="middle" style="padding:16px 12px 16px 16px;">{img_tag}</td>
     <!-- Player info -->
     <td valign="middle" style="padding:16px 8px;">
-      <div style="font-size:9px;font-weight:800;letter-spacing:2.5px;color:#f59e0b;text-transform:uppercase;margin-bottom:6px;font-family:Arial,sans-serif;">Key Player</div>
+      <div style="font-size:9px;font-weight:800;letter-spacing:2.5px;color:#FFB340;text-transform:uppercase;margin-bottom:6px;font-family:Arial,sans-serif;">Key Player</div>
       <div style="font-size:18px;font-weight:900;color:#ffffff;letter-spacing:0.5px;font-family:Arial,sans-serif;">{player_name}</div>
-      <div style="font-size:10px;font-weight:700;letter-spacing:2px;color:#4a6080;text-transform:uppercase;margin-top:5px;font-family:Arial,sans-serif;">{nfl_team}</div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:2px;color:#8fa4b3;text-transform:uppercase;margin-top:5px;font-family:Arial,sans-serif;">{nfl_team}</div>
     </td>
     <!-- Position badge -->
     <td width="64" valign="middle" style="padding:16px;" align="center">
-      <div style="background:#f59e0b;color:#080c14;font-size:15px;font-weight:900;width:46px;height:46px;line-height:46px;text-align:center;font-family:Arial,sans-serif;margin:0 auto;">{pos_abbr}</div>
+      <div style="background:#FFB340;color:#040E1B;font-size:15px;font-weight:900;width:46px;height:46px;line-height:46px;text-align:center;font-family:Arial,sans-serif;margin:0 auto;">{pos_abbr}</div>
     </td>
   </tr>
 </table>"""
@@ -197,8 +197,8 @@ def _build_personalized_email(
         strategy_section = f"""
           <!-- Strategy Section -->
           <tr>
-            <td style="padding:24px 40px 32px;background:#111827;">
-              <table cellpadding="0" cellspacing="0" width="100%" style="background-color:#0d1117;border-top:3px solid #f59e0b;border-left:3px solid #f59e0b;">
+            <td style="padding:24px 40px 32px;background:#071829;">
+              <table cellpadding="0" cellspacing="0" width="100%" style="background-color:#040E1B;border-top:3px solid #FFB340;border-left:3px solid #FFB340;">
                 <tr>
                   <td style="padding:24px;">
                     {_section_label_html(f"Strategy &mdash; {team_name}")}
@@ -223,18 +223,18 @@ def _build_personalized_email(
     html_body = f"""
 <html>
 <head></head>
-<body style="margin:0;padding:0;background-color:#080c14;font-family:Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#080c14;padding:40px 0;">
+<body style="margin:0;padding:0;background-color:#040E1B;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#040E1B;padding:40px 0;">
     <tr>
       <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#111827;max-width:600px;">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#071829;max-width:600px;">
 
           <!-- Gold top bar -->
-          <tr><td style="background:#f59e0b;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr><td style="background:#FFB340;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
 
           <!-- Hero SVG served from our own domain — always loads, no external CDN needed -->
           <tr>
-            <td style="padding:0;background:#080c14;font-size:0;line-height:0;">
+            <td style="padding:0;background:#040E1B;font-size:0;line-height:0;">
               <img src="https://mayhemfantasyfootballtools.com/email/hero.svg?v=3"
                    width="600" height="200" alt=""
                    style="display:block;width:100%;max-width:600px;height:auto;" />
@@ -243,92 +243,92 @@ def _build_personalized_email(
 
           <!-- Branding bar below image -->
           <tr>
-            <td style="background:#0d1117;padding:22px 40px 26px;border-top:2px solid #1a2236;">
-              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#f59e0b;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
+            <td style="background:#040E1B;padding:22px 40px 26px;border-top:2px solid #1a3050;">
+              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#FFB340;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
               <div style="font-size:32px;font-weight:900;color:#ffffff;letter-spacing:2px;font-family:Arial,sans-serif;">MAYHEM</div>
-              <div style="font-size:11px;color:#4a6080;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
+              <div style="font-size:11px;color:#8fa4b3;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
             </td>
           </tr>
 
           <!-- Greeting -->
           <tr>
-            <td style="background:#111827;padding:32px 40px 0;">
+            <td style="background:#071829;padding:32px 40px 0;">
               <div style="font-size:28px;font-weight:900;color:#f8fafc;letter-spacing:0.5px;font-family:Arial,sans-serif;">HEY, {owner_name.upper()}.</div>
-              <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:#4a6080;text-transform:uppercase;margin-top:8px;font-family:Arial,sans-serif;">{league_name} &bull; {season_year} Season</div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:#8fa4b3;text-transform:uppercase;margin-top:8px;font-family:Arial,sans-serif;">{league_name} &bull; {season_year} Season</div>
             </td>
           </tr>
 
           <!-- Divider -->
-          <tr><td style="background:#111827;padding:24px 40px 0;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
+          <tr><td style="background:#071829;padding:24px 40px 0;"><div style="border-top:1px solid #1a3050;">&nbsp;</div></td></tr>
 
           <!-- Section 1: Scoreboard Deadline -->
           <tr>
-            <td style="background:#111827;padding:24px 40px 28px;">
+            <td style="background:#071829;padding:24px 40px 28px;">
               {_section_label_html("Keeper Deadline")}
               <!-- Scoreboard -->
-              <table cellpadding="0" cellspacing="0" width="100%" style="background:#0d1117;border:1px solid #1a2236;">
-                <tr><td colspan="5" style="background:#f59e0b;height:2px;font-size:0;">&nbsp;</td></tr>
+              <table cellpadding="0" cellspacing="0" width="100%" style="background:#040E1B;border:1px solid #1a3050;">
+                <tr><td colspan="5" style="background:#FFB340;height:2px;font-size:0;">&nbsp;</td></tr>
                 <tr>
                   <!-- Date -->
-                  <td style="padding:18px 0;text-align:center;border-right:1px solid #1a2236;width:33%;">
-                    <div style="font-size:9px;font-weight:800;letter-spacing:2px;color:#4a6080;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Deadline</div>
+                  <td style="padding:18px 0;text-align:center;border-right:1px solid #1a3050;width:33%;">
+                    <div style="font-size:9px;font-weight:800;letter-spacing:2px;color:#8fa4b3;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Deadline</div>
                     <div style="font-size:24px;font-weight:900;color:#ffffff;font-family:'Courier New',Courier,monospace;letter-spacing:1px;">{deadline_short}</div>
-                    <div style="font-size:13px;font-weight:700;color:#f59e0b;margin-top:4px;font-family:Arial,sans-serif;">{deadline_year}</div>
+                    <div style="font-size:13px;font-weight:700;color:#FFB340;margin-top:4px;font-family:Arial,sans-serif;">{deadline_year}</div>
                   </td>
                   <!-- League -->
-                  <td style="padding:18px 12px;text-align:center;border-right:1px solid #1a2236;width:33%;">
-                    <div style="font-size:9px;font-weight:800;letter-spacing:2px;color:#4a6080;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">League</div>
+                  <td style="padding:18px 12px;text-align:center;border-right:1px solid #1a3050;width:33%;">
+                    <div style="font-size:9px;font-weight:800;letter-spacing:2px;color:#8fa4b3;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">League</div>
                     <div style="font-size:13px;font-weight:900;color:#ffffff;font-family:Arial,sans-serif;line-height:1.3;">{league_name}</div>
                   </td>
                   <!-- Countdown -->
                   <td style="padding:18px 0;text-align:center;width:33%;">
-                    <div style="font-size:9px;font-weight:800;letter-spacing:2px;color:#4a6080;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Time Left</div>
-                    <div style="font-size:30px;font-weight:900;color:#f59e0b;font-family:'Courier New',Courier,monospace;">{days_remaining}</div>
-                    <div style="font-size:9px;font-weight:800;letter-spacing:2px;color:#4a6080;text-transform:uppercase;margin-top:2px;font-family:Arial,sans-serif;">{days_label}</div>
+                    <div style="font-size:9px;font-weight:800;letter-spacing:2px;color:#8fa4b3;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Time Left</div>
+                    <div style="font-size:30px;font-weight:900;color:#FFB340;font-family:'Courier New',Courier,monospace;">{days_remaining}</div>
+                    <div style="font-size:9px;font-weight:800;letter-spacing:2px;color:#8fa4b3;text-transform:uppercase;margin-top:2px;font-family:Arial,sans-serif;">{days_label}</div>
                   </td>
                 </tr>
-                <tr><td colspan="5" style="background:#f59e0b;height:2px;font-size:0;">&nbsp;</td></tr>
+                <tr><td colspan="5" style="background:#FFB340;height:2px;font-size:0;">&nbsp;</td></tr>
               </table>
               <!-- Draft date + CTA -->
-              <p style="margin:16px 0 20px;color:#4a6080;font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;font-family:Arial,sans-serif;">
+              <p style="margin:16px 0 20px;color:#8fa4b3;font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;font-family:Arial,sans-serif;">
                 Draft &rarr; <span style="color:#94a3b8;">{draft_str}</span>
               </p>
-              <a href="{app_url}" style="display:inline-block;background:#f59e0b;color:#080c14;text-decoration:none;padding:14px 28px;font-size:12px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;font-family:Arial,sans-serif;">
+              <a href="{app_url}" style="display:inline-block;background:#FFB340;color:#040E1B;text-decoration:none;padding:14px 28px;font-size:12px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;font-family:Arial,sans-serif;">
                 Finalize My Keepers &rarr;
               </a>
             </td>
           </tr>
 
           <!-- Divider -->
-          <tr><td style="background:#111827;padding:0 40px;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
+          <tr><td style="background:#071829;padding:0 40px;"><div style="border-top:1px solid #1a3050;">&nbsp;</div></td></tr>
 
           <!-- Section 2: News -->
           <tr>
-            <td style="background:#111827;padding:24px 40px 28px;">
+            <td style="background:#071829;padding:24px 40px 28px;">
               {_section_label_html("Players in the News")}
               <table cellpadding="0" cellspacing="0" width="100%">
-                {news_rows if news_rows else '<tr><td style="color:#4a6080;font-size:13px;padding:8px 0;font-family:Arial,sans-serif;">No recent news for your roster.</td></tr>'}
+                {news_rows if news_rows else '<tr><td style="color:#8fa4b3;font-size:13px;padding:8px 0;font-family:Arial,sans-serif;">No recent news for your roster.</td></tr>'}
               </table>
             </td>
           </tr>
 
           <!-- Divider -->
-          <tr><td style="background:#111827;padding:0 40px;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
+          <tr><td style="background:#071829;padding:0 40px;"><div style="border-top:1px solid #1a3050;">&nbsp;</div></td></tr>
 
           {strategy_section}
 
           <!-- Footer -->
           <tr>
-            <td style="background:#0d1117;padding:20px 40px;text-align:center;">
-              <table cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid #f59e0b;">
+            <td style="background:#040E1B;padding:20px 40px;text-align:center;">
+              <table cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid #FFB340;">
                 <tr><td style="height:16px;">&nbsp;</td></tr>
                 <tr>
                   <td style="text-align:center;">
-                    <p style="margin:0 0 6px;color:#2d3f5a;font-size:11px;font-family:Arial,sans-serif;">
+                    <p style="margin:0 0 6px;color:#3d5870;font-size:11px;font-family:Arial,sans-serif;">
                       Sent by your league commissioner &bull;
-                      <a href="https://mayhemfantasyfootballtools.com" style="color:#4a6080;text-decoration:none;">Mayhem Fantasy Football Tools</a>
+                      <a href="https://mayhemfantasyfootballtools.com" style="color:#8fa4b3;text-decoration:none;">Mayhem Fantasy Football Tools</a>
                     </p>
-                    <a href="{opt_out_url}" style="color:#2d3f5a;font-size:10px;letter-spacing:1px;text-transform:uppercase;text-decoration:none;font-family:Arial,sans-serif;">Manage Email Preferences</a>
+                    <a href="{opt_out_url}" style="color:#3d5870;font-size:10px;letter-spacing:1px;text-transform:uppercase;text-decoration:none;font-family:Arial,sans-serif;">Manage Email Preferences</a>
                   </td>
                 </tr>
               </table>
@@ -684,18 +684,18 @@ def _build_commissioner_custom_email(
     html_body = f"""
 <html>
 <head></head>
-<body style="margin:0;padding:0;background-color:#080c14;font-family:Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#080c14;padding:40px 0;">
+<body style="margin:0;padding:0;background-color:#040E1B;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#040E1B;padding:40px 0;">
     <tr>
       <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#111827;max-width:600px;">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#071829;max-width:600px;">
 
           <!-- Gold top bar -->
-          <tr><td style="background:#f59e0b;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr><td style="background:#FFB340;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
 
           <!-- Hero SVG -->
           <tr>
-            <td style="padding:0;background:#080c14;font-size:0;line-height:0;">
+            <td style="padding:0;background:#040E1B;font-size:0;line-height:0;">
               <img src="https://mayhemfantasyfootballtools.com/email/hero.svg?v=3"
                    width="600" height="200" alt=""
                    style="display:block;width:100%;max-width:600px;height:auto;" />
@@ -704,27 +704,27 @@ def _build_commissioner_custom_email(
 
           <!-- Branding bar -->
           <tr>
-            <td style="background:#0d1117;padding:22px 40px 26px;border-top:2px solid #1a2236;">
-              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#f59e0b;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
+            <td style="background:#040E1B;padding:22px 40px 26px;border-top:2px solid #1a3050;">
+              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#FFB340;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
               <div style="font-size:32px;font-weight:900;color:#ffffff;letter-spacing:2px;font-family:Arial,sans-serif;">MAYHEM</div>
-              <div style="font-size:11px;color:#4a6080;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
+              <div style="font-size:11px;color:#8fa4b3;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
             </td>
           </tr>
 
           <!-- Greeting -->
           <tr>
-            <td style="background:#111827;padding:32px 40px 0;">
+            <td style="background:#071829;padding:32px 40px 0;">
               <div style="font-size:28px;font-weight:900;color:#f8fafc;letter-spacing:0.5px;font-family:Arial,sans-serif;">HEY, {owner_name.upper()}.</div>
-              <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:#4a6080;text-transform:uppercase;margin-top:8px;font-family:Arial,sans-serif;">A message from your commissioner</div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:#8fa4b3;text-transform:uppercase;margin-top:8px;font-family:Arial,sans-serif;">A message from your commissioner</div>
             </td>
           </tr>
 
           <!-- Divider -->
-          <tr><td style="background:#111827;padding:24px 40px 0;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
+          <tr><td style="background:#071829;padding:24px 40px 0;"><div style="border-top:1px solid #1a3050;">&nbsp;</div></td></tr>
 
           <!-- League badge + body -->
           <tr>
-            <td style="background:#111827;padding:24px 40px 32px;">
+            <td style="background:#071829;padding:24px 40px 32px;">
               {_section_label_html(league_name)}
               <div style="color:#e2e8f0;font-size:15px;line-height:1.8;font-family:Arial,sans-serif;">{body_html}</div>
             </td>
@@ -732,16 +732,16 @@ def _build_commissioner_custom_email(
 
           <!-- Footer -->
           <tr>
-            <td style="background:#0d1117;padding:20px 40px;text-align:center;">
-              <table cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid #f59e0b;">
+            <td style="background:#040E1B;padding:20px 40px;text-align:center;">
+              <table cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid #FFB340;">
                 <tr><td style="height:16px;">&nbsp;</td></tr>
                 <tr>
                   <td style="text-align:center;">
-                    <p style="margin:0 0 6px;color:#2d3f5a;font-size:11px;font-family:Arial,sans-serif;">
+                    <p style="margin:0 0 6px;color:#3d5870;font-size:11px;font-family:Arial,sans-serif;">
                       Sent by your league commissioner &bull;
-                      <a href="https://mayhemfantasyfootballtools.com" style="color:#4a6080;text-decoration:none;">Mayhem Fantasy Football Tools</a>
+                      <a href="https://mayhemfantasyfootballtools.com" style="color:#8fa4b3;text-decoration:none;">Mayhem Fantasy Football Tools</a>
                     </p>
-                    <a href="{opt_out_url}" style="color:#2d3f5a;font-size:10px;letter-spacing:1px;text-transform:uppercase;text-decoration:none;font-family:Arial,sans-serif;">Manage Email Preferences</a>
+                    <a href="{opt_out_url}" style="color:#3d5870;font-size:10px;letter-spacing:1px;text-transform:uppercase;text-decoration:none;font-family:Arial,sans-serif;">Manage Email Preferences</a>
                   </td>
                 </tr>
               </table>
@@ -890,18 +890,18 @@ def _build_invite_existing_user_email(
     html_body = f"""
 <html>
 <head></head>
-<body style="margin:0;padding:0;background-color:#080c14;font-family:Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#080c14;padding:40px 0;">
+<body style="margin:0;padding:0;background-color:#040E1B;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#040E1B;padding:40px 0;">
     <tr>
       <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#111827;max-width:600px;">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#071829;max-width:600px;">
 
           <!-- Gold top bar -->
-          <tr><td style="background:#f59e0b;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr><td style="background:#FFB340;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
 
           <!-- Hero SVG -->
           <tr>
-            <td style="padding:0;background:#080c14;font-size:0;line-height:0;">
+            <td style="padding:0;background:#040E1B;font-size:0;line-height:0;">
               <img src="https://mayhemfantasyfootballtools.com/email/hero.svg?v=3"
                    width="600" height="200" alt=""
                    style="display:block;width:100%;max-width:600px;height:auto;" />
@@ -910,49 +910,49 @@ def _build_invite_existing_user_email(
 
           <!-- Branding bar -->
           <tr>
-            <td style="background:#0d1117;padding:22px 40px 26px;border-top:2px solid #1a2236;">
-              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#f59e0b;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
+            <td style="background:#040E1B;padding:22px 40px 26px;border-top:2px solid #1a3050;">
+              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#FFB340;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
               <div style="font-size:32px;font-weight:900;color:#ffffff;letter-spacing:2px;font-family:Arial,sans-serif;">MAYHEM</div>
-              <div style="font-size:11px;color:#4a6080;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
+              <div style="font-size:11px;color:#8fa4b3;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
             </td>
           </tr>
 
           <!-- Greeting -->
           <tr>
-            <td style="background:#111827;padding:32px 40px 0;">
+            <td style="background:#071829;padding:32px 40px 0;">
               <div style="font-size:28px;font-weight:900;color:#f8fafc;letter-spacing:0.5px;font-family:Arial,sans-serif;">HEY, {owner_name.upper()}.</div>
-              <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:#4a6080;text-transform:uppercase;margin-top:8px;font-family:Arial,sans-serif;">You've been invited to a league</div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:#8fa4b3;text-transform:uppercase;margin-top:8px;font-family:Arial,sans-serif;">You've been invited to a league</div>
             </td>
           </tr>
 
           <!-- Divider -->
-          <tr><td style="background:#111827;padding:24px 40px 0;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
+          <tr><td style="background:#071829;padding:24px 40px 0;"><div style="border-top:1px solid #1a3050;">&nbsp;</div></td></tr>
 
           <!-- Body -->
           <tr>
-            <td style="background:#111827;padding:24px 40px 32px;">
+            <td style="background:#071829;padding:24px 40px 32px;">
               {_section_label_html(league_name)}
               <div style="color:#e2e8f0;font-size:15px;line-height:1.8;font-family:Arial,sans-serif;">
-                <strong style="color:#f59e0b;">{commissioner_name}</strong> has invited you to join
+                <strong style="color:#FFB340;">{commissioner_name}</strong> has invited you to join
                 <strong style="color:#ffffff;">{league_name}</strong> on Mayhem Fantasy Football Tools.<br /><br />
                 Log in to your account to access the league and start managing your keepers.
               </div>
               <div style="margin-top:28px;text-align:center;">
-                <a href="{login_url}" style="display:inline-block;background:#f59e0b;color:#000000;font-weight:800;font-size:14px;letter-spacing:1.5px;text-transform:uppercase;padding:14px 36px;text-decoration:none;font-family:Arial,sans-serif;">Log In Now</a>
+                <a href="{login_url}" style="display:inline-block;background:#FFB340;color:#000000;font-weight:800;font-size:14px;letter-spacing:1.5px;text-transform:uppercase;padding:14px 36px;text-decoration:none;font-family:Arial,sans-serif;">Log In Now</a>
               </div>
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
-            <td style="background:#0d1117;padding:20px 40px;text-align:center;">
-              <table cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid #f59e0b;">
+            <td style="background:#040E1B;padding:20px 40px;text-align:center;">
+              <table cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid #FFB340;">
                 <tr><td style="height:16px;">&nbsp;</td></tr>
                 <tr>
                   <td style="text-align:center;">
-                    <p style="margin:0 0 6px;color:#2d3f5a;font-size:11px;font-family:Arial,sans-serif;">
+                    <p style="margin:0 0 6px;color:#3d5870;font-size:11px;font-family:Arial,sans-serif;">
                       Sent by your league commissioner &bull;
-                      <a href="https://mayhemfantasyfootballtools.com" style="color:#4a6080;text-decoration:none;">Mayhem Fantasy Football Tools</a>
+                      <a href="https://mayhemfantasyfootballtools.com" style="color:#8fa4b3;text-decoration:none;">Mayhem Fantasy Football Tools</a>
                     </p>
                   </td>
                 </tr>
@@ -989,18 +989,18 @@ def _build_invite_new_user_email(
     html_body = f"""
 <html>
 <head></head>
-<body style="margin:0;padding:0;background-color:#080c14;font-family:Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#080c14;padding:40px 0;">
+<body style="margin:0;padding:0;background-color:#040E1B;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#040E1B;padding:40px 0;">
     <tr>
       <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#111827;max-width:600px;">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#071829;max-width:600px;">
 
           <!-- Gold top bar -->
-          <tr><td style="background:#f59e0b;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr><td style="background:#FFB340;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
 
           <!-- Hero SVG -->
           <tr>
-            <td style="padding:0;background:#080c14;font-size:0;line-height:0;">
+            <td style="padding:0;background:#040E1B;font-size:0;line-height:0;">
               <img src="https://mayhemfantasyfootballtools.com/email/hero.svg?v=3"
                    width="600" height="200" alt=""
                    style="display:block;width:100%;max-width:600px;height:auto;" />
@@ -1009,50 +1009,50 @@ def _build_invite_new_user_email(
 
           <!-- Branding bar -->
           <tr>
-            <td style="background:#0d1117;padding:22px 40px 26px;border-top:2px solid #1a2236;">
-              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#f59e0b;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
+            <td style="background:#040E1B;padding:22px 40px 26px;border-top:2px solid #1a3050;">
+              <div style="font-size:10px;font-weight:800;letter-spacing:3px;color:#FFB340;text-transform:uppercase;margin-bottom:8px;font-family:Arial,sans-serif;">Fantasy Football</div>
               <div style="font-size:32px;font-weight:900;color:#ffffff;letter-spacing:2px;font-family:Arial,sans-serif;">MAYHEM</div>
-              <div style="font-size:11px;color:#4a6080;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
+              <div style="font-size:11px;color:#8fa4b3;letter-spacing:1px;margin-top:6px;font-family:Arial,sans-serif;">mayhemfantasyfootballtools.com</div>
             </td>
           </tr>
 
           <!-- Greeting -->
           <tr>
-            <td style="background:#111827;padding:32px 40px 0;">
+            <td style="background:#071829;padding:32px 40px 0;">
               <div style="font-size:28px;font-weight:900;color:#f8fafc;letter-spacing:0.5px;font-family:Arial,sans-serif;">HEY, {owner_alias.upper()}.</div>
-              <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:#4a6080;text-transform:uppercase;margin-top:8px;font-family:Arial,sans-serif;">You've been invited to play fantasy football</div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:2.5px;color:#8fa4b3;text-transform:uppercase;margin-top:8px;font-family:Arial,sans-serif;">You've been invited to play fantasy football</div>
             </td>
           </tr>
 
           <!-- Divider -->
-          <tr><td style="background:#111827;padding:24px 40px 0;"><div style="border-top:1px solid #1a2236;">&nbsp;</div></td></tr>
+          <tr><td style="background:#071829;padding:24px 40px 0;"><div style="border-top:1px solid #1a3050;">&nbsp;</div></td></tr>
 
           <!-- Body -->
           <tr>
-            <td style="background:#111827;padding:24px 40px 32px;">
+            <td style="background:#071829;padding:24px 40px 32px;">
               {_section_label_html(league_name)}
               <div style="color:#e2e8f0;font-size:15px;line-height:1.8;font-family:Arial,sans-serif;">
-                <strong style="color:#f59e0b;">{commissioner_name}</strong> has invited you to join
+                <strong style="color:#FFB340;">{commissioner_name}</strong> has invited you to join
                 <strong style="color:#ffffff;">{league_name}</strong> on Mayhem Fantasy Football Tools.<br /><br />
                 Mayhem makes it easy to track keepers, run drafts, and manage your fantasy football league all in one place.
                 Create a free account to get started.
               </div>
               <div style="margin-top:28px;text-align:center;">
-                <a href="{register_url}" style="display:inline-block;background:#f59e0b;color:#000000;font-weight:800;font-size:14px;letter-spacing:1.5px;text-transform:uppercase;padding:14px 36px;text-decoration:none;font-family:Arial,sans-serif;">Create Your Account</a>
+                <a href="{register_url}" style="display:inline-block;background:#FFB340;color:#000000;font-weight:800;font-size:14px;letter-spacing:1.5px;text-transform:uppercase;padding:14px 36px;text-decoration:none;font-family:Arial,sans-serif;">Create Your Account</a>
               </div>
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
-            <td style="background:#0d1117;padding:20px 40px;text-align:center;">
-              <table cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid #f59e0b;">
+            <td style="background:#040E1B;padding:20px 40px;text-align:center;">
+              <table cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid #FFB340;">
                 <tr><td style="height:16px;">&nbsp;</td></tr>
                 <tr>
                   <td style="text-align:center;">
-                    <p style="margin:0 0 6px;color:#2d3f5a;font-size:11px;font-family:Arial,sans-serif;">
+                    <p style="margin:0 0 6px;color:#3d5870;font-size:11px;font-family:Arial,sans-serif;">
                       Sent by your league commissioner &bull;
-                      <a href="https://mayhemfantasyfootballtools.com" style="color:#4a6080;text-decoration:none;">Mayhem Fantasy Football Tools</a>
+                      <a href="https://mayhemfantasyfootballtools.com" style="color:#8fa4b3;text-decoration:none;">Mayhem Fantasy Football Tools</a>
                     </p>
                   </td>
                 </tr>
